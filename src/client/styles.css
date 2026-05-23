@@ -1,0 +1,4070 @@
+:root {
+  /* ─── Light theme — minimalist white canvas ──────────────────────── */
+  --bg: #ffffff;
+  --bg-2: #fafafa;             /* subtle surface inset (panels, hover) */
+  --fg: #111111;               /* near-black text */
+  --fg-2: #2a2a2a;             /* secondary text */
+  --muted: #888888;
+  --grid: #ececec;             /* dividers, faint rules */
+  --border: #d0d0d0;           /* visible borders on pill chrome */
+  --border-strong: #1a1a1a;    /* dark outlines on focused inputs / Run Swarm */
+
+  /* Status / semantic accents — re-tuned for legibility on white */
+  --consensus: #2ea36b;        /* deeper green so it doesn't vibrate on white */
+  --dissent: #c47a00;          /* amber, darker than the dark-mode #ffb000 */
+  --adversarial: #d23a3a;
+  /* `accent` is the red used for [scenario] / [greetings] / placeholders
+     across the slides. Vibrant but not garish. */
+  --accent: #d23a3a;
+  --accent-soft: #f5d4d4;      /* tinted background for selected/hover red */
+  --link: #1a5fb4;             /* informational links — kept blue-ish */
+
+  --radius: 4px;
+  --radius-lg: 10px;
+  --radius-pill: 999px;        /* pill chrome */
+  --track: 0.04em;             /* SN Pro is geometric — less tracking than mono */
+
+  /* Type stack. SN Pro everywhere — both proportional and "mono" surfaces.
+     Tabular alignment in numeric blocks is handled by
+     `font-variant-numeric: tabular-nums` on the elements that need it. */
+  --font: 'SN Pro', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+          Helvetica, Arial, sans-serif;
+  --mono: var(--font);
+
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.04);
+  --shadow-2: 0 2px 8px rgba(0, 0, 0, 0.06);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font);
+  font-size: 13px;
+  line-height: 1.5;
+  font-weight: 400;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+button,
+input,
+textarea,
+select {
+  font-family: inherit;
+  font-size: inherit;
+  color: inherit;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);   /* pill-shaped by default */
+  padding: 8px 14px;
+  outline: none;
+  transition: border-color 140ms ease, background 140ms ease, color 140ms ease;
+}
+
+button {
+  cursor: pointer;
+  letter-spacing: var(--track);
+  /* SN Pro reads better in sentence case than ALL CAPS — opt back in
+     selectively via .panel-label / .small-caps */
+  text-transform: none;
+  font-weight: 500;
+}
+
+button:hover:not(:disabled) {
+  border-color: var(--border-strong);
+  color: var(--fg);
+  background: var(--bg-2);
+}
+
+button:disabled {
+  color: var(--muted);
+  border-color: var(--grid);
+  cursor: not-allowed;
+}
+
+textarea,
+input {
+  border-radius: var(--radius-lg);    /* square-pill, less round than buttons */
+  padding: 10px 14px;
+}
+
+textarea {
+  resize: vertical;
+  min-height: 96px;
+  width: 100%;
+}
+
+textarea:focus,
+input:focus,
+select:focus {
+  border-color: var(--border-strong);
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.small {
+  font-size: 11px;
+}
+
+.status-ok {
+  color: var(--consensus);
+}
+
+.status-warn {
+  color: var(--dissent);
+}
+
+.status-err {
+  color: var(--adversarial);
+}
+
+.num {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.app-shell {
+  display: grid;
+  /* topbar now hosts the tabs — bumped from 40 → 44 to give the tab
+     buttons enough vertical room without being cramped. */
+  grid-template-rows: 44px 1fr auto;
+  height: 100vh;
+}
+
+.topbar {
+  display: grid;
+  /* wordmark · tab strip · status cluster · 32px reservation.
+     The panel toggle moved out of the topbar to the left-rail below;
+     the topbar is now just SWARM COUNCIL + tabs + status. */
+  grid-template-columns: auto 1fr auto 32px;
+  align-items: stretch;
+  padding: 0 14px 0 18px;
+  border-bottom: 1px solid var(--grid);
+  gap: 14px;
+  min-height: 44px;
+}
+
+.topbar .wordmark {
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+}
+
+.topbar .tabs {
+  border-bottom: none;
+  padding: 0;
+  align-self: stretch;
+}
+
+.topbar .status-cluster {
+  align-self: center;
+}
+
+/* ─── Left rail: thin vertical column under the header, claude.ai-style.
+       Always visible. Hosts the PanelLeft toggle for now; ready to grow
+       with quick-action icons later. */
+
+.left-rail {
+  position: relative;            /* anchor for the absolute .rail-flyout */
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding-top: 12px;
+  gap: 8px;
+  background: var(--bg-2);
+}
+
+.left-rail .sidebar-toggle {
+  width: 32px;
+  height: 32px;
+  border: none;
+  background: transparent;
+  color: var(--fg-2);
+  border-radius: 8px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.left-rail .sidebar-toggle:hover {
+  background: var(--bg);
+  color: var(--fg);
+  border: none;
+}
+
+/* When the sidebar is collapsed, the rail also shows the section icons
+   as quick-access buttons. Click an icon to expand the sidebar AND open
+   that section. Visual treatment identical to the toggle for cohesion. */
+.left-rail-divider {
+  width: 18px;
+  height: 1px;
+  background: var(--grid);
+  margin: 4px 0 2px;
+}
+
+.rail-icon-btn {
+  position: relative;
+  width: 32px;
+  height: 32px;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  border-radius: 8px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background 140ms ease, color 140ms ease;
+}
+
+.rail-icon-btn:hover {
+  background: var(--bg);
+  color: var(--fg);
+  border: none;
+}
+
+/* Highlighted state when this section's flyout is currently open. */
+.rail-icon-btn.is-active {
+  background: var(--bg);
+  color: var(--fg);
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+
+/* Hover tooltip — uses the data-tooltip attribute, sits to the right of
+   the icon with a small offset and a tail-less dark bubble for contrast. */
+.rail-icon-btn[data-tooltip]::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  left: calc(100% + 8px);
+  top: 50%;
+  transform: translateY(-50%);
+  /* liquid-glass-dark */
+  background: rgba(20, 22, 28, 0.58);
+  color: var(--bg);
+  -webkit-backdrop-filter: blur(7px) saturate(130%);
+  backdrop-filter: blur(7px) saturate(130%);
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  box-shadow:
+    0 8px 22px rgba(0, 0, 0, 0.22),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+  padding: 4px 10px;
+  border-radius: 6px;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 120ms ease 140ms;
+  z-index: 20;
+}
+
+.rail-icon-btn:hover[data-tooltip]::after,
+.rail-icon-btn:focus-visible[data-tooltip]::after {
+  opacity: 1;
+}
+
+/* Suppress the tooltip when the section's flyout is already open — the
+   panel title duplicates the label. */
+.rail-icon-btn.is-active[data-tooltip]::after {
+  display: none;
+}
+
+/* ─── Rail flyout — single-section popover next to the rail ──────── */
+
+.rail-flyout {
+  position: absolute;
+  left: 44px;                                  /* sits flush to right of rail */
+  width: 320px;
+  max-height: calc(100vh - 88px);
+  /* liquid-glass surface */
+  background: rgba(255, 255, 255, 0.18);
+  -webkit-backdrop-filter: blur(8px) saturate(140%);
+  backdrop-filter: blur(8px) saturate(140%);
+  border: 1px solid rgba(255, 255, 255, 0.7);
+  box-shadow:
+    0 12px 36px rgba(0, 0, 0, 0.12),
+    inset 0 1px 0 rgba(255, 255, 255, 0.85);
+  border-radius: var(--radius-lg);
+  z-index: 12;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  /* `top` is set inline from JS to match the clicked icon's y-offset. */
+}
+
+.rail-flyout-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--grid);
+}
+
+.rail-flyout-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 500;
+  font-size: 13px;
+  color: var(--fg);
+}
+
+.rail-flyout-body {
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow-y: auto;
+}
+
+.wordmark {
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.scenario-title {
+  text-align: center;
+  letter-spacing: var(--track);
+  text-transform: uppercase;
+}
+
+.status-cluster {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: flex-end;
+  letter-spacing: var(--track);
+  text-transform: uppercase;
+}
+
+.ghost-btn {
+  padding: 4px 8px;
+  font-size: 11px;
+}
+
+.body {
+  display: grid;
+  /* grid-template-columns is set inline from App.tsx so the sidebar and inspector
+     widths can be dragged. Fallback here for SSR / initial paint. */
+  grid-template-columns: 320px 6px 1fr;
+  min-height: 0;
+}
+
+.sidebar {
+  /* claude.ai-style: subtle tint instead of a hairline border. The
+     accordion section pills paint their own borders so the panel
+     still reads as structured without a wrapper rule. */
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  background: var(--bg-2);
+  padding-top: 14px;
+}
+
+.panel {
+  padding: 14px;
+  border-bottom: 1px solid var(--grid);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.panel-label {
+  font-size: 11px;
+  letter-spacing: var(--track);
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.scenario-input {
+  background: var(--bg);
+  border-color: var(--border);
+}
+
+.primary-btn {
+  background: var(--fg);
+  color: var(--bg);
+  border-color: var(--fg);
+  font-weight: 600;
+}
+
+.primary-btn:hover:not(:disabled) {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--bg);
+}
+
+.primary-btn:disabled {
+  background: transparent;
+  color: var(--muted);
+  border-color: var(--grid);
+}
+
+.canvas {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.tabs {
+  display: flex;
+  border-bottom: 1px solid var(--grid);
+  padding: 0 14px;
+  gap: 0;
+}
+
+.tab {
+  border: none;
+  border-bottom: 1px solid transparent;
+  border-radius: 0;
+  padding: 10px 14px;
+  color: var(--muted);
+  letter-spacing: var(--track);
+  text-transform: uppercase;
+}
+
+.tab:hover:not(:disabled) {
+  color: var(--fg);
+  border-bottom-color: var(--border);
+}
+
+.tab.active {
+  color: var(--fg);
+  border-bottom-color: var(--accent);
+}
+
+.canvas-body {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  position: relative;
+  /* Flex-column so an upstream block (eg. the WMTR strip) pushes the
+     council-stack down instead of being overlaid by it. The absolutely
+     positioned progress bar + rerun badge are unaffected. */
+  display: flex;
+  flex-direction: column;
+  /* Container queries below (.council-stack) react to the canvas's own
+     width so opening the right panels can flip the layout to stacked
+     without the viewport itself having to shrink. */
+  container-type: inline-size;
+  container-name: canvas;
+}
+
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  gap: 8px;
+}
+
+.empty-headline {
+  letter-spacing: var(--track);
+  text-transform: uppercase;
+}
+
+.bottom-drawer {
+  border-top: 1px solid var(--grid);
+  background: var(--bg);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.bottom-drawer.collapsed {
+  height: 36px;
+}
+
+.bottom-drawer.open {
+  height: 260px;
+}
+
+.drawer-handle {
+  padding: 10px 14px;
+  letter-spacing: var(--track);
+  text-transform: uppercase;
+  color: var(--muted);
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  text-align: left;
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 14px;
+  flex: 0 0 36px;
+}
+
+.drawer-handle:hover {
+  color: var(--fg);
+}
+
+.chat-body {
+  display: grid;
+  grid-template-rows: 1fr auto;
+  flex: 1;
+  min-height: 0;
+  border-top: 1px solid var(--grid);
+}
+
+.chat-scroller {
+  overflow-y: auto;
+  padding: 10px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  font-size: 12px;
+}
+
+.chat-empty {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.chat-samples {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.chat-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border-left: 2px solid var(--grid);
+  padding-left: 10px;
+}
+
+.chat-row.user {
+  border-left-color: var(--accent);
+}
+
+.chat-row.assistant {
+  border-left-color: var(--consensus);
+}
+
+.chat-author {
+  font-size: 10px;
+  letter-spacing: var(--track);
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.chat-content {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 13px;
+  color: var(--fg);
+  line-height: 1.55;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Assistant messages: rendered Markdown produces real block elements,
+   so we drop pre-wrap (which would double the line-breaks from <p>/<li>)
+   and define structural typography below. */
+.chat-content.chat-content-md {
+  white-space: normal;
+}
+
+.chat-md-h3 {
+  margin: 10px 0 4px;
+  font-size: 13.5px;
+  font-weight: 600;
+  letter-spacing: 0;
+  color: var(--fg);
+}
+
+.chat-md-h3:first-child { margin-top: 0; }
+
+.chat-md-h4 {
+  margin: 8px 0 2px;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0;
+  color: var(--fg-2);
+}
+
+.chat-md-h4:first-child { margin-top: 0; }
+
+.chat-md-p {
+  margin: 0 0 6px;
+}
+
+.chat-md-p:last-child { margin-bottom: 0; }
+
+.chat-md-list {
+  margin: 4px 0 8px;
+  padding-left: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.chat-md-list:last-child { margin-bottom: 0; }
+
+.chat-md-list-nested {
+  margin: 2px 0 0;
+  padding-left: 16px;
+  list-style: circle;
+}
+
+.chat-md-quote {
+  margin: 4px 0 6px;
+  padding: 4px 10px;
+  border-left: 2px solid var(--accent);
+  background: rgba(0, 0, 0, 0.03);
+  border-radius: 0 4px 4px 0;
+  color: var(--fg-2);
+  font-style: italic;
+}
+
+.chat-md-quote:last-child { margin-bottom: 0; }
+
+.chat-content.chat-content-md strong {
+  font-weight: 600;
+  color: var(--fg);
+}
+
+.chat-content.chat-content-md em {
+  font-style: italic;
+}
+
+.chat-content.chat-content-md code {
+  font-family: ui-monospace, SFMono-Regular, 'JetBrains Mono', Menlo, Consolas, monospace;
+  font-size: 12px;
+  background: rgba(0, 0, 0, 0.05);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+
+.chat-md-pre {
+  margin: 6px 0 8px;
+  padding: 8px 10px;
+  background: rgba(0, 0, 0, 0.05);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-family: ui-monospace, SFMono-Regular, 'JetBrains Mono', Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-x: auto;
+  white-space: pre;
+}
+
+.chat-input-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  padding: 8px 14px;
+  border-top: 1px solid var(--grid);
+}
+
+.chat-input {
+  min-height: 36px;
+  max-height: 120px;
+  resize: vertical;
+  font-size: 12px;
+}
+
+.canon-scroll {
+  position: absolute;
+  inset: 0;
+  overflow-y: auto;
+  padding: 18px 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.canon-headline {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.canon-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.canon-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.canon-row {
+  border: 1px solid var(--grid);
+  border-radius: var(--radius);
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.canon-row-head {
+  display: grid;
+  grid-template-columns: 1fr 90px auto;
+  gap: 6px;
+}
+
+.canon-title,
+.canon-year,
+.canon-url,
+.canon-takeaway,
+.canon-abstract,
+.canon-import-textarea {
+  font-family: var(--mono);
+  font-size: 12px;
+  background: var(--bg-2);
+  color: var(--fg);
+  border: 1px solid var(--grid);
+  border-radius: var(--radius);
+  padding: 6px 8px;
+  width: 100%;
+}
+
+.canon-year {
+  text-align: right;
+}
+
+.canon-takeaway,
+.canon-abstract,
+.canon-import-textarea {
+  resize: vertical;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.canon-takeaway {
+  color: var(--consensus);
+}
+
+.import-controls {
+  display: flex;
+  gap: 10px;
+  align-items: end;
+  flex-wrap: wrap;
+}
+
+.import-controls label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.import-controls select {
+  font-family: var(--mono);
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 4px 8px;
+}
+
+code {
+  background: var(--bg-2);
+  padding: 1px 5px;
+  border-radius: var(--radius);
+  border: 1px solid var(--grid);
+}
+
+.canvas-progress-bar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: var(--grid);
+  z-index: 6;
+}
+
+.canvas-progress-fill {
+  height: 100%;
+  background: var(--accent);
+  transition: width 240ms ease-out;
+}
+
+/* Floating re-run badge: shown when a previous run is still on-screen and
+   we're streaming a new one. Sits top-centre of the canvas, doesn't block
+   pointer events, and surfaces per-round progress without forcing the user
+   back to the empty state. */
+.rerun-badge {
+  position: absolute;
+  top: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 7;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  border-radius: var(--radius-pill);
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid var(--border);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.08);
+  -webkit-backdrop-filter: blur(8px) saturate(140%);
+  backdrop-filter: blur(8px) saturate(140%);
+  font-size: 12px;
+  color: var(--fg);
+  pointer-events: none;
+  max-width: calc(100% - 28px);
+}
+
+.rerun-badge-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 0 rgba(0, 0, 0, 0);
+  animation: rerun-pulse 1.4s ease-in-out infinite;
+  flex: 0 0 auto;
+}
+
+@keyframes rerun-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%      { opacity: 0.45; transform: scale(0.78); }
+}
+
+.rerun-badge-label {
+  font-weight: 500;
+  letter-spacing: 0;
+  white-space: nowrap;
+}
+
+.rerun-badge-progress {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.rerun-badge-chip {
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+  color: var(--muted);
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+}
+
+.help-modal {
+  width: min(440px, 90vw);
+}
+
+.shortcuts-table {
+  border-collapse: collapse;
+  font-size: 12px;
+  width: 100%;
+}
+
+.shortcuts-table td {
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--grid);
+}
+
+.shortcuts-table tr:last-child td {
+  border-bottom: none;
+}
+
+.shortcut-key {
+  font-family: var(--mono);
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--accent);
+  white-space: nowrap;
+  width: 90px;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--bg);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--grid);
+  border-radius: var(--radius);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--border);
+}
+
+.provider-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.provider-row {
+  display: flex;
+  justify-content: space-between;
+  letter-spacing: var(--track);
+  text-transform: uppercase;
+  font-size: 11px;
+  border-bottom: 1px dashed var(--grid);
+  padding: 4px 0;
+}
+
+.test-out {
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  border: 1px solid var(--grid);
+  border-radius: var(--radius);
+  background: var(--bg-2);
+  color: var(--fg);
+  font-size: 11px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-width: 520px;
+  text-align: left;
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  /* On a light theme the dim should be a soft white-translucent wash
+     with a subtle blur — the dark 0.7 dim made the page look broken. */
+  background: rgba(255, 255, 255, 0.18);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 50;
+}
+
+.modal {
+  width: min(720px, 92vw);
+  max-height: 88vh;
+  /* liquid-glass surface — same chrome as the rest of the popovers
+     so settings / help feel like a coherent family. */
+  background: rgba(255, 255, 255, 0.22);
+  -webkit-backdrop-filter: blur(10px) saturate(140%);
+  backdrop-filter: blur(10px) saturate(140%);
+  border: 1px solid rgba(255, 255, 255, 0.7);
+  box-shadow:
+    0 20px 60px rgba(0, 0, 0, 0.18),
+    inset 0 1px 0 rgba(255, 255, 255, 0.85);
+  border-radius: 14px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.modal-header,
+.modal-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--grid);
+}
+
+.modal-footer {
+  border-bottom: none;
+  border-top: 1px solid var(--grid);
+  gap: 10px;
+}
+
+.modal-body {
+  padding: 14px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.modal-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.key-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.key-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: auto auto;
+  gap: 6px;
+  border: 1px solid var(--grid);
+  border-radius: var(--radius);
+  padding: 8px;
+}
+
+.key-row .key-label {
+  grid-column: 1 / span 2;
+  display: flex;
+  justify-content: space-between;
+  letter-spacing: var(--track);
+  text-transform: uppercase;
+  font-size: 11px;
+}
+
+.ollama-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr 2fr auto;
+  gap: 10px;
+  align-items: end;
+}
+
+.tier-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 10px;
+}
+
+.tier-grid select {
+  width: 100%;
+}
+
+.test-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.subset-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: space-between;
+}
+
+.subset-pills {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.pill {
+  padding: 2px 8px;
+  font-size: 11px;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  border-radius: var(--radius);
+}
+
+.pill.active {
+  color: var(--fg);
+  border-color: var(--fg);
+}
+
+.checkbox-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  font-size: 11px;
+  color: var(--muted);
+  letter-spacing: var(--track);
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.checkbox-row input {
+  accent-color: var(--accent);
+  width: 12px;
+  height: 12px;
+  padding: 0;
+}
+
+.prog-row {
+  display: grid;
+  grid-template-columns: 24px 1fr 56px auto;
+  gap: 6px;
+  align-items: center;
+  margin-bottom: 4px;
+}
+
+.prog-track {
+  height: 3px;
+  background: var(--grid);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.prog-fill {
+  height: 100%;
+  background: var(--accent);
+  transition: width 200ms linear;
+}
+
+.graph-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+/* Council tab places the force-graph on the left and the decision Sankey
+   on the right (50/50). Both stop above the chat dock so the dock sits
+   cleanly below them — mirrors the reference UI mockup.
+   Wrapped in a relatively-positioned container that takes the remaining
+   flex space; columns size themselves via `flex: 1 1 0`. */
+.council-stack {
+  /* In-flow inside the now-flex-column .canvas-body so any block above
+     (eg. the WMTR strip) pushes the stack down rather than being overlaid
+     by it. `flex: 1 1 0` fills the remaining vertical room. */
+  position: relative;
+  flex: 1 1 0;
+  display: flex;
+  flex-direction: row;
+  min-width: 0;
+  min-height: 0;
+}
+
+.council-stack-graph {
+  position: relative;
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 0;
+}
+
+.council-stack-sankey {
+  position: relative;
+  flex: 1 1 0;
+  /* Landscape lock: the panel's height is derived from its width via
+     aspect-ratio, and `align-self: center` opts out of flex cross-axis
+     stretch so empty space sits above/below the panel rather than
+     forcing it tall. Result: W > H at every viewport width. */
+  align-self: center;
+  aspect-ratio: 16 / 9;
+  max-height: 100%;
+  border-left: 1px solid var(--grid);
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.council-stack-sankey-label {
+  position: absolute;
+  top: 8px;
+  left: 14px;
+  z-index: 2;
+  font-size: 10px;
+  letter-spacing: var(--track);
+  text-transform: uppercase;
+  color: var(--muted);
+  pointer-events: none;
+}
+
+.decision-sankey-canvas {
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
+}
+
+/* Narrow viewports: collapse to a stacked layout so neither the graph
+   nor the Sankey ends up too cramped to read. The Sankey still keeps a
+   landscape aspect ratio against the full canvas width. */
+@media (max-width: 980px) {
+  .council-stack {
+    flex-direction: column;
+    bottom: 0;
+  }
+  .council-stack-sankey {
+    flex: 0 0 auto;
+    align-self: stretch;
+    aspect-ratio: 16 / 9;
+    max-height: 40%;
+    border-left: none;
+    border-top: 1px solid var(--grid);
+  }
+}
+
+/* Narrow canvas (independent of viewport): the right-side panels can
+   eat enough horizontal space that even on a wide screen the side-by-
+   side graph + Sankey becomes unreadable. Below 880px of canvas width
+   the stack flips to a column with the graph on top and the Sankey
+   below — used by both Council and Society tabs (same class).
+   Both children are sized by aspect-ratio against the canvas width and
+   pinned to the top with a small gap so they sit visually together
+   rather than getting pushed to opposite ends by flex stretch. */
+@container canvas (max-width: 880px) {
+  .council-stack {
+    flex-direction: column;
+    justify-content: center;
+    gap: 6px;
+    bottom: 0;
+  }
+  .council-stack-graph {
+    flex: 0 1 auto;
+    align-self: stretch;
+    aspect-ratio: 4 / 3;
+    max-height: 58%;
+    min-height: 220px;
+    /* Drop the positioned-ancestor role so the absolutely-positioned
+       legend inside escapes the centered group and anchors to .council-
+       stack (which is anchored at canvas top) instead of riding down. */
+    position: static;
+  }
+  /* The echarts container inside also uses position: absolute; inset: 0
+     to fill the graph container — without a positioned parent it would
+     escape too. Reflow it back into normal block flow at full size. */
+  .council-stack-graph .graph-canvas {
+    position: static;
+    width: 100%;
+    height: 100%;
+    display: block;
+  }
+  /* And anchor the legend at the very top of the canvas. */
+  .council-stack-graph .graph-legend {
+    top: 10px;
+    right: 14px;
+    left: auto;
+  }
+  .council-stack-sankey {
+    flex: 0 0 auto;
+    align-self: stretch;
+    aspect-ratio: 16 / 9;
+    max-height: 42%;
+    border-left: none;
+    border-top: 1px solid var(--grid);
+  }
+}
+
+.inspector {
+  /* width is driven by the parent grid-template-columns (dragged via ResizeHandle) */
+  min-width: 0;
+  border-left: 1px solid var(--grid);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--bg);
+}
+
+.inspector-header {
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--grid);
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.agent-tag {
+  padding-left: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.agent-id {
+  letter-spacing: var(--track);
+  text-transform: uppercase;
+  font-size: 11px;
+  color: var(--fg);
+}
+
+.inspector-vote {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--grid);
+}
+
+.inspector-vote > div:last-child {
+  grid-column: 1 / span 2;
+}
+
+.big-num {
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.inspector-body {
+  padding: 12px 14px;
+  overflow-y: auto;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.round-block {
+  border: 1px solid var(--grid);
+  border-radius: var(--radius);
+  padding: 10px;
+}
+
+.round-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 6px;
+  letter-spacing: var(--track);
+  text-transform: uppercase;
+  font-size: 11px;
+}
+
+.round-content {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--fg);
+}
+
+.synthesis-scroll {
+  position: absolute;
+  inset: 0;
+  overflow-y: auto;
+  padding: 18px 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+
+.syn-note {
+  border-left: 2px solid var(--accent);
+  padding-left: 10px;
+}
+
+.syn-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.stack-bar {
+  display: flex;
+  height: 14px;
+  border-radius: var(--radius);
+  overflow: hidden;
+  border: 1px solid var(--border);
+}
+
+.stack-seg {
+  height: 100%;
+}
+
+.syn-legend {
+  display: flex;
+  gap: 18px;
+  flex-wrap: wrap;
+}
+
+.syn-legend i {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  margin-right: 6px;
+  vertical-align: middle;
+}
+
+.syn-metric {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 14px;
+  border-top: 1px dashed var(--grid);
+  padding-top: 10px;
+}
+
+/* .syn-table inherits the unified modern-table styling defined below
+   alongside .justify-table — see "Modern shared table" rules. */
+
+.syn-risks {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.syn-risk {
+  display: grid;
+  grid-template-columns: 36px 1fr;
+  gap: 10px;
+  align-items: center;
+  padding: 6px 0;
+  border-bottom: 1px dashed var(--grid);
+}
+
+.count-pill {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 2px 0;
+  text-align: center;
+  font-size: 11px;
+}
+
+.dissent-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.dissent-row {
+  display: grid;
+  grid-template-columns: 140px 80px 56px 1fr;
+  gap: 10px;
+  align-items: center;
+  padding: 8px 10px;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--grid);
+  border-radius: 0;
+  color: var(--fg);
+  text-align: left;
+  text-transform: none;
+  letter-spacing: 0;
+  cursor: pointer;
+  font-size: 11px;
+}
+
+.dissent-row:hover {
+  background: var(--bg-2);
+  color: var(--accent);
+  border-color: var(--border);
+}
+
+.dissent-risk {
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.society-params {
+  gap: 12px;
+}
+
+.sliders-block,
+.mix-block {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.mix-block {
+  border-top: 1px dashed var(--grid);
+  padding-top: 8px;
+  margin-top: 2px;
+}
+
+.mix-label {
+  font-size: 11px;
+  letter-spacing: var(--track);
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.slider-row {
+  display: grid;
+  grid-template-columns: 92px 1fr 44px;
+  align-items: center;
+  gap: 8px;
+}
+
+.slider-row.dense {
+  grid-template-columns: 72px 1fr 40px;
+  font-size: 11px;
+}
+
+.slider-label {
+  font-size: 11px;
+  color: var(--muted);
+  letter-spacing: var(--track);
+  text-transform: uppercase;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.slider-readout {
+  font-size: 11px;
+  text-align: right;
+  color: var(--fg);
+}
+
+input[type='range'] {
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+  width: 100%;
+  height: 14px;
+  padding: 0;
+  border: none;
+}
+
+input[type='range']::-webkit-slider-runnable-track {
+  height: 1px;
+  background: var(--border);
+  border: none;
+}
+
+input[type='range']::-moz-range-track {
+  height: 1px;
+  background: var(--border);
+  border: none;
+}
+
+input[type='range']::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 9px;
+  height: 9px;
+  border-radius: var(--radius);
+  background: var(--fg);
+  border: none;
+  margin-top: -4px;
+  cursor: ew-resize;
+}
+
+input[type='range']::-moz-range-thumb {
+  width: 9px;
+  height: 9px;
+  border-radius: var(--radius);
+  background: var(--fg);
+  border: none;
+  cursor: ew-resize;
+}
+
+input[type='range']:focus::-webkit-slider-thumb {
+  background: var(--accent);
+}
+
+input[type='range']:focus::-moz-range-thumb {
+  background: var(--accent);
+}
+
+.culture-row {
+  display: grid;
+  grid-template-columns: 92px 1fr;
+  gap: 8px;
+  align-items: center;
+  border-top: 1px dashed var(--grid);
+  padding-top: 8px;
+  margin-top: 2px;
+}
+
+.culture-row input {
+  width: 100%;
+  padding: 4px 8px;
+}
+
+.sentiment-key {
+  position: absolute;
+  left: 12px;
+  top: 12px;
+  /* liquid-glass surface */
+  background: rgba(255, 255, 255, 0.18);
+  -webkit-backdrop-filter: blur(8px) saturate(140%);
+  backdrop-filter: blur(8px) saturate(140%);
+  border: 1px solid rgba(255, 255, 255, 0.7);
+  box-shadow:
+    0 8px 32px rgba(0, 0, 0, 0.10),
+    inset 0 1px 0 rgba(255, 255, 255, 0.85);
+  border-radius: var(--radius-lg);
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11px;
+  z-index: 5;
+}
+
+.sentiment-key-label {
+  letter-spacing: var(--track);
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.sentiment-pip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 4px;
+  border-radius: 3px;
+  letter-spacing: var(--track);
+  text-transform: uppercase;
+  color: var(--fg);
+  cursor: default;
+  user-select: none;
+  transition: background 80ms ease;
+}
+
+.sentiment-pip:hover {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+.sentiment-pip i {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.graph-legend {
+  position: absolute;
+  top: 10px;
+  right: 14px;
+  /* liquid-glass surface */
+  background: rgba(255, 255, 255, 0.18);
+  -webkit-backdrop-filter: blur(8px) saturate(140%);
+  backdrop-filter: blur(8px) saturate(140%);
+  border: 1px solid rgba(255, 255, 255, 0.7);
+  box-shadow:
+    0 8px 32px rgba(0, 0, 0, 0.10),
+    inset 0 1px 0 rgba(255, 255, 255, 0.85);
+  border-radius: var(--radius-lg);
+  padding: 6px 8px;
+  font-size: 11px;
+  z-index: 5;
+  display: flex;
+  gap: 4px;
+}
+
+.graph-legend-horizontal {
+  flex-direction: row;
+  flex-wrap: wrap;
+  max-width: 60%;
+  gap: 4px 14px;
+}
+
+.graph-legend-vertical {
+  flex-direction: column;
+  gap: 4px;
+  max-width: 320px;
+}
+
+.graph-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 4px;
+  border-radius: 3px;
+  letter-spacing: var(--track);
+  color: var(--fg);
+  cursor: default;
+  user-select: none;
+  white-space: nowrap;
+  transition: background 80ms ease;
+}
+
+.graph-legend-item:hover {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+.graph-legend-item i {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: 0 0 8px;
+}
+
+.graph-legend-item-label {
+  text-transform: none;
+  font-family: var(--font);
+}
+
+
+/* ─── Justification panel ─────────────────────────────────────── */
+
+.justify-block {
+  margin-top: 18px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--grid);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.justify-header {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--muted);
+  letter-spacing: var(--track);
+  text-transform: uppercase;
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.justify-rule {
+  color: var(--border);
+  font-family: var(--font);
+}
+
+.justify-cta {
+  align-self: flex-start;
+}
+
+.justify-loading {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.justify-spinner {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  border: 1px solid var(--muted);
+  border-top-color: transparent;
+  animation: justify-spin 700ms linear infinite;
+}
+
+@keyframes justify-spin {
+  to { transform: rotate(360deg); }
+}
+
+.justify-error {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: flex-start;
+}
+
+.justify-view {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.justify-framework {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.justify-framework-label {
+  letter-spacing: var(--track);
+  text-transform: uppercase;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.justify-framework-value {
+  color: var(--fg);
+  font-size: 13px;
+}
+
+.justify-citations,
+.justify-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* Formulas wrapper — modern-table chrome (rounded outer frame, single
+   line, horizontal dividers between formulas, no per-row border). */
+.justify-formulas {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.justify-formulas .panel-label {
+  margin-bottom: 2px;
+}
+
+.justify-formulas-table {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+/* Modern shared table — rounded outer frame, horizontal-only dividers,
+   muted small-caps header, generous row padding. Both .justify-table
+   and .syn-table inherit this look. */
+
+.justify-table,
+.syn-table {
+  width: 100%;
+  border-collapse: separate;     /* needed for outer border-radius */
+  border-spacing: 0;
+  font-size: 12px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;              /* clip header corners to the radius */
+}
+
+.justify-table th,
+.justify-table td,
+.syn-table th,
+.syn-table td {
+  padding: 12px 16px;
+  text-align: left;
+  vertical-align: middle;
+  border: none;
+  border-bottom: 1px solid var(--grid);
+}
+
+.justify-table tr:last-child td,
+.syn-table tr:last-child td {
+  border-bottom: none;
+}
+
+.justify-table th,
+.syn-table th {
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  color: var(--muted);
+  background: transparent;
+  padding-top: 14px;
+  padding-bottom: 14px;
+}
+
+/* The justify table sometimes lays out a wide "relevance" cell — let
+   that column flex so the others stay tight. */
+.justify-table td:last-child,
+.justify-table th:last-child {
+  width: 100%;
+}
+
+.justify-formula {
+  /* lives inside .justify-formulas-table now — single bottom divider
+     instead of a full border, drops on the last child. */
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--grid);
+  background: transparent;
+}
+
+.justify-formula:last-child {
+  border-bottom: none;
+}
+
+.justify-formula-name {
+  text-transform: uppercase;
+  letter-spacing: var(--track);
+}
+
+.justify-formula-applied {
+  color: var(--muted);
+}
+
+.math-block {
+  display: block;
+  font-size: 13px;
+  color: var(--fg);
+}
+
+.math-block .katex-display {
+  margin: 0;
+  text-align: left;
+}
+
+.math-block .katex { color: var(--fg); }
+
+.justify-body-text {
+  color: var(--fg);
+  font-size: 12px;
+  line-height: 1.55;
+  max-width: 72ch;
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.justify-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.justify-all-btn {
+  align-self: stretch;
+  text-align: center;
+  letter-spacing: var(--track);
+}
+
+.jur-row {
+  display: grid;
+  grid-template-columns: 1fr 200px;
+  gap: 10px;
+  align-items: center;
+}
+
+.round-keyrisk {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 0;
+  border-top: 1px dashed var(--grid);
+}
+
+.graph-legend-item,
+.sentiment-pip {
+  cursor: pointer;
+}
+
+.graph-legend-item.is-pinned,
+.sentiment-pip.is-pinned {
+  background: var(--accent-soft);
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.graph-legend-item.is-pinned:hover,
+.sentiment-pip.is-pinned:hover {
+  background: var(--accent-soft);
+  filter: brightness(0.95);
+}
+
+.resize-handle {
+  width: 6px;
+  background: transparent;
+  cursor: col-resize;
+  user-select: none;
+  touch-action: none;
+  position: relative;
+  transition: background 120ms linear;
+}
+
+/* Only paint the handle while the user is actually hovering / dragging,
+   so when at rest there's no visible vertical line separating the
+   sidebar from the canvas. */
+.resize-handle:hover,
+.resize-handle.is-active {
+  background: var(--accent);
+}
+
+/* widen the actual hit-target without enlarging the visible bar */
+.resize-handle::after {
+  content: '';
+  position: absolute;
+  inset: 0 -3px;
+}
+
+body.is-resizing {
+  cursor: col-resize !important;
+  user-select: none;
+}
+body.is-resizing * {
+  cursor: col-resize !important;
+  user-select: none !important;
+}
+
+.group-dist {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0 2px;
+}
+
+/* .group-members / .group-member-row removed — GroupInspector members
+   are rendered as a real <table className="syn-table"> now, so they
+   inherit the modern-table chrome. */
+
+.justify-formula.is-unverified {
+  /* amber rail down the left side of the row inside the shared outer
+     frame — uses box-shadow so it doesn't fight the border-bottom. */
+  box-shadow: inset 3px 0 0 var(--dissent);
+  padding-left: 19px;
+}
+
+.justify-formula-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.justify-formula-warning {
+  color: var(--dissent);
+  letter-spacing: var(--track);
+  text-transform: uppercase;
+  border: 1px solid var(--dissent);
+  padding: 1px 6px;
+  border-radius: 2px;
+  white-space: nowrap;
+  cursor: help;
+}
+
+.notation-key {
+  margin-top: 8px;
+  border-top: 1px dashed var(--grid);
+  padding-top: 8px;
+}
+
+.notation-key-toggle {
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  padding: 4px 0;
+  color: var(--muted);
+  letter-spacing: var(--track);
+  text-transform: uppercase;
+  font-size: 11px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.notation-key-toggle:hover {
+  color: var(--fg);
+  border-color: transparent;
+}
+
+.notation-key-arrow {
+  font-family: var(--font);
+  display: inline-block;
+  width: 12px;
+}
+
+.notation-key-count {
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+/* Notation-key table — same modern table chrome, slightly tighter
+   padding since it's a reference list rather than a primary surface. */
+.notation-key-table {
+  margin-top: 6px;
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 11px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.notation-key-table td {
+  padding: 10px 14px;
+  vertical-align: middle;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--grid);
+}
+
+.notation-key-table tr:last-child td {
+  border-bottom: none;
+}
+
+.notation-key-sym {
+  width: 1%;
+  white-space: nowrap;
+  font-size: 13px;
+}
+
+.notation-key-sym .math-inline .katex {
+  font-size: 1em;
+  color: var(--fg);
+}
+
+.notation-key-meaning {
+  color: var(--fg);
+}
+
+/* ─── Sidebar collapse + accordion sections (Phase 2) ─────────────── */
+
+.sidebar {
+  background: var(--bg);
+}
+
+/* Sticky re-run footer — pinned to the bottom of the scrolling sidebar so
+   any adjustment in the sliders / mixes above can be applied without
+   scrolling back to the scenario card. */
+.sidebar-rerun {
+  position: sticky;
+  bottom: 0;
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 14px 14px;
+  background: var(--bg-2);
+  border-top: 1px solid var(--grid);
+  box-shadow: 0 -8px 12px -10px rgba(0, 0, 0, 0.08);
+  z-index: 2;
+}
+
+.sidebar-rerun-btn {
+  width: 100%;
+  padding: 10px 14px;
+}
+
+.sidebar-rerun-hint {
+  text-align: center;
+  line-height: 1.3;
+}
+
+.sidebar-collapsed {
+  /* zero-width placeholder — the topbar toggle owns the open/close
+     affordance now, so the collapsed sidebar truly hides. */
+  width: 0;
+  height: 0;
+  padding: 0;
+  margin: 0;
+  overflow: hidden;
+}
+
+.sidebar-head {
+  display: flex;
+  justify-content: flex-end;
+  padding: 10px 12px 0;
+}
+
+.sidebar-toggle {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--fg);
+  font-size: 14px;
+  line-height: 1;
+}
+
+.sidebar-toggle:hover {
+  background: var(--bg-2);
+  border-color: var(--border-strong);
+}
+
+.accordion-section {
+  margin: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg);
+  overflow: hidden;
+}
+
+.accordion-section.is-open {
+  background: var(--bg);
+}
+
+.accordion-header {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  text-align: left;
+  color: var(--fg);
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+  cursor: pointer;
+}
+
+.accordion-header:hover {
+  background: var(--bg-2);
+  border-color: transparent;
+}
+
+.accordion-section.is-open .accordion-header {
+  border-bottom: 1px solid var(--grid);
+}
+
+.accordion-title {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.accordion-icon {
+  display: inline-flex;
+  align-items: center;
+  color: var(--muted);
+  width: 16px;
+}
+
+.accordion-section.is-open .accordion-icon {
+  color: var(--fg);
+}
+
+.accordion-meta {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 10px;
+  color: var(--muted);
+}
+
+.accordion-summary {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.accordion-caret {
+  font-family: var(--mono);
+  font-size: 14px;
+  color: var(--muted);
+  width: 14px;
+  text-align: center;
+}
+
+.accordion-body {
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* Inside an accordion we don't want the nested .panel (ScenarioPanel) to
+   double its visual chrome. Strip its border + padding when nested. */
+.accordion-body > .panel {
+  border: none;
+  padding: 0;
+}
+
+/* ─── Phase 3: centered greeting/scenario heading ──────────────────────── */
+
+.center-heading-wrap {
+  display: flex;
+  justify-content: center;
+  /* tight top padding when the heading sits at the top of the canvas
+     (run state). For the empty state, the heading is rendered inside
+     .canvas-empty-stage and inherits the stage's gap instead. */
+  padding: 18px 32px 4px;
+}
+
+.canvas-empty-stage .center-heading-wrap {
+  /* inside the stage, the gap on canvas-empty-stage owns spacing */
+  padding: 0;
+}
+
+.center-heading {
+  margin: 0;
+  color: var(--accent);
+  font-family: var(--font);
+  font-weight: 600;
+  font-size: 22px;
+  line-height: 1.3;
+  letter-spacing: -0.01em;
+  text-align: center;
+  max-width: 820px;
+}
+
+/* ─── Post-run scenario summary chip ──────────────────────────────────
+ *  Charcoal text in a thin pill, smaller than the empty-state greeting.
+ *  Reads as quiet metadata sitting above the graph / synthesis content
+ *  rather than competing for attention with the canvas itself. */
+.scenario-summary-chip {
+  position: relative;                 /* anchor for the hover tooltip */
+  display: inline-block;
+  margin: 0;
+  padding: 6px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--bg);
+  color: var(--fg-2);                 /* charcoal — #2a2a2a */
+  font-family: var(--font);
+  font-weight: 500;
+  font-size: 13px;
+  line-height: 1.4;
+  letter-spacing: 0;
+  text-align: center;
+  max-width: 720px;
+  cursor: help;
+}
+
+/* Hover tooltip — shows the full scenario text below the chip. Suppresses
+   the native browser `title` tooltip from competing by way of a 200ms
+   reveal delay (long enough that the native one won't have fired yet). */
+.scenario-summary-chip[data-tooltip]::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  top: calc(100% + 10px);
+  left: 50%;
+  transform: translateX(-50%);
+  /* liquid-glass-dark */
+  background: rgba(20, 22, 28, 0.58);
+  color: var(--bg);
+  -webkit-backdrop-filter: blur(7px) saturate(130%);
+  backdrop-filter: blur(7px) saturate(130%);
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  box-shadow:
+    0 10px 28px rgba(0, 0, 0, 0.22),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.55;
+  letter-spacing: 0;
+  text-transform: none;
+  padding: 10px 14px;
+  border-radius: 10px;
+  white-space: normal;
+  width: max-content;
+  max-width: 560px;
+  min-width: 260px;
+  text-align: left;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 140ms ease 200ms;
+  z-index: 25;
+}
+
+.scenario-summary-chip:hover[data-tooltip]::after,
+.scenario-summary-chip:focus-visible[data-tooltip]::after {
+  opacity: 1;
+}
+
+/* ─── Dominant-stance pill (sits next to the scenario chip) ───────────── */
+
+.scenario-heading-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  max-width: 100%;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.stance-dominant-pill {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--bg);
+  color: var(--fg-2);
+  font-family: var(--font);
+  font-weight: 500;
+  font-size: 12px;
+  line-height: 1.2;
+  cursor: help;
+  outline: none;
+}
+
+.stance-dominant-pill:focus-visible {
+  border-color: var(--border-strong);
+  box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.06);
+}
+
+.stance-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+}
+
+.stance-pill-label {
+  letter-spacing: 0;
+}
+
+.stance-pill-pct {
+  font-weight: 600;
+}
+
+/* Hover popup — full distribution with chart + percentages. */
+.stance-popup {
+  position: absolute;
+  top: calc(100% + 10px);
+  left: 50%;
+  transform: translateX(-50%);
+  width: 240px;
+  background: rgba(20, 22, 28, 0.62);
+  color: var(--bg);
+  -webkit-backdrop-filter: blur(8px) saturate(135%);
+  backdrop-filter: blur(8px) saturate(135%);
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  box-shadow:
+    0 10px 28px rgba(0, 0, 0, 0.22),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  padding: 10px 12px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 140ms ease 120ms;
+  z-index: 26;
+}
+
+.stance-dominant-pill:hover .stance-popup,
+.stance-dominant-pill:focus-visible .stance-popup {
+  opacity: 1;
+}
+
+.stance-popup-title {
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  opacity: 0.78;
+}
+
+.stance-popup-bar {
+  display: flex;
+  height: 10px;
+  border-radius: 6px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.stance-popup-seg {
+  height: 100%;
+}
+
+.stance-popup-legend {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.stance-popup-row {
+  display: grid;
+  grid-template-columns: 10px 1fr auto;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.stance-popup-row i {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+
+.stance-popup-val {
+  font-weight: 600;
+}
+
+/* ─── Phase 3: scenario card (empty-state body) ───────────────────────── */
+
+.canvas-empty-stage {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  padding: 0 32px;
+  gap: 16px;
+}
+
+.scenario-card {
+  width: 100%;
+  max-width: 720px;
+  border: 1px solid var(--border-strong);
+  border-radius: 20px;
+  background: var(--bg);
+  padding: 18px 18px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  box-shadow: var(--shadow-1);
+}
+
+.scenario-card-input {
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  padding: 4px 4px 0;
+  font-family: var(--font);
+  font-size: 14px;
+  line-height: 1.5;
+  resize: none;
+  min-height: 110px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.scenario-card-input:focus {
+  border: none;
+}
+
+.scenario-card-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-top: 1px dashed var(--grid);
+  padding-top: 10px;
+}
+
+.pill-btn {
+  border-radius: var(--radius-pill);
+  padding: 8px 18px;
+  background: var(--fg);
+  color: var(--bg);
+  border-color: var(--fg);
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.pill-btn:hover:not(:disabled) {
+  background: var(--fg);
+  border-color: var(--fg);
+  color: var(--bg);
+  filter: brightness(1.1);
+}
+
+.pill-btn:disabled {
+  background: transparent;
+  color: var(--muted);
+  border-color: var(--border);
+}
+
+.canvas-empty-progress {
+  margin-top: 4px;
+}
+
+/* Example-scenario chips under the empty-state ScenarioCard. Click any chip
+   to populate the textarea with the preset prompt. */
+.scenario-presets {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  max-width: 720px;
+  margin-top: 2px;
+}
+
+.scenario-preset-chip {
+  font-family: var(--font);
+  font-size: 12px;
+  line-height: 1.2;
+  padding: 7px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--bg);
+  color: var(--fg);
+  cursor: pointer;
+  transition: border-color 120ms ease, background 120ms ease, color 120ms ease;
+}
+
+.scenario-preset-chip:hover:not(:disabled) {
+  border-color: var(--fg);
+  background: var(--fg);
+  color: var(--bg);
+}
+
+.scenario-preset-chip:disabled {
+  color: var(--muted);
+  border-color: var(--border);
+  cursor: not-allowed;
+}
+
+/* ─── Phase 3: BottomBar — chat / refine pill input ───────────────────── */
+
+.canvas {
+  position: relative;
+}
+
+.bottom-bar {
+  border-top: 1px solid var(--grid);
+  padding: 10px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: var(--bg);
+}
+
+.bottom-bar-history {
+  max-height: 240px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background: var(--bg);
+}
+
+.bottom-bar-history-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.bottom-bar-scroller {
+  overflow-y: auto;
+  max-height: 200px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.bottom-bar-samples {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.bottom-bar-input-row {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  padding: 4px 4px 4px 6px;
+  background: var(--bg);
+}
+
+.bottom-bar-input-row:focus-within {
+  border-color: var(--border-strong);
+}
+
+.bottom-bar-mode {
+  display: inline-flex;
+  align-items: center;
+  background: var(--bg-2);
+  border-radius: var(--radius-pill);
+  padding: 2px;
+}
+
+.mode-btn {
+  border: none;
+  background: transparent;
+  padding: 4px 12px;
+  border-radius: var(--radius-pill);
+  font-size: 12px;
+  color: var(--muted);
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.mode-btn.is-active {
+  background: var(--bg);
+  color: var(--fg);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+}
+
+.bottom-bar-input {
+  flex: 1;
+  border: none;
+  background: transparent;
+  font-family: var(--font);
+  font-size: 14px;
+  padding: 8px 10px;
+  min-height: 38px;
+  resize: none;
+}
+
+.bottom-bar-input:focus {
+  border: none;
+}
+
+/* ─── Phase 4: decision-sidebar handle (right edge label) ─────────── */
+
+.decision-handle {
+  border-left: 1px solid var(--grid);
+  background: var(--bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px 0;
+}
+
+.decision-handle-label {
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+  color: var(--muted);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+/* ─── Decision sidebar — collapsible panel on the right ───────────── */
+
+.decision-panel {
+  border-left: 1px solid var(--grid);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--bg);
+}
+
+.decision-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--grid);
+}
+
+.decision-panel-title {
+  font-weight: 500;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.decision-panel-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.decision-panel-body > .inspector,
+.decision-panel-body > aside {
+  border-left: none;
+  flex: 1;
+}
+
+.decision-handle-btn {
+  /* the existing .decision-handle layout still applies; this adds button
+     affordances and hover state on top */
+  background: var(--bg);
+  cursor: pointer;
+  border: none;
+  border-left: 1px solid var(--grid);
+  padding: 16px 0;
+}
+
+.decision-handle-btn:hover {
+  background: var(--bg-2);
+}
+
+.decision-handle-btn:hover .decision-handle-label {
+  color: var(--fg);
+}
+
+/* ─── Conversation panel — second right column (chat) ─────────────── */
+
+.conversation-panel {
+  border-left: 1px solid var(--grid);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--bg);
+}
+
+.conversation-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--grid);
+}
+
+.conversation-panel-title {
+  font-weight: 500;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.conversation-panel-sub {
+  padding: 6px 14px 4px;
+  border-bottom: 1px solid var(--grid);
+}
+
+.conversation-panel-scroller {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.conversation-panel-samples {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: flex-start;
+}
+
+.conversation-panel-samples .pill {
+  font-size: 12px;
+  text-align: left;
+  white-space: normal;
+  line-height: 1.35;
+  max-width: 100%;
+}
+
+.conversation-panel-mode-row {
+  display: flex;
+  align-items: center;
+  padding: 8px 14px 0;
+  background: var(--bg);
+}
+
+.conversation-panel-input-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  padding: 8px 14px 12px;
+  background: var(--bg);
+}
+
+.conversation-panel-input {
+  min-height: 40px;
+  max-height: 200px;
+  resize: none;
+  overflow-y: auto;
+  font-size: 13px;
+  line-height: 1.45;
+  border-radius: var(--radius);
+  padding: 8px 10px;
+}
+
+.conversation-panel-input:focus {
+  border-color: var(--border-strong);
+}
+
+.decision-empty {
+  padding: 18px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.decision-empty-hints {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.decision-empty-hints li {
+  margin-bottom: 4px;
+}
+
+/* ─── Phase 6: unified scenario / chat card — dropped state ───────── */
+
+.canvas-body {
+  /* allow the dropped card to absolutely-position over the canvas content */
+  position: relative;
+}
+
+.scenario-card-dock {
+  position: absolute;
+  left: 50%;
+  bottom: 18px;
+  transform: translateX(-50%);
+  width: min(820px, calc(100% - 32px));
+  z-index: 4;
+  pointer-events: none;
+}
+
+/* The chat dock keeps its default centred position. Because the council-
+   stack ends at `bottom: 180px`, the dock has clear space below both the
+   force-graph and the Sankey — matching the reference UI mockup. */
+
+.scenario-card-dock > .scenario-card {
+  pointer-events: auto;
+}
+
+.scenario-card--dropped {
+  padding: 8px 10px 8px 10px;
+  border-radius: 22px;
+  /* liquid-glass surface — sits over whatever's behind (graph, etc.) */
+  background: rgba(255, 255, 255, 0.18);
+  -webkit-backdrop-filter: blur(8px) saturate(140%);
+  backdrop-filter: blur(8px) saturate(140%);
+  border: 1px solid rgba(255, 255, 255, 0.7);
+  box-shadow:
+    0 8px 28px rgba(0, 0, 0, 0.10),
+    inset 0 1px 0 rgba(255, 255, 255, 0.85);
+  gap: 6px;
+}
+
+.scenario-card--dropped .scenario-card-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.scenario-card-row-input {
+  flex: 1;
+  border: none;
+  background: transparent;
+  font-family: var(--font);
+  font-size: 14px;
+  padding: 8px 10px;
+  min-height: 34px;
+  resize: none;
+  border-radius: 0;
+}
+
+.scenario-card-row-input:focus {
+  border: none;
+}
+
+.scenario-card-samples {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 4px 6px 0;
+}
+
+.scenario-card-history {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 8px 10px;
+  background: var(--bg);
+}
+
+.scenario-card-history-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.scenario-card-scroller {
+  overflow-y: auto;
+  max-height: 220px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* `.bottom-bar-mode` / `.mode-btn` were defined in Phase 3; the dropped card
+   re-uses them verbatim so the chat/refine pill chrome stays identical. */
+
+/* ─── Society inspector — member cards ──────────────────────────────
+   Two-line card so the reaction text can wrap freely instead of being
+   horizontally clipped by a narrow grid cell. */
+
+.society-members {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 320px;
+  overflow-y: auto;
+  margin-top: 4px;
+}
+
+.society-member-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 8px;
+  border-bottom: 1px dashed var(--grid);
+}
+
+.society-member-card:last-child {
+  border-bottom: none;
+}
+
+.society-member-meta {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.society-member-reaction {
+  position: relative;
+  color: var(--fg);
+  line-height: 1.45;
+  word-wrap: break-word;
+}
+
+/* When the reaction was clipped, data-tooltip carries the full text.
+   Reveal it as a dark bubble above the clipped line on hover. */
+.society-member-reaction[data-tooltip] {
+  cursor: help;
+}
+
+.society-member-reaction[data-tooltip]::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  /* liquid-glass-dark */
+  background: rgba(20, 22, 28, 0.58);
+  color: var(--bg);
+  -webkit-backdrop-filter: blur(7px) saturate(130%);
+  backdrop-filter: blur(7px) saturate(130%);
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  box-shadow:
+    0 8px 22px rgba(0, 0, 0, 0.22),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.5;
+  padding: 8px 12px;
+  border-radius: 8px;
+  white-space: normal;
+  width: max-content;
+  max-width: 360px;
+  text-align: left;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 140ms ease 180ms;
+  z-index: 30;
+}
+
+.society-member-reaction:hover[data-tooltip]::after,
+.society-member-reaction:focus-visible[data-tooltip]::after {
+  opacity: 1;
+}
+
+/* ─── Liquid Glass utility ──────────────────────────────────────────
+ *
+ *  A pair of reusable frosted-glass surfaces inspired by the Apple
+ *  liquid-glass design language. Two variants:
+ *
+ *  .liquid-glass        — light surface, sits on whatever's behind it
+ *                         (canvas, graph). Used for popovers, legends.
+ *  .liquid-glass-dark   — dark surface for tooltips that need to read
+ *                         as a clear contrast over the page content.
+ *
+ *  Both rely on backdrop-filter blur + saturate. -webkit- prefix
+ *  retained for Safari.
+ */
+
+.liquid-glass {
+  background: rgba(255, 255, 255, 0.18);
+  -webkit-backdrop-filter: blur(8px) saturate(140%);
+  backdrop-filter: blur(8px) saturate(140%);
+  border: 1px solid rgba(255, 255, 255, 0.7);
+  box-shadow:
+    0 8px 32px rgba(0, 0, 0, 0.10),
+    inset 0 1px 0 rgba(255, 255, 255, 0.85);
+}
+
+.liquid-glass-dark {
+  /* The dark tooltips stay dark for high-contrast reading, but pick up
+     the same blur + saturated glass-edge highlights as the light
+     variant, so they feel like one design family. */
+  background: rgba(20, 22, 28, 0.58);
+  color: var(--bg);
+  -webkit-backdrop-filter: blur(7px) saturate(130%);
+  backdrop-filter: blur(7px) saturate(130%);
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  box-shadow:
+    0 8px 28px rgba(0, 0, 0, 0.22),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+/* ─── Stance pill — rounded chip inside table cells ──────────────────
+ *  Lets stance values (support / oppose / abstain) read like the
+ *  Admin / Editor / Active / Inactive pills in the modern-table
+ *  reference. Picks up colour from the .status-ok / .status-err /
+ *  .muted modifier classes already in the project.
+ */
+.stance-pill {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: var(--radius-pill);
+  border: 1px solid currentColor;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: capitalize;
+  line-height: 1.5;
+  background: transparent;
+}
+
+/* ──────────────────────────────────────────────────────────────────
+   Mobile shell (≤820px viewport)
+
+   The desktop layout is a 4-or-5-column CSS grid with side rails and
+   three resizable panels. None of that survives in a phone width, so
+   below 820px we:
+
+   - Collapse `.body` to a flex column (canvas takes the full screen).
+   - Hide the left rail and all resize handles.
+   - Make the three side panels (sidebar / decision / conversation)
+     into off-canvas overlays: sidebar slides in from the left, the
+     decision panel slides up as a bottom sheet, the conversation panel
+     slides up as a near-full-height bottom sheet.
+   - Reserve room at the bottom for `.mobile-nav` (56px) which hosts
+     the three pill buttons that open each overlay.
+   - Compact the topbar so the wordmark + tab strip + settings fit on
+     one line on a 360px-wide phone.
+   ────────────────────────────────────────────────────────────────── */
+
+@media (max-width: 820px) {
+  /* Layout: single column, room for the bottom nav. */
+  .body {
+    display: flex !important;
+    flex-direction: column;
+    padding-bottom: 56px;          /* mobile-nav reserved height */
+    min-height: 0;
+  }
+
+  /* Hide desktop-only chrome. */
+  .left-rail,
+  .resize-handle,
+  .rail-flyout,
+  .decision-handle,
+  .decision-handle-btn {
+    display: none !important;
+  }
+
+  /* Topbar: two rows on phones — row 1 is brand + actions, row 2 is the
+     horizontally-scrollable tab strip. The desktop 4-column grid
+     (auto · 1fr · auto · 32px) can't fit 4 tab names plus a wordmark on
+     a 360px screen, so we re-do the grid as named areas. */
+  .topbar {
+    grid-template-columns: 1fr auto !important;
+    grid-template-areas:
+      "wordmark actions"
+      "tabs     tabs"     !important;
+    padding: 8px 10px 0;
+    gap: 4px 10px;
+    min-height: 0;
+    row-gap: 4px;
+  }
+  .topbar .wordmark { grid-area: wordmark; }
+  .topbar .tabs     { grid-area: tabs; }
+  .topbar .status-cluster { grid-area: actions; }
+
+  .wordmark {
+    font-size: 13px;
+    letter-spacing: 0.08em;
+    white-space: nowrap;
+  }
+
+  /* Status cluster: keep help + settings, drop the api/ollama/canon
+     telemetry text. Tighten the buttons so they read as icons. */
+  .topbar .status-cluster {
+    gap: 6px;
+    align-self: center;
+  }
+  .topbar .status-cluster .muted,
+  .topbar .status-cluster .status-ok,
+  .topbar .status-cluster .status-warn {
+    display: none;
+  }
+  .topbar .status-cluster .ghost-btn {
+    padding: 6px 10px;
+    font-size: 12px;
+    min-width: 32px;
+    min-height: 32px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  /* Tab strip: horizontal scroll, no scrollbar chrome. Tabs themselves
+     shrink so they read as a row of pills rather than the desktop's
+     underlined typographic tabs. */
+  .topbar .tabs {
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+    padding: 0;
+    border-bottom: none;
+    gap: 2px;
+    /* Hint to the browser that this row is the touch target for
+       swipe-scroll; otherwise iOS will fight us. */
+    -webkit-overflow-scrolling: touch;
+  }
+  .topbar .tabs::-webkit-scrollbar {
+    display: none;
+  }
+  .topbar .tab {
+    flex: 0 0 auto;
+    padding: 6px 10px;
+    font-size: 11.5px;
+    letter-spacing: 0.04em;
+    border-bottom-width: 2px;
+  }
+  .topbar .tab.active {
+    border-bottom-color: var(--accent);
+  }
+
+  /* Canvas fills the remaining vertical space. */
+  .canvas {
+    min-height: 0;
+    flex: 1;
+  }
+
+  /* Sidebar → left slide-in drawer. */
+  .sidebar {
+    position: fixed;
+    top: 56px;                     /* below topbar */
+    left: 0;
+    bottom: 56px;                  /* above mobile-nav */
+    width: min(86vw, 360px);
+    z-index: 30;
+    transform: translateX(-105%);
+    transition: transform 240ms cubic-bezier(0.2, 0.8, 0.2, 1);
+    box-shadow: 6px 0 24px rgba(0, 0, 0, 0.12);
+    border-right: 1px solid var(--grid);
+    background: var(--bg);
+    overflow-y: auto;
+  }
+  .sidebar.is-open-mobile {
+    transform: translateX(0);
+  }
+
+  /* Decision panel → bottom sheet at ~70vh. */
+  .decision-panel {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 56px;                  /* above mobile-nav */
+    height: 70vh;
+    z-index: 30;
+    transform: translateY(105%);
+    transition: transform 240ms cubic-bezier(0.2, 0.8, 0.2, 1);
+    box-shadow: 0 -6px 24px rgba(0, 0, 0, 0.12);
+    border-top: 1px solid var(--grid);
+    border-left: none;
+    border-radius: 14px 14px 0 0;
+    background: var(--bg);
+    overflow: hidden;              /* clip child content to rounded corners */
+  }
+  .decision-panel.is-open-mobile {
+    transform: translateY(0);
+  }
+
+  /* Conversation panel → bottom sheet, slightly taller (chat needs
+     room to breathe). */
+  .conversation-panel {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 56px;
+    height: 82vh;
+    z-index: 30;
+    transform: translateY(105%);
+    transition: transform 240ms cubic-bezier(0.2, 0.8, 0.2, 1);
+    box-shadow: 0 -6px 24px rgba(0, 0, 0, 0.12);
+    border-top: 1px solid var(--grid);
+    border-left: none;
+    border-radius: 14px 14px 0 0;
+    background: var(--bg);
+    overflow: hidden;              /* clip child content to rounded corners */
+  }
+  .conversation-panel.is-open-mobile {
+    transform: translateY(0);
+  }
+
+  /* Scrim while any panel is open. */
+  .mobile-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.32);
+    backdrop-filter: blur(2px);
+    -webkit-backdrop-filter: blur(2px);
+    z-index: 28;
+    animation: mobile-fade-in 180ms ease-out;
+  }
+
+  @keyframes mobile-fade-in {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+  }
+
+  /* Bottom mobile nav. */
+  .mobile-nav {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 56px;
+    z-index: 35;
+    display: flex;
+    align-items: stretch;
+    background: var(--bg);
+    border-top: 1px solid var(--grid);
+    box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.04);
+    padding: 0 8px;
+    /* Respect device safe-area inset (notched phones, gesture bar). */
+    padding-bottom: env(safe-area-inset-bottom, 0);
+    height: calc(56px + env(safe-area-inset-bottom, 0px));
+  }
+
+  .mobile-nav-btn {
+    flex: 1 1 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    background: transparent;
+    border: none;
+    color: var(--muted);
+    padding: 6px 0;
+    cursor: pointer;
+    border-radius: 0;
+    letter-spacing: 0;
+    text-transform: none;
+  }
+  .mobile-nav-btn.is-active {
+    color: var(--fg);
+  }
+  .mobile-nav-btn.is-active .mobile-nav-icon {
+    color: var(--accent);
+  }
+
+  .mobile-nav-icon {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 24px;
+  }
+
+  .mobile-nav-label {
+    font-size: 10.5px;
+    line-height: 1;
+    letter-spacing: 0.02em;
+  }
+
+  .mobile-nav-badge {
+    position: absolute;
+    top: -4px;
+    right: -8px;
+    min-width: 16px;
+    height: 16px;
+    border-radius: 999px;
+    background: var(--accent);
+    color: white;
+    font-size: 9.5px;
+    font-weight: 600;
+    padding: 0 4px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  /* Centered scenario card (empty state) — phone-friendly width. */
+  .canvas-empty-stage {
+    padding: 24px 16px 88px;       /* extra bottom so nav doesn't cover content */
+  }
+  .scenario-card {
+    width: min(100%, 560px);
+  }
+  .scenario-presets {
+    max-width: 100%;
+    flex-wrap: wrap;
+  }
+
+  /* Center heading: smaller chip / shorter tagline. */
+  .center-heading-wrap {
+    padding: 10px 12px 6px;
+  }
+  .center-heading {
+    font-size: 15px;
+  }
+  .scenario-summary-chip {
+    font-size: 12.5px;
+    max-width: 100%;
+  }
+
+  /* Make the conversation-panel-mode-row tabs (chat/refine) sit on
+     their own row at the top of the sheet rather than crammed into
+     the input row. The base layout already places them above the
+     input — just make sure they have breathing room. */
+  .conversation-panel-mode-row {
+    padding: 12px 14px 4px;
+  }
+
+  /* Tab strip in the topbar — shrink the pills a touch so they fit. */
+  .topbar .view-tabs {
+    font-size: 12px;
+    gap: 4px;
+  }
+  .topbar .view-tabs button {
+    padding: 6px 10px;
+  }
+}
+
+/* Hide the mobile nav on desktop so it doesn't bleed through if the
+   class is rendered at viewport widths above 820px (e.g. during a
+   resize, before the React subscription fires). */
+@media (min-width: 821px) {
+  .mobile-nav,
+  .mobile-backdrop {
+    display: none !important;
+  }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   WMTR strip — sibling section of the swarm shell. Identity is carried in
+   the data layer (forest-green ECharts series, JetBrains Mono chart labels,
+   25–75 band, cubic-bezier mount easing). The container itself blends with
+   the swarm: same surface as the rest of the canvas, hairline dividers
+   matching `.council-stack-sankey-label` rhythm, mono section header.
+   ───────────────────────────────────────────────────────────────────────── */
+
+.wmtr-strip {
+  /* Forest-green primary kept ONLY for the inline dot and re-simulate CTA.
+     Everything else uses swarm tokens (`var(--bg)`, `var(--fg)`, `var(--muted)`,
+     `var(--grid)`) so the strip stops floating between two white surfaces. */
+  --wmtr-primary: #2ea36b;          /* swarm's --consensus, same green hue */
+  --wmtr-easing:  cubic-bezier(0.16, 1, 0.3, 1);
+
+  background: transparent;
+  color: var(--fg);
+  border: none;
+  border-top: 1px solid var(--grid);
+  border-bottom: 1px solid var(--grid);
+  border-radius: 0;
+  padding: 14px 16px 16px;
+  margin: 0 0 14px 0;
+  font-family: var(--font);
+  animation: wmtr-strip-in 520ms var(--wmtr-easing) both;
+}
+
+@keyframes wmtr-strip-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.wmtr-strip-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding-bottom: 10px;
+}
+
+.wmtr-strip-eyebrow {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 14px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+/* Section header — same treatment as `.council-stack-sankey-label`
+   (font-size 10–11px, --track letter-spacing, uppercase, --muted). The
+   only color accent is the leading forest-green dot. */
+.wmtr-mono-eyebrow {
+  font-family: var(--font);
+  font-size: 11px;
+  letter-spacing: var(--track);
+  text-transform: uppercase;
+  color: var(--muted);
+  position: relative;
+  padding-left: 12px;
+}
+
+.wmtr-mono-eyebrow::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--wmtr-primary);
+}
+
+/* Shock pill — no fill, hairline border in the swarm grid color, mono
+   label so it reads as inline data, not as decoration. */
+.wmtr-strip-pill {
+  font-family: var(--font);
+  font-size: 10.5px;
+  letter-spacing: var(--track);
+  text-transform: uppercase;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid var(--grid);
+  padding: 1px 7px;
+  border-radius: 999px;
+}
+
+.wmtr-strip-pill[data-shock='severe']   { color: var(--adversarial); border-color: rgba(210,58,58,0.35); }
+.wmtr-strip-pill[data-shock='moderate'] { color: var(--dissent); border-color: rgba(196,122,0,0.35); }
+.wmtr-strip-pill[data-shock='mild']     { color: var(--wmtr-primary); border-color: rgba(46,163,107,0.35); }
+
+.wmtr-strip-meta {
+  font-family: var(--font);
+  font-size: 11px;
+  letter-spacing: var(--track);
+  color: var(--muted);
+}
+
+.wmtr-strip-dom {
+  font-family: var(--font);
+  font-size: 11px;
+  letter-spacing: var(--track);
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.wmtr-strip-dom strong {
+  color: var(--fg);
+  font-weight: 600;
+  margin-left: 4px;
+}
+
+.wmtr-strip-grid {
+  display: grid;
+  /* Auto-fit responds to the strip's actual width, not the viewport — so
+     when the canvas is squeezed by the side panels the grid collapses
+     gracefully (2-col → 1-col) without needing viewport media queries.
+     180 px is small enough that two charts sit side-by-side even when
+     both right panels are open. */
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.wmtr-panel {
+  background: transparent;
+  border: none;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.wmtr-panel-head {
+  font-family: var(--font);
+  font-size: 10px;
+  letter-spacing: var(--track);
+  text-transform: uppercase;
+  color: var(--muted);
+  padding: 2px 2px 6px;
+}
+
+.wmtr-panel-body {
+  padding: 0;
+}
+
+.wmtr-chart {
+  width: 100%;
+}
+
+.wmtr-strip-foot {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 14px;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--grid);
+}
+
+.wmtr-strip-foot-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.wmtr-foot-label {
+  font-family: var(--font);
+  font-size: 10px;
+  letter-spacing: var(--track);
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.wmtr-foot-value {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--fg);
+  font-variant-numeric: tabular-nums;
+}
+
+.wmtr-foot-value em {
+  font-style: normal;
+  color: var(--muted);
+  font-weight: 400;
+  font-size: 12px;
+  margin-left: 4px;
+}
+
+.wmtr-foot-numeric {
+  font-variant-numeric: tabular-nums;
+  font-size: 13.5px;
+}
+
+/* ─── intervention row ───────────────────────────────────────────────── */
+
+.wmtr-intervene {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--grid);
+}
+
+.wmtr-intervene-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.wmtr-intervene-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 10px 0 8px;
+}
+
+.wmtr-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  padding: 4px 10px;
+  font-family: var(--font);
+  font-size: 11.5px;
+  color: var(--fg);
+  cursor: pointer;
+  transition: border-color 200ms var(--wmtr-easing), background 200ms var(--wmtr-easing);
+}
+
+.wmtr-chip:hover {
+  border-color: var(--wmtr-primary);
+  background: rgba(46,163,107,0.05);
+}
+
+.wmtr-chip.is-active {
+  border-color: var(--wmtr-primary);
+  background: rgba(46,163,107,0.10);
+  color: var(--fg);
+}
+
+.wmtr-chip-count {
+  color: var(--muted);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.wmtr-chip-arrow {
+  color: var(--wmtr-primary);
+  font-weight: 700;
+}
+
+.wmtr-chip-param {
+  font-weight: 600;
+}
+
+.wmtr-chip-mag {
+  color: var(--muted);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: var(--track);
+}
+
+.wmtr-intervene-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.wmtr-intervene-rationale {
+  color: var(--fg-2);
+  font-size: 12.5px;
+  max-width: 60ch;
+  line-height: 1.45;
+}
+
+.wmtr-intervene-button {
+  font-family: var(--font);
+  font-size: 11.5px;
+  letter-spacing: var(--track);
+  background: var(--wmtr-primary);
+  color: #ffffff;
+  border: 1px solid var(--wmtr-primary);
+  padding: 7px 14px;
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+  transition: background 180ms var(--wmtr-easing), transform 180ms var(--wmtr-easing);
+}
+
+.wmtr-intervene-button:hover:not(:disabled) {
+  background: #26825a;
+  transform: translateY(-1px);
+}
+
+.wmtr-intervene-button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* ─── preview affordance under the centred scenario card ─────────────── */
+
+.wmtr-preview-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font);
+  font-size: 11.5px;
+  letter-spacing: var(--track);
+  color: var(--wmtr-primary, #2ea36b);
+  background: transparent;
+  border: 1px solid rgba(46,163,107,0.4);
+  border-radius: var(--radius-pill);
+  padding: 6px 14px;
+  margin-top: 10px;
+  cursor: pointer;
+  transition: background 180ms cubic-bezier(0.16, 1, 0.3, 1), border-color 180ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.wmtr-preview-link:hover:not(:disabled) {
+  background: rgba(46,163,107,0.06);
+  border-color: #2ea36b;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Forecast canvas — headline artifact of a run. WMTR trajectory is the
+   centerpiece; council readback is docked beneath, intervention loop sits
+   under that. Inherits the swarm shell tokens: same surface, same dividers,
+   same mono section headers as DECISION FLOW / CONSENSUS INTERVENTIONS.
+   ───────────────────────────────────────────────────────────────────────── */
+
+.forecast-canvas {
+  --forecast-primary: #2ea36b;
+  --forecast-easing:  cubic-bezier(0.16, 1, 0.3, 1);
+
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 14px 18px 18px;
+  overflow-y: auto;
+  height: 100%;
+  min-height: 0;
+  animation: forecast-canvas-in 520ms var(--forecast-easing) both;
+}
+
+@keyframes forecast-canvas-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.forecast-canvas--empty {
+  align-items: center;
+  justify-content: center;
+}
+
+.forecast-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+}
+
+.forecast-empty-eyebrow {
+  font-size: 11px;
+  letter-spacing: var(--track);
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+/* ─── Verdict header ──────────────────────────────────────────────────── */
+
+.forecast-verdict {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--grid);
+}
+
+.forecast-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  letter-spacing: var(--track);
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.forecast-eyebrow-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--forecast-primary);
+}
+
+.forecast-headline {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin-top: 4px;
+}
+
+.forecast-headline-lead {
+  font-size: 16px;
+  color: var(--fg-2);
+  font-weight: 400;
+}
+
+.forecast-headline-verdict {
+  display: inline-block;
+  font-family: var(--font);
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  padding: 2px 12px;
+  border: 1.5px solid currentColor;
+  border-radius: var(--radius-pill);
+  /* color + borderColor set via inline style from OUTCOME_COLOR */
+}
+
+.forecast-headline-share {
+  font-size: 13px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.forecast-headline-meta {
+  font-size: 11.5px;
+  color: var(--muted);
+  letter-spacing: var(--track);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ─── Chart grid ──────────────────────────────────────────────────────── */
+
+.forecast-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 16px;
+}
+
+/* trajectory is the headline chart — let it span two columns if room */
+.forecast-panel--wide {
+  grid-column: span 2;
+}
+@media (max-width: 900px) {
+  .forecast-panel--wide { grid-column: span 1; }
+}
+
+.forecast-panel {
+  display: flex;
+  flex-direction: column;
+  background: transparent;
+  border: 1px solid var(--grid);
+  border-radius: 0;
+  min-width: 0;
+}
+
+.forecast-panel-head {
+  font-size: 10.5px;
+  letter-spacing: var(--track);
+  text-transform: uppercase;
+  color: var(--muted);
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--grid);
+  background: transparent;
+}
+
+.forecast-panel-head--clickable {
+  cursor: pointer;
+  transition: color 180ms var(--forecast-easing);
+}
+.forecast-panel-head--clickable:hover {
+  color: var(--fg);
+}
+
+.forecast-panel-body {
+  padding: 10px 12px 12px;
+  min-width: 0;
+}
+
+/* ─── Clickable outcome bars ─────────────────────────────────────────── */
+
+.forecast-outcomes {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.forecast-outcome-row {
+  display: grid;
+  grid-template-columns: 96px 1fr 52px;
+  align-items: center;
+  gap: 12px;
+  background: transparent;
+  border: none;
+  padding: 4px 0;
+  cursor: pointer;
+  color: var(--fg);
+  text-align: left;
+  border-radius: 0;
+  letter-spacing: 0;
+  font-weight: 400;
+  transition: opacity 180ms var(--forecast-easing);
+}
+
+.forecast-outcome-row:hover {
+  opacity: 0.85;
+  background: transparent;
+}
+
+.forecast-outcome-label {
+  font-size: 12px;
+  color: var(--fg-2);
+}
+
+.forecast-outcome-track {
+  height: 12px;
+  background: var(--bg-2);
+  border: 1px solid var(--grid);
+  display: block;
+  position: relative;
+  overflow: hidden;
+}
+
+.forecast-outcome-fill {
+  display: block;
+  height: 100%;
+  transition: width 360ms var(--forecast-easing);
+}
+
+.forecast-outcome-pct {
+  font-size: 12px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--fg-2);
+}
+
+/* ─── Council readback ───────────────────────────────────────────────── */
+
+.forecast-readback {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 0 16px;
+  border-top: 1px solid var(--grid);
+  border-bottom: 1px solid var(--grid);
+}
+
+.forecast-readback-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  letter-spacing: var(--track);
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.forecast-readback-pending {
+  color: var(--muted);
+  font-size: 13px;
+  font-style: italic;
+}
+
+.forecast-readback-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 14px;
+}
+
+.forecast-readback-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  background: transparent;
+  border: 1px solid var(--grid);
+  border-radius: 0;
+  padding: 12px 14px;
+  text-align: left;
+  cursor: default;
+  color: var(--fg);
+  letter-spacing: 0;
+  font-weight: 400;
+  transition: border-color 200ms var(--forecast-easing),
+              background 200ms var(--forecast-easing);
+}
+
+.forecast-readback-stat.is-interactive {
+  cursor: pointer;
+}
+.forecast-readback-stat.is-interactive:hover {
+  border-color: var(--forecast-primary);
+  background: rgba(46,163,107,0.04);
+}
+
+.forecast-readback-stat.is-accent {
+  border-color: rgba(46,163,107,0.4);
+}
+
+.forecast-readback-big {
+  font-size: 24px;
+  font-weight: 600;
+  color: var(--fg);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+}
+
+.forecast-readback-stat.is-accent .forecast-readback-big {
+  color: var(--forecast-primary);
+}
+
+.forecast-readback-label {
+  font-size: 11px;
+  letter-spacing: var(--track);
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.forecast-readback-sub {
+  font-size: 12px;
+  color: var(--fg-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.forecast-readback-quote {
+  margin: 0;
+  padding-left: 12px;
+  border-left: 2px solid var(--grid);
+  color: var(--fg-2);
+  font-size: 13px;
+  line-height: 1.5;
+  max-width: 80ch;
+}
+
+.forecast-intervene-empty {
+  color: var(--muted);
+  font-style: italic;
+  font-size: 12px;
+  padding: 8px 0;
+}

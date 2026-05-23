@@ -1,0 +1,29 @@
+{
+  "name": "swarm-council",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev:client": "vite",
+    "dev:server": "bun --watch src/server/index.ts",
+    "dev": "bun run dev:server & bun run dev:client",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "start": "bun src/server/index.ts",
+    "typecheck": "tsc -b --noEmit"
+  },
+  "dependencies": {
+    "echarts": "^5.5.1",
+    "katex": "^0.16.47",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.11"
+  }
+}
