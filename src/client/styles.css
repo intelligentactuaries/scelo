@@ -4092,3 +4092,194 @@ body.is-resizing * {
   font-size: 12px;
   padding: 8px 0;
 }
+
+/* ─────────────────────────────────────────────────────────────────────────
+   SIMULATION tab — SA-anchored population simulator. Reuses the existing
+   token palette (var(--bg) / --consensus / --adversarial / --grid) so a
+   theme switch carries through automatically.
+   ───────────────────────────────────────────────────────────────────────── */
+
+.simulation-view {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 18px 22px;
+  overflow-y: auto;
+  height: 100%;
+  min-height: 0;
+}
+
+.simulation-header {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--grid);
+}
+
+.simulation-templates {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.simulation-controls {
+  display: grid;
+  grid-template-columns: 1.4fr 1fr 1fr auto;
+  gap: 14px;
+  align-items: end;
+}
+
+@media (max-width: 880px) {
+  .simulation-controls {
+    grid-template-columns: 1fr;
+  }
+}
+
+.simulation-control {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+}
+
+.simulation-control input[type="text"] {
+  border: 1px solid var(--border);
+  background: var(--bg-2);
+  padding: 6px 10px;
+  font-family: var(--font);
+  color: var(--fg);
+}
+
+.simulation-control input[type="range"] {
+  width: 100%;
+}
+
+.simulation-error {
+  margin-top: 8px;
+  padding: 8px 12px;
+  border-left: 2px solid var(--adversarial);
+  background: var(--accent-soft);
+  color: var(--adversarial);
+  font-size: 12px;
+}
+
+.simulation-results {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+
+.simulation-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.simulation-macro-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+}
+
+.simulation-macro-tile {
+  background: var(--bg-2);
+  border: 1px solid var(--grid);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.simulation-macro-value {
+  font-size: 22px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.05;
+}
+
+.simulation-breakdown {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+
+@media (max-width: 720px) {
+  .simulation-breakdown {
+    grid-template-columns: 1fr;
+  }
+}
+
+.simulation-breakdown-col {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.simulation-refs {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 8px;
+}
+
+.simulation-ref {
+  background: var(--bg-2);
+  border: 1px solid var(--grid);
+  padding: 8px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.simulation-ref-head {
+  font-weight: 600;
+  color: var(--fg);
+  text-transform: lowercase;
+}
+
+.simulation-provenance {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.simulation-table-wrap {
+  border: 1px solid var(--grid);
+  background: var(--bg-2);
+  max-height: 360px;
+  overflow: auto;
+}
+
+.simulation-rows-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+
+.simulation-rows-table th,
+.simulation-rows-table td {
+  padding: 4px 8px;
+  text-align: left;
+  border-bottom: 1px solid var(--grid);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.simulation-rows-table thead th {
+  background: var(--bg);
+  font-weight: 600;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: var(--track);
+  color: var(--muted);
+  position: sticky;
+  top: 0;
+}
+
+.simulation-footer {
+  padding-top: 8px;
+  border-top: 1px solid var(--grid);
+}

@@ -64,6 +64,77 @@ export interface SocietyAgent {
   employment: 'employed' | 'self-employed' | 'informal' | 'unemployed' | 'student' | 'retired';
   financialLiteracy: number;
   culture: string;
+  /** Health profile — populated for population-simulation runs; optional on
+   *  legacy society runs so the existing scenario flow keeps working. */
+  health?: HealthProfile;
+  sex?: 'M' | 'F';
+}
+
+/** Per-agent health profile. SA-anchored prevalences applied in
+ *  saPopulation.sampleSAPopulation(); generic OECD priors used as the
+ *  fallback when no country tag is provided. */
+export interface HealthProfile {
+  sex: 'M' | 'F';
+  comorbidities: ComorbidityCode[];
+  /** Annual all-cause mortality probability under baseline (no shock). */
+  baselineMortality: number;
+  /** Behavioural / system-of-care variables that condition the agent's
+   *  reaction to a medical scenario. */
+  vaccinationHistory: 'up-to-date' | 'partial' | 'none';
+  /** Self-reported, 0-1. Affects vaccine uptake, adherence, etc. */
+  trustInHealthSystem: number;
+  /** 0-1. Affects ability to follow regimens, read inserts. */
+  healthLiteracy: number;
+  /** 0-1. Reduces effective infection probability for the same exposure. */
+  insuranceCoverage: number;
+}
+
+export type ComorbidityCode =
+  | 'hypertension'
+  | 'diabetes-t2'
+  | 'hiv-on-art'
+  | 'hiv-not-on-art'
+  | 'tb-active'
+  | 'asthma'
+  | 'copd'
+  | 'cvd'
+  | 'obesity'
+  | 'ckd'
+  | 'cancer-active'
+  | 'immunosuppressed'
+  | 'pregnancy';
+
+/** Per-agent simulated outcome — three buckets: behavioural (what they
+ *  do), health (what happens to them clinically), economic (what it
+ *  costs). All three are emitted by the LLM in a strict JSON envelope. */
+export interface SimulationOutcome {
+  // behavioural
+  behaviour: {
+    treatmentUptake: 'accepted' | 'declined' | 'unsure';
+    isolationDays: number; // self-imposed
+    spendingShift: 'reduced' | 'unchanged' | 'increased';
+    rationale: string; // <=140 chars
+  };
+  // health
+  health: {
+    infectionProbability: number; // 0-1
+    severityIfInfected: 'asymptomatic' | 'mild' | 'moderate' | 'severe' | 'critical';
+    mortalityProbability: number; // 0-1 — conditional on infection if applicable
+    hospitalised: boolean;
+  };
+  // economic
+  economic: {
+    workdaysLost: number; // 0-365
+    outOfPocketCostZar: number;
+    insurerClaimZar: number;
+  };
+}
+
+export interface SimulationAgentResult {
+  agent: SocietyAgent;
+  outcome: SimulationOutcome;
+  /** Raw LLM text for chat-context drilling. */
+  raw: string;
 }
 
 export interface CouncilRound {
