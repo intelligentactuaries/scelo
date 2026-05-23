@@ -29,6 +29,7 @@ import { ConversationPanel } from './components/ConversationPanel';
 import { MobileNav } from './components/MobileNav';
 import { ScenarioCard } from './components/ScenarioCard';
 import { useMediaQuery, MOBILE_QUERY } from './lib/useMediaQuery';
+import { useTheme } from './lib/theme';
 import { DecisionSankey } from './components/DecisionSankey';
 import { SocietySankey } from './components/SocietySankey';
 import { SankeySegmentInspector } from './components/SankeySegmentInspector';
@@ -102,6 +103,7 @@ const DEFAULT_SOCIETY_PARAMS: SocietyParams = {
 
 export function App() {
   const isMobile = useMediaQuery(MOBILE_QUERY);
+  const theme = useTheme();
   const [health, setHealth] = useState<string>('checking...');
   const [info, setInfo] = useState<ProvidersInfo | null>(null);
   const [vaultOpen, setVaultOpen] = useState(false);
@@ -733,6 +735,14 @@ export function App() {
           <span className="muted">{ollamaTag}</span>
           <span className="muted">·</span>
           <span className="muted">canon: {canon == null ? '…' : canon.length}</span>
+          <button
+            className="ghost-btn"
+            onClick={theme.cycle}
+            title={`theme: ${theme.choice} (resolved: ${theme.resolved}). click to cycle system → light → dark.`}
+            aria-label="cycle theme"
+          >
+            {theme.choice === 'system' ? 'auto' : theme.choice}
+          </button>
           <button className="ghost-btn" onClick={() => setHelpOpen(true)} title="keyboard shortcuts (⌘/)">
             ?
           </button>
