@@ -1,17 +1,20 @@
-// Small inline SVG icons. Pulled from the Lucide icon set so the chrome
-// matches the well-known pattern claude.ai / linear / etc. use. Sized in
-// em so they inherit the surrounding font-size; pass an explicit `size`
-// prop to override.
+// Small inline SVG icons. Stroke-based, currentColor, single-concept
+// per mark — matching the recipe in website_v2/src/components/
+// ICONOGRAPHY.md so the swarm chrome reads as a sibling of the public
+// site. Inline React SVG (no `<img>`) so each mark inherits theme
+// colour via `stroke="currentColor"`.
+//
+// Sized in px (default 16) so they inherit a row's font-size naturally
+// when set with width:1em from CSS; pass `size` to override. We keep a
+// 24×24 viewBox here (rather than the website's 64×64) because these
+// are body-level inline glyphs, not chrome marks — the geometry is the
+// same recipe, just at a smaller working canvas.
 import type { ReactNode } from 'react';
 
 type IconProps = {
   size?: number;
   className?: string;
 };
-
-// Each glyph below comes from the Lucide icon set so we get the
-// well-known minimalist stroke-based look without an icon-library
-// dependency. All accept the standard `size` / `className` props.
 
 function Svg({
   size = 16,
@@ -25,7 +28,7 @@ function Svg({
       viewBox="0 0 24 24"
       fill="none"
       stroke="currentColor"
-      strokeWidth="1.8"
+      strokeWidth={1.5}
       strokeLinecap="round"
       strokeLinejoin="round"
       className={className}
