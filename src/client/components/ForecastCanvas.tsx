@@ -10,6 +10,8 @@
 import { useMemo } from 'react';
 import type { Run, InterventionCluster } from '../../shared/types';
 import { OUTCOME_COLOR, type Outcome } from '../../shared/wmtr';
+import { colorsForTheme } from '../../shared/constants';
+import { useTheme } from '../lib/theme';
 import {
   InterventionRow,
   WmtrChart,
@@ -45,6 +47,8 @@ export function ForecastCanvas({
   onInterveneStarted,
 }: Props) {
   const wmtr = run.wmtr;
+  const { resolved } = useTheme();
+  const colors = colorsForTheme(resolved);
 
   if (!wmtr) {
     return (
@@ -96,10 +100,10 @@ export function ForecastCanvas({
       {/* ─── Big chart grid (the headline artifact) ────────────────────── */}
       <div className="forecast-grid">
         <ForecastPanel title="Wealth trajectory · mean ± 25–75 band" className="forecast-panel--wide">
-          <WmtrChart options={trajectoryOption(wmtr)} height={300} />
+          <WmtrChart options={trajectoryOption(wmtr, colors)} height={300} />
         </ForecastPanel>
         <ForecastPanel title="Survival probability · S(t)">
-          <WmtrChart options={survivalOption(wmtr)} height={300} />
+          <WmtrChart options={survivalOption(wmtr, colors)} height={300} />
         </ForecastPanel>
         <ForecastPanel
           title="Outcome distribution · click to drill into divergent agents"
@@ -114,7 +118,7 @@ export function ForecastCanvas({
           />
         </ForecastPanel>
         <ForecastPanel title="Components · M / T / R (mean across paths)">
-          <WmtrChart options={componentsOption(wmtr)} height={220} />
+          <WmtrChart options={componentsOption(wmtr, colors)} height={220} />
         </ForecastPanel>
       </div>
 

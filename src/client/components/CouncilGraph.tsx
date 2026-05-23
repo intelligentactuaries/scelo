@@ -4,15 +4,18 @@ import { GraphChart } from 'echarts/charts';
 import { LegendComponent, TooltipComponent, TitleComponent } from 'echarts/components';
 import { CanvasRenderer } from 'echarts/renderers';
 import type { Run, CouncilAgentResult } from '../../shared/types';
-import { COLORS, PROFESSIONS, PROFESSION_PALETTE, type Profession } from '../../shared/constants';
+import { colorsForTheme, PROFESSIONS, PROFESSION_PALETTE, type Profession, type ThemeColors } from '../../shared/constants';
+import { useTheme } from '../lib/theme';
 
 echarts.use([GraphChart, LegendComponent, TooltipComponent, TitleComponent, CanvasRenderer]);
 
-const STANCE_BORDER: Record<CouncilAgentResult['finalStance'], string> = {
-  support: COLORS.consensus,
-  oppose: COLORS.adversarial,
-  abstain: COLORS.muted,
-};
+function stanceBorder(c: ThemeColors): Record<CouncilAgentResult['finalStance'], string> {
+  return {
+    support: c.consensus,
+    oppose: c.adversarial,
+    abstain: c.muted,
+  };
+}
 
 /** Cross-chart highlight payload.
  *
@@ -49,6 +52,8 @@ export function CouncilGraph({
 }: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const chartRef = useRef<echarts.ECharts | null>(null);
+  const { resolved } = useTheme();
+  const colors = useMemo(() => colorsForTheme(resolved), [resolved]);
   // Keep the latest onCrossHighlight + crossHighlight in refs so the
   // chart.on(...) handlers (registered once on mount) always read the
   // live values without re-registering.
@@ -61,7 +66,7 @@ export function CouncilGraph({
     crossHighlightRef.current = crossHighlight;
   }, [crossHighlight]);
 
-  const option = useMemo(() => buildOption(run), [run]);
+  const option = useMemo(() => buildOption(run, colors), [run, colors]);
 
   useEffect(() => {
     if (!ref.current) return;
@@ -326,7 +331,8 @@ export function CouncilGraph({
   );
 }
 
-function buildOption(run: Run): echarts.EChartsCoreOption {
+function buildOption(run: Run, colors: ThemeColors): echarts.EChartsCoreOption {
+  const STANCE_BORDER = stanceBorder(colors);
   const categories = PROFESSIONS.map((p) => ({ name: p, itemStyle: { color: PROFESSION_PALETTE[p] } }));
   const profIndex = new Map(PROFESSIONS.map((p, i) => [p, i] as const));
   // edge-tooltip needs to resolve each endpoint id to its full record so we
@@ -406,14 +412,14 @@ function buildOption(run: Run): echarts.EChartsCoreOption {
       hideDelay: 60,
       // liquid-glass tooltip — clear surface, the blur + saturate do the
       // heavy lifting so the canvas reads through behind the card.
-      backgroundColor: 'rgba(255, 255, 255, 0.18)',
-      borderColor: 'rgba(255, 255, 255, 0.7)',
+      backgroundColor: colors.tooltipBg,
+      borderColor: colors.tooltipBorder,
       borderWidth: 1,
       extraCssText:
-        'box-shadow: 0 8px 28px rgba(0,0,0,0.12), inset 0 1px 0 rgba(255,255,255,0.85);' +
+        'box-shadow: 0 8px 28px rgba(0,0,0,0.18);' +
         'border-radius: 10px;' +
         '-webkit-backdrop-filter: blur(8px) saturate(140%); backdrop-filter: blur(8px) saturate(140%);',
-      textStyle: { color: COLORS.fg, fontFamily: 'SN Pro, system-ui, sans-serif', fontSize: 12 },
+      textStyle: { color: colors.tooltipText, fontFamily: 'SN Pro, system-ui, sans-serif', fontSize: 12 },
       formatter: (p: { dataType?: string; data?: Record<string, unknown> }) => {
         if (!p.data) return '';
         if (p.dataType === 'node') {
@@ -463,7 +469,7 @@ function buildOption(run: Run): echarts.EChartsCoreOption {
         legendHoverLink: false,         // custom legend chips handle hover focus
         label: {
           show: true,                   // labels visible by default; hideOverlap thins them
-          color: COLORS.fg,
+          color: colors.fg,
           fontFamily: 'SN Pro, system-ui, sans-serif',
           fontSize: 11,
           fontWeight: 500,

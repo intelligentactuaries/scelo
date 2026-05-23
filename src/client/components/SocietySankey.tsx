@@ -4,7 +4,8 @@ import { SankeyChart } from 'echarts/charts';
 import { TooltipComponent, TitleComponent } from 'echarts/components';
 import { CanvasRenderer } from 'echarts/renderers';
 import type { Run, Sentiment, SocietyAgentResult } from '../../shared/types';
-import { COLORS } from '../../shared/constants';
+import { colorsForTheme, type ThemeColors } from '../../shared/constants';
+import { useTheme } from '../lib/theme';
 import type { CrossHighlight } from './CouncilGraph';
 
 echarts.use([SankeyChart, TooltipComponent, TitleComponent, CanvasRenderer]);
@@ -20,23 +21,27 @@ type Props = {
   onCrossHighlight?: (h: CrossHighlight) => void;
 };
 
-const SENTIMENT_COLOR: Record<Sentiment, string> = {
-  enthusiastic: COLORS.consensus,
-  supportive: '#7fef7c',
-  neutral: COLORS.fg,
-  skeptical: COLORS.dissent,
-  hostile: COLORS.adversarial,
-};
+function sentimentColor(c: ThemeColors): Record<Sentiment, string> {
+  return {
+    enthusiastic: c.consensus,
+    supportive: '#7fef7c',
+    neutral: c.fg,
+    skeptical: c.dissent,
+    hostile: c.adversarial,
+  };
+}
 
 // Shared with SocietyGraph — keep these palettes in sync.
 const CLUSTER_PALETTE = ['#4a9eff', '#b388ff', '#7fc8ff', '#ffd866', '#a0a0a0', '#5fdfb3'];
 
 type IntBand = 'High ≥70' | 'Mid 40–69' | 'Low <40';
-const INT_COLOR: Record<IntBand, string> = {
-  'High ≥70': '#2ea36b',
-  'Mid 40–69': '#d29b00',
-  'Low <40': '#9aa0a6',
-};
+function intColor(c: ThemeColors): Record<IntBand, string> {
+  return {
+    'High ≥70': c.consensus,
+    'Mid 40–69': c.dissent,
+    'Low <40': c.muted,
+  };
+}
 
 function intBand(i: number): IntBand {
   if (i >= 70) return 'High ≥70';
@@ -47,8 +52,10 @@ function intBand(i: number): IntBand {
 export function SocietySankey({ run, crossHighlight, onCrossHighlight }: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const chartRef = useRef<echarts.ECharts | null>(null);
+  const { resolved } = useTheme();
+  const colors = useMemo(() => colorsForTheme(resolved), [resolved]);
 
-  const option = useMemo(() => buildOption(run), [run]);
+  const option = useMemo(() => buildOption(run, colors), [run, colors]);
 
   const onCrossHighlightRef = useRef(onCrossHighlight);
   const crossHighlightRef = useRef(crossHighlight);
@@ -157,8 +164,10 @@ export function SocietySankey({ run, crossHighlight, onCrossHighlight }: Props) 
   return <div ref={ref} className="decision-sankey-canvas" />;
 }
 
-function buildOption(run: Run): echarts.EChartsCoreOption {
+function buildOption(run: Run, colors: ThemeColors): echarts.EChartsCoreOption {
   const total = Math.max(1, run.societyResults.length);
+  const SENTIMENT_COLOR = sentimentColor(colors);
+  const INT_COLOR = intColor(colors);
 
   const clusterIds = Array.from(
     new Set(run.societyResults.map((r) => r.cluster).filter((c): c is number => c !== undefined)),
@@ -166,19 +175,19 @@ function buildOption(run: Run): echarts.EChartsCoreOption {
 
   const clusterNodes = clusterIds.map((c, i) => ({
     name: `clu:c${c}`,
-    label: { formatter: `c${c}`, color: COLORS.fg, fontSize: 11 },
+    label: { formatter: `c${c}`, color: colors.fg, fontSize: 11 },
     itemStyle: { color: CLUSTER_PALETTE[i % CLUSTER_PALETTE.length] },
   }));
   const sentiments: Sentiment[] = ['enthusiastic', 'supportive', 'neutral', 'skeptical', 'hostile'];
   const sentimentNodes = sentiments.map((s) => ({
     name: `sent:${s}`,
-    label: { formatter: s, color: COLORS.fg, fontSize: 11, fontWeight: 500 as const },
+    label: { formatter: s, color: colors.fg, fontSize: 11, fontWeight: 500 as const },
     itemStyle: { color: SENTIMENT_COLOR[s] },
   }));
   const bands: IntBand[] = ['High ≥70', 'Mid 40–69', 'Low <40'];
   const bandNodes = bands.map((b) => ({
     name: `int:${b}`,
-    label: { formatter: b, color: COLORS.fg, fontSize: 11 },
+    label: { formatter: b, color: colors.fg, fontSize: 11 },
     itemStyle: { color: INT_COLOR[b] },
   }));
 
@@ -207,14 +216,14 @@ function buildOption(run: Run): echarts.EChartsCoreOption {
     tooltip: {
       trigger: 'item',
       confine: true,
-      backgroundColor: 'rgba(255, 255, 255, 0.18)',
-      borderColor: 'rgba(255, 255, 255, 0.7)',
+      backgroundColor: colors.tooltipBg,
+      borderColor: colors.tooltipBorder,
       borderWidth: 1,
       extraCssText:
-        'box-shadow: 0 8px 28px rgba(0,0,0,0.12), inset 0 1px 0 rgba(255,255,255,0.85);' +
+        'box-shadow: 0 8px 28px rgba(0,0,0,0.18);' +
         'border-radius: 10px;' +
         '-webkit-backdrop-filter: blur(8px) saturate(140%); backdrop-filter: blur(8px) saturate(140%);',
-      textStyle: { color: COLORS.fg, fontFamily: 'SN Pro, system-ui, sans-serif', fontSize: 12 },
+      textStyle: { color: colors.tooltipText, fontFamily: 'SN Pro, system-ui, sans-serif', fontSize: 12 },
       formatter: (p: { dataType?: string; data?: Record<string, unknown>; name?: string; value?: number }) => {
         if (p.dataType === 'edge' && p.data) {
           const d = p.data as { source: string; target: string; value: number };
@@ -241,7 +250,7 @@ function buildOption(run: Run): echarts.EChartsCoreOption {
         nodeAlign: 'justify',
         emphasis: { focus: 'adjacency' },
         lineStyle: { color: 'gradient', curveness: 0.5, opacity: 0.55 },
-        label: { color: COLORS.fg, fontFamily: 'SN Pro, system-ui, sans-serif' },
+        label: { color: colors.fg, fontFamily: 'SN Pro, system-ui, sans-serif' },
         data: [...clusterNodes, ...sentimentNodes, ...bandNodes],
         links,
       },

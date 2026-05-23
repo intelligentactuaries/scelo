@@ -1,5 +1,6 @@
 import type { Run } from '../../shared/types';
-import { COLORS, PROFESSIONS, type Profession } from '../../shared/constants';
+import { colorsForTheme, PROFESSIONS, type Profession } from '../../shared/constants';
+import { useTheme } from '../lib/theme';
 
 type Props = {
   run: Run;
@@ -8,6 +9,8 @@ type Props = {
 
 export function SynthesisView({ run, onSelectAgent }: Props) {
   const s = run.summary;
+  const { resolved } = useTheme();
+  const colors = colorsForTheme(resolved);
   if (!s) {
     return (
       <div className="canvas-body">
@@ -41,11 +44,11 @@ export function SynthesisView({ run, onSelectAgent }: Props) {
 
       <section className="syn-section">
         <div className="panel-label">trust in the forecast</div>
-        <StackBar support={s.supportPct} oppose={s.opposePct} abstain={s.abstainPct} />
+        <StackBar support={s.supportPct} oppose={s.opposePct} abstain={s.abstainPct} colors={colors} />
         <div className="syn-legend muted small">
-          <span><i style={{ background: COLORS.consensus }} /> trust {s.supportPct}%</span>
-          <span><i style={{ background: COLORS.adversarial }} /> distrust {s.opposePct}%</span>
-          <span><i style={{ background: COLORS.muted }} /> uncertain {s.abstainPct}%</span>
+          <span><i style={{ background: colors.consensus }} /> trust {s.supportPct}%</span>
+          <span><i style={{ background: colors.adversarial }} /> distrust {s.opposePct}%</span>
+          <span><i style={{ background: colors.muted }} /> uncertain {s.abstainPct}%</span>
         </div>
         <div className="syn-metric">
           <div>
@@ -126,12 +129,12 @@ export function SynthesisView({ run, onSelectAgent }: Props) {
   );
 }
 
-function StackBar({ support, oppose, abstain }: { support: number; oppose: number; abstain: number }) {
+function StackBar({ support, oppose, abstain, colors }: { support: number; oppose: number; abstain: number; colors: ReturnType<typeof colorsForTheme> }) {
   return (
     <div className="stack-bar">
-      <div className="stack-seg" style={{ flex: support, background: COLORS.consensus }} />
-      <div className="stack-seg" style={{ flex: oppose, background: COLORS.adversarial }} />
-      <div className="stack-seg" style={{ flex: abstain, background: COLORS.muted }} />
+      <div className="stack-seg" style={{ flex: support, background: colors.consensus }} />
+      <div className="stack-seg" style={{ flex: oppose, background: colors.adversarial }} />
+      <div className="stack-seg" style={{ flex: abstain, background: colors.muted }} />
     </div>
   );
 }

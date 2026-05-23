@@ -4,7 +4,13 @@ import { SankeyChart } from 'echarts/charts';
 import { TooltipComponent, TitleComponent } from 'echarts/components';
 import { CanvasRenderer } from 'echarts/renderers';
 import type { Run } from '../../shared/types';
-import { COLORS, PROFESSIONS, PROFESSION_PALETTE } from '../../shared/constants';
+import {
+  colorsForTheme,
+  PROFESSIONS,
+  PROFESSION_PALETTE,
+  type ThemeColors,
+} from '../../shared/constants';
+import { useTheme } from '../lib/theme';
 import type { CrossHighlight } from './CouncilGraph';
 
 echarts.use([SankeyChart, TooltipComponent, TitleComponent, CanvasRenderer]);
@@ -18,18 +24,22 @@ type Props = {
   onCrossHighlight?: (h: CrossHighlight) => void;
 };
 
-const STANCE_COLOR = {
-  support: COLORS.consensus,
-  oppose: COLORS.adversarial,
-  abstain: COLORS.muted,
-} as const;
+function stanceColor(c: ThemeColors) {
+  return {
+    support: c.consensus,
+    oppose: c.adversarial,
+    abstain: c.muted,
+  } as const;
+}
 
 type ConfBand = 'Confident ≥75' | 'Moderate 50–74' | 'Uncertain <50';
-const CONF_COLOR: Record<ConfBand, string> = {
-  'Confident ≥75': '#2ea36b',
-  'Moderate 50–74': '#d29b00',
-  'Uncertain <50': '#9aa0a6',
-};
+function confColor(c: ThemeColors): Record<ConfBand, string> {
+  return {
+    'Confident ≥75': c.consensus,
+    'Moderate 50–74': c.dissent,
+    'Uncertain <50': c.muted,
+  };
+}
 
 function confBand(c: number): ConfBand {
   if (c >= 75) return 'Confident ≥75';
@@ -40,8 +50,10 @@ function confBand(c: number): ConfBand {
 export function DecisionSankey({ run, crossHighlight, onCrossHighlight }: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const chartRef = useRef<echarts.ECharts | null>(null);
+  const { resolved } = useTheme();
+  const colors = useMemo(() => colorsForTheme(resolved), [resolved]);
 
-  const option = useMemo(() => buildOption(run), [run]);
+  const option = useMemo(() => buildOption(run, colors), [run, colors]);
 
   // Keep the live callback + current state in refs so the chart.on(...)
   // handlers (registered once on mount) always see the live values.
@@ -59,7 +71,7 @@ export function DecisionSankey({ run, crossHighlight, onCrossHighlight }: Props)
     const el = ref.current;
     const chart = echarts.init(el, null, { renderer: 'canvas' });
     chartRef.current = chart;
-    chart.showLoading({ text: '', color: COLORS.accent, textColor: COLORS.fg, maskColor: 'rgba(255,255,255,0.0)' });
+    chart.showLoading({ text: '', color: colors.accent, textColor: colors.fg, maskColor: 'rgba(0,0,0,0)' });
     chart.hideLoading();
     chart.setOption(option);
     const handler = () => chart.resize();
@@ -163,8 +175,10 @@ export function DecisionSankey({ run, crossHighlight, onCrossHighlight }: Props)
   return <div ref={ref} className="decision-sankey-canvas" />;
 }
 
-function buildOption(run: Run): echarts.EChartsCoreOption {
+function buildOption(run: Run, colors: ThemeColors): echarts.EChartsCoreOption {
   const total = Math.max(1, run.councilResults.length);
+  const STANCE = stanceColor(colors);
+  const BANDS_COLOR = confColor(colors);
 
   // ─── nodes ────────────────────────────────────────────────────────────
   // ECharts Sankey identifies nodes by `name` (must be unique across all
@@ -172,7 +186,7 @@ function buildOption(run: Run): echarts.EChartsCoreOption {
   // profession label happens to overlap with a stance name.
   const profNodes = PROFESSIONS.map((p) => ({
     name: `prof:${p}`,
-    label: { formatter: p, color: COLORS.fg, fontSize: 11 },
+    label: { formatter: p, color: colors.fg, fontSize: 11 },
     itemStyle: { color: PROFESSION_PALETTE[p] },
   }));
   // Stance labels reframed for the forecast-interrogation run:
@@ -182,14 +196,14 @@ function buildOption(run: Run): echarts.EChartsCoreOption {
   const stances = ['support', 'oppose', 'abstain'] as const;
   const stanceNodes = stances.map((s) => ({
     name: `stance:${s}`,
-    label: { formatter: STANCE_LABEL[s], color: COLORS.fg, fontSize: 11, fontWeight: 500 as const },
-    itemStyle: { color: STANCE_COLOR[s] },
+    label: { formatter: STANCE_LABEL[s], color: colors.fg, fontSize: 11, fontWeight: 500 as const },
+    itemStyle: { color: STANCE[s] },
   }));
   const bands: ConfBand[] = ['Confident ≥75', 'Moderate 50–74', 'Uncertain <50'];
   const bandNodes = bands.map((b) => ({
     name: `conf:${b}`,
-    label: { formatter: b, color: COLORS.fg, fontSize: 11 },
-    itemStyle: { color: CONF_COLOR[b] },
+    label: { formatter: b, color: colors.fg, fontSize: 11 },
+    itemStyle: { color: BANDS_COLOR[b] },
   }));
 
   // ─── aggregate links ──────────────────────────────────────────────────
@@ -231,15 +245,16 @@ function buildOption(run: Run): echarts.EChartsCoreOption {
     tooltip: {
       trigger: 'item',
       confine: true,
-      // Liquid-glass tooltip, matching the graph tooltips.
-      backgroundColor: 'rgba(255, 255, 255, 0.18)',
-      borderColor: 'rgba(255, 255, 255, 0.7)',
+      // Tooltip palette tracks theme — opaque-ish surface so it reads on
+      // both light cream and warm-charcoal backgrounds.
+      backgroundColor: colors.tooltipBg,
+      borderColor: colors.tooltipBorder,
       borderWidth: 1,
       extraCssText:
-        'box-shadow: 0 8px 28px rgba(0,0,0,0.12), inset 0 1px 0 rgba(255,255,255,0.85);' +
+        'box-shadow: 0 8px 28px rgba(0,0,0,0.18);' +
         'border-radius: 10px;' +
-        '-webkit-backdrop-filter: blur(8px) saturate(140%); backdrop-filter: blur(8px) saturate(140%);',
-      textStyle: { color: COLORS.fg, fontFamily: 'SN Pro, system-ui, sans-serif', fontSize: 12 },
+        '-webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);',
+      textStyle: { color: colors.tooltipText, fontFamily: 'SN Pro, system-ui, sans-serif', fontSize: 12 },
       formatter: (p: { dataType?: string; data?: Record<string, unknown>; name?: string; value?: number }) => {
         if (p.dataType === 'edge' && p.data) {
           const d = p.data as { source: string; target: string; value: number };
@@ -275,7 +290,7 @@ function buildOption(run: Run): echarts.EChartsCoreOption {
         // (source → target) + soft curveness for a flowing read.
         lineStyle: { color: 'gradient', curveness: 0.5, opacity: 0.55 },
         label: {
-          color: COLORS.fg,
+          color: colors.fg,
           fontFamily: 'SN Pro, system-ui, sans-serif',
           position: 'right',
         },

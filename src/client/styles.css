@@ -317,14 +317,12 @@ select:focus {
   left: 44px;                                  /* sits flush to right of rail */
   width: 320px;
   max-height: calc(100vh - 88px);
-  /* liquid-glass surface */
-  background: rgba(255, 255, 255, 0.18);
+  /* Theme-aware glass — bg-2 tint so the surface reads on both themes. */
+  background: color-mix(in srgb, var(--bg-2) 92%, transparent);
   -webkit-backdrop-filter: blur(8px) saturate(140%);
   backdrop-filter: blur(8px) saturate(140%);
-  border: 1px solid rgba(255, 255, 255, 0.7);
-  box-shadow:
-    0 12px 36px rgba(0, 0, 0, 0.12),
-    inset 0 1px 0 rgba(255, 255, 255, 0.85);
+  border: 1px solid var(--border);
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.18);
   border-radius: var(--radius-lg);
   z-index: 12;
   display: flex;
@@ -846,9 +844,9 @@ code {
   gap: 10px;
   padding: 8px 14px;
   border-radius: var(--radius-pill);
-  background: rgba(255, 255, 255, 0.72);
+  background: color-mix(in srgb, var(--bg-2) 90%, transparent);
   border: 1px solid var(--border);
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.08);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.12);
   -webkit-backdrop-filter: blur(8px) saturate(140%);
   backdrop-filter: blur(8px) saturate(140%);
   font-size: 12px;
@@ -974,9 +972,8 @@ code {
 .modal-backdrop {
   position: fixed;
   inset: 0;
-  /* On a light theme the dim should be a soft white-translucent wash
-     with a subtle blur — the dark 0.7 dim made the page look broken. */
-  background: rgba(255, 255, 255, 0.18);
+  /* Theme-aware dim — bg-2 tint reads as a soft wash on both themes. */
+  background: color-mix(in srgb, var(--bg) 35%, transparent);
   backdrop-filter: blur(4px);
   display: flex;
   align-items: center;
@@ -987,15 +984,12 @@ code {
 .modal {
   width: min(720px, 92vw);
   max-height: 88vh;
-  /* liquid-glass surface — same chrome as the rest of the popovers
-     so settings / help feel like a coherent family. */
-  background: rgba(255, 255, 255, 0.22);
+  /* Theme-aware glass — matches the rest of the popover family. */
+  background: color-mix(in srgb, var(--bg-2) 94%, transparent);
   -webkit-backdrop-filter: blur(10px) saturate(140%);
   backdrop-filter: blur(10px) saturate(140%);
-  border: 1px solid rgba(255, 255, 255, 0.7);
-  box-shadow:
-    0 20px 60px rgba(0, 0, 0, 0.18),
-    inset 0 1px 0 rgba(255, 255, 255, 0.85);
+  border: 1px solid var(--border);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.18);
   border-radius: 14px;
   display: flex;
   flex-direction: column;
@@ -1606,14 +1600,13 @@ input[type='range']:focus::-moz-range-thumb {
   position: absolute;
   left: 12px;
   top: 12px;
-  /* liquid-glass surface */
-  background: rgba(255, 255, 255, 0.18);
+  /* Theme-aware glass — picks up the current bg-2 so the panel reads
+     on both cream and charcoal backgrounds. */
+  background: color-mix(in srgb, var(--bg-2) 88%, transparent);
   -webkit-backdrop-filter: blur(8px) saturate(140%);
   backdrop-filter: blur(8px) saturate(140%);
-  border: 1px solid rgba(255, 255, 255, 0.7);
-  box-shadow:
-    0 8px 32px rgba(0, 0, 0, 0.10),
-    inset 0 1px 0 rgba(255, 255, 255, 0.85);
+  border: 1px solid var(--border);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.18);
   border-radius: var(--radius-lg);
   padding: 8px 10px;
   display: flex;
@@ -1658,14 +1651,13 @@ input[type='range']:focus::-moz-range-thumb {
   position: absolute;
   top: 10px;
   right: 14px;
-  /* liquid-glass surface */
-  background: rgba(255, 255, 255, 0.18);
+  /* Theme-aware glass — uses bg-2 so legend chips remain legible on
+     both cream and charcoal canvases. */
+  background: color-mix(in srgb, var(--bg-2) 88%, transparent);
   -webkit-backdrop-filter: blur(8px) saturate(140%);
   backdrop-filter: blur(8px) saturate(140%);
-  border: 1px solid rgba(255, 255, 255, 0.7);
-  box-shadow:
-    0 8px 32px rgba(0, 0, 0, 0.10),
-    inset 0 1px 0 rgba(255, 255, 255, 0.85);
+  border: 1px solid var(--border);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.18);
   border-radius: var(--radius-lg);
   padding: 6px 8px;
   font-size: 11px;
@@ -2921,14 +2913,12 @@ body.is-resizing * {
 .scenario-card--dropped {
   padding: 8px 10px 8px 10px;
   border-radius: 22px;
-  /* liquid-glass surface — sits over whatever's behind (graph, etc.) */
-  background: rgba(255, 255, 255, 0.18);
+  /* Theme-aware glass — sits over whatever's behind (graph, etc.) */
+  background: color-mix(in srgb, var(--bg-2) 90%, transparent);
   -webkit-backdrop-filter: blur(8px) saturate(140%);
   backdrop-filter: blur(8px) saturate(140%);
-  border: 1px solid rgba(255, 255, 255, 0.7);
-  box-shadow:
-    0 8px 28px rgba(0, 0, 0, 0.10),
-    inset 0 1px 0 rgba(255, 255, 255, 0.85);
+  border: 1px solid var(--border);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.18);
   gap: 6px;
 }
 
@@ -3082,13 +3072,13 @@ body.is-resizing * {
  */
 
 .liquid-glass {
-  background: rgba(255, 255, 255, 0.18);
+  /* Theme-aware glass — tints with the current bg-2 token so the
+     surface reads on both cream and warm-charcoal backgrounds. */
+  background: color-mix(in srgb, var(--bg-2) 88%, transparent);
   -webkit-backdrop-filter: blur(8px) saturate(140%);
   backdrop-filter: blur(8px) saturate(140%);
-  border: 1px solid rgba(255, 255, 255, 0.7);
-  box-shadow:
-    0 8px 32px rgba(0, 0, 0, 0.10),
-    inset 0 1px 0 rgba(255, 255, 255, 0.85);
+  border: 1px solid var(--border);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.18);
 }
 
 .liquid-glass-dark {
