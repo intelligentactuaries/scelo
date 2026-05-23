@@ -1,27 +1,31 @@
 :root {
-  /* ─── Light theme — minimalist white canvas ──────────────────────── */
-  --bg: #ffffff;
-  --bg-2: #fafafa;             /* subtle surface inset (panels, hover) */
-  --fg: #111111;               /* near-black text */
-  --fg-2: #2a2a2a;             /* secondary text */
-  --muted: #888888;
-  --grid: #ececec;             /* dividers, faint rules */
-  --border: #d0d0d0;           /* visible borders on pill chrome */
-  --border-strong: #1a1a1a;    /* dark outlines on focused inputs / Run Swarm */
+  /* ─── Light theme — aligned with the public site (website_v2 cream/ink) ─
+     Token NAMES stay the same as before so the 3000+ downstream rules
+     need no edits; only the VALUES change. Anthropic-warm-cream /
+     warm-charcoal register, half-step off so this stays a sibling of
+     the website rather than a clone. Lifted from
+     website_v2/src/styles/theme.css. */
+  --bg: #E8E4D8;               /* cream nudged toward warm-greige */
+  --bg-2: #F2EEE2;             /* lighter cream — inset panels / hover */
+  --fg: #181715;               /* warm near-black */
+  --fg-2: #5E5A52;             /* warm muted secondary text */
+  --muted: #8C8476;            /* warm dim */
+  --grid: rgba(24, 23, 21, 0.10); /* hairline rules */
+  --border: #CDC7B8;           /* warm tan border */
+  --border-strong: #181715;    /* dark outline on focused inputs / Run Swarm */
 
-  /* Status / semantic accents — re-tuned for legibility on white */
-  --consensus: #2ea36b;        /* deeper green so it doesn't vibrate on white */
-  --dissent: #c47a00;          /* amber, darker than the dark-mode #ffb000 */
-  --adversarial: #d23a3a;
-  /* `accent` is the red used for [scenario] / [greetings] / placeholders
-     across the slides. Vibrant but not garish. */
-  --accent: #d23a3a;
-  --accent-soft: #f5d4d4;      /* tinted background for selected/hover red */
-  --link: #1a5fb4;             /* informational links — kept blue-ish */
+  /* Status / semantic accents — punchy forest-green primary takes over
+     from the old red accent. Reds re-aimed at error / adversarial. */
+  --consensus: #309061;        /* punchier forest green (semantic: shipped) */
+  --dissent: #C87D32;          /* punchier clay-orange (semantic: in progress) */
+  --adversarial: #B73A3A;
+  --accent: #309061;           /* primary brand cue — forest green */
+  --accent-soft: rgba(48, 145, 95, 0.12);
+  --link: #3760CC;             /* informational links */
 
-  --radius: 4px;
-  --radius-lg: 10px;
-  --radius-pill: 999px;        /* pill chrome */
+  --radius: 2px;               /* sharp — matches the website's 2px corners */
+  --radius-lg: 4px;
+  --radius-pill: 999px;        /* pill chrome reserved for primary actions */
   --track: 0.04em;             /* SN Pro is geometric — less tracking than mono */
 
   /* Type stack. SN Pro everywhere — both proportional and "mono" surfaces.
@@ -31,8 +35,28 @@
           Helvetica, Arial, sans-serif;
   --mono: var(--font);
 
-  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.04);
-  --shadow-2: 0 2px 8px rgba(0, 0, 0, 0.06);
+  --shadow-1: 0 1px 2px rgba(24, 23, 21, 0.04);
+  --shadow-2: 0 2px 8px rgba(24, 23, 21, 0.06);
+}
+
+/* Dark theme — warm-charcoal register, mirroring website_v2. Auto-applies
+   whenever `<html data-theme="dark">` is set. */
+:root[data-theme="dark"] {
+  --bg: #1B1815;
+  --bg-2: #221E1A;
+  --fg: #F1ECDF;
+  --fg-2: #AAA294;
+  --muted: #746C60;
+  --grid: rgba(241, 236, 223, 0.12);
+  --border: #423A31;
+  --border-strong: #F1ECDF;
+
+  --consensus: #82D7AF;
+  --dissent: #EBB46E;
+  --adversarial: #E66E6E;
+  --accent: #82D7AF;
+  --accent-soft: rgba(130, 215, 175, 0.14);
+  --link: #82A0E6;
 }
 
 *,
