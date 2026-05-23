@@ -34,7 +34,11 @@ import {
   type Intervention,
 } from './wmtr';
 import type { WmtrSingleParams } from '../shared/wmtr';
-import type { CanonWork } from '../shared/types';
+import type { CanonWork, SimulationAgentResult } from '../shared/types';
+import { sampleSAPopulation } from './agents/saPopulation';
+import { runSimulation } from './agents/simulation';
+import { aggregateMacro, SA_MACRO_PROVENANCE } from './macroMap';
+import { fetchReferenceBundle, formatReferenceBlock, type ReferenceBundle } from './refdata';
 
 const PORT = Number(process.env.PORT ?? 3000);
 
@@ -287,6 +291,239 @@ route('POST', '/api/run', async ({ req }) => {
   });
   return json({ runId: run.id, status: run.status });
 });
+
+// ─── Population simulation ───────────────────────────────────────────────
+//
+// The simulator is a different beast from the council/society scenario
+// flow: it samples an SA-anchored synthetic population, then runs an
+// LLM call per agent with a strict JSON outcome envelope, then rolls
+// the per-agent outcomes up to country-level macro figures with cited
+// multipliers. Three surfaces:
+//   POST /api/simulate            — full run (refs + sample + sim + macro)
+//   POST /api/simulate/augment    — augment caller-supplied rows in place
+//   POST /api/simulate/references — preview reference bundle only
+
+interface SimulateBody {
+  scenario: string;
+  /** Drug / compound names to resolve via PubChem / OpenFDA / ChEMBL. */
+  drugs?: string[];
+  /** Country pop to scale to. Defaults to SA 62.27M. */
+  population?: number;
+  /** Sample size for the per-agent LLM pass. Defaults to 200. */
+  sampleSize?: number;
+  /** Concurrency cap on the LLM calls. */
+  concurrency?: number;
+  /** Bypass the LLM cache. */
+  fresh?: boolean;
+  seed?: number;
+}
+
+function agentToRow(r: SimulationAgentResult): Record<string, unknown> {
+  const a = r.agent;
+  const h = a.health;
+  const o = r.outcome;
+  return {
+    id: a.id,
+    age: a.age,
+    sex: a.sex ?? h?.sex ?? '',
+    income_band: a.incomeBand,
+    education: a.education,
+    region: a.region,
+    employment: a.employment,
+    comorbidities: h?.comorbidities.join(';') ?? '',
+    vaccination: h?.vaccinationHistory ?? '',
+    insurance_cov: h ? Number(h.insuranceCoverage.toFixed(3)) : 0,
+    sim_treatment_uptake: o.behaviour.treatmentUptake,
+    sim_isolation_days: o.behaviour.isolationDays,
+    sim_spending_shift: o.behaviour.spendingShift,
+    sim_infection_probability: Number(o.health.infectionProbability.toFixed(3)),
+    sim_severity_if_infected: o.health.severityIfInfected,
+    sim_mortality_probability: Number(o.health.mortalityProbability.toFixed(4)),
+    sim_hospitalised: o.health.hospitalised,
+    sim_workdays_lost: o.economic.workdaysLost,
+    sim_oop_zar: Math.round(o.economic.outOfPocketCostZar),
+    sim_insurer_claim_zar: Math.round(o.economic.insurerClaimZar),
+    sim_rationale: o.behaviour.rationale,
+  };
+}
+
+route('POST', '/api/simulate', async ({ req }) => {
+  const body = await readBody<SimulateBody>(req);
+  if (!body.scenario || body.scenario.trim().length < 4) {
+    return json({ error: 'scenario required' }, { status: 400 });
+  }
+  const sampleSize = Math.max(20, Math.min(2000, body.sampleSize ?? 200));
+  const drugs = (body.drugs ?? []).filter((d): d is string => !!d && d.trim().length > 0);
+
+  const t0 = performance.now();
+  const refs: ReferenceBundle = await fetchReferenceBundle(drugs);
+  const refBlock = formatReferenceBlock(refs);
+  const refMs = Math.round(performance.now() - t0);
+
+  const agents = sampleSAPopulation({ size: sampleSize, seed: body.seed ?? 1 });
+
+  const { results, elapsedMs: simMs } = await runSimulation(agents, {
+    scenario: body.scenario.trim(),
+    referenceBlock: refBlock,
+    concurrency: body.concurrency,
+    fresh: body.fresh,
+  });
+
+  const macro = aggregateMacro(results, { population: body.population });
+  const rows = results.map(agentToRow);
+  return json({
+    scenario: body.scenario.trim(),
+    drugs,
+    refs,
+    macro,
+    macroProvenance: SA_MACRO_PROVENANCE,
+    rows,
+    columns: rows.length > 0 ? Object.keys(rows[0]) : [],
+    sampleSize,
+    population: macro.population,
+    timings: { refMs, simMs },
+  });
+});
+
+interface AugmentBody {
+  scenario: string;
+  drugs?: string[];
+  /** Caller-provided rows. We augment IN-PLACE: copy each row + add sim_*
+   *  columns derived from the scenario. To keep cost bounded we run the
+   *  simulation on a SAMPLE of N agents drawn from the SA population
+   *  (not from the caller's rows), then use the median outcome per
+   *  age-band × sex × comorbidity bucket as a lookup table applied to
+   *  each input row. The result is informative for typical-shape inputs
+   *  and inexpensive enough to run on 10k-row datasets. */
+  rows: Array<Record<string, unknown>>;
+  /** Column names whose presence on the input row should be respected
+   *  (just used to validate the augment makes sense — we never trample
+   *  caller columns). */
+  expectedColumns?: string[];
+  /** How many representative agents to simulate for the lookup. */
+  sampleSize?: number;
+  fresh?: boolean;
+}
+
+route('POST', '/api/simulate/augment', async ({ req }) => {
+  const body = await readBody<AugmentBody>(req);
+  if (!body.scenario?.trim()) return json({ error: 'scenario required' }, { status: 400 });
+  if (!Array.isArray(body.rows) || body.rows.length === 0) {
+    return json({ error: 'rows array required' }, { status: 400 });
+  }
+  const sampleSize = Math.max(40, Math.min(400, body.sampleSize ?? 120));
+  const drugs = (body.drugs ?? []).filter((d): d is string => !!d && d.trim().length > 0);
+  const refs = await fetchReferenceBundle(drugs);
+  const refBlock = formatReferenceBlock(refs);
+  const agents = sampleSAPopulation({ size: sampleSize, seed: 7 });
+  const { results } = await runSimulation(agents, {
+    scenario: body.scenario.trim(),
+    referenceBlock: refBlock,
+    fresh: body.fresh,
+  });
+
+  // Build a lookup: ageBucket × sex × hasComorbidity → median outcome.
+  type Key = string;
+  const buckets = new Map<Key, SimulationAgentResult[]>();
+  const bucketKey = (age: number, sex: string, hasCom: boolean): Key =>
+    `${Math.floor(age / 10) * 10}|${sex}|${hasCom ? 'c' : '0'}`;
+  for (const r of results) {
+    const k = bucketKey(r.agent.age, r.agent.sex ?? r.agent.health?.sex ?? 'F', !!r.agent.health && r.agent.health.comorbidities.length > 0);
+    const arr = buckets.get(k) ?? [];
+    arr.push(r);
+    buckets.set(k, arr);
+  }
+  function median(xs: number[]): number {
+    if (xs.length === 0) return 0;
+    const s = xs.slice().sort((a, b) => a - b);
+    const m = Math.floor(s.length / 2);
+    return s.length % 2 === 1 ? s[m] : (s[m - 1] + s[m]) / 2;
+  }
+  function lookup(age: number, sex: string, hasCom: boolean) {
+    let arr = buckets.get(bucketKey(age, sex, hasCom));
+    if (!arr || arr.length === 0) {
+      // Fall back through coarser buckets until we find one.
+      for (const k of buckets.keys()) {
+        const candidate = buckets.get(k);
+        if (candidate && candidate.length > 0) {
+          arr = candidate;
+          break;
+        }
+      }
+    }
+    if (!arr || arr.length === 0) return null;
+    return {
+      sim_treatment_uptake_mode: modeOf(arr.map((r) => r.outcome.behaviour.treatmentUptake)),
+      sim_isolation_days_median: median(arr.map((r) => r.outcome.behaviour.isolationDays)),
+      sim_spending_shift_mode: modeOf(arr.map((r) => r.outcome.behaviour.spendingShift)),
+      sim_infection_probability_median: Number(
+        median(arr.map((r) => r.outcome.health.infectionProbability)).toFixed(3),
+      ),
+      sim_severity_mode: modeOf(arr.map((r) => r.outcome.health.severityIfInfected)),
+      sim_mortality_probability_median: Number(
+        median(arr.map((r) => r.outcome.health.mortalityProbability)).toFixed(4),
+      ),
+      sim_hospitalised_rate: Number(
+        (arr.filter((r) => r.outcome.health.hospitalised).length / arr.length).toFixed(3),
+      ),
+      sim_workdays_lost_median: median(arr.map((r) => r.outcome.economic.workdaysLost)),
+      sim_oop_zar_median: Math.round(median(arr.map((r) => r.outcome.economic.outOfPocketCostZar))),
+      sim_insurer_claim_zar_median: Math.round(
+        median(arr.map((r) => r.outcome.economic.insurerClaimZar)),
+      ),
+    };
+  }
+
+  // Apply lookup to each input row. Try to infer age / sex / comorbidity
+  // columns case-insensitively; fall back to global defaults if absent.
+  function col<T>(r: Record<string, unknown>, names: string[]): T | undefined {
+    const lc = new Map(Object.keys(r).map((k) => [k.toLowerCase(), k] as const));
+    for (const n of names) {
+      const real = lc.get(n.toLowerCase());
+      if (real && r[real] != null) return r[real] as T;
+    }
+    return undefined;
+  }
+  const augmented = body.rows.map((row) => {
+    const age = Number(col<number | string>(row, ['age', 'age_at_entry', 'ageatentry']) ?? 35);
+    const sexRaw = String(col<string>(row, ['sex', 'gender']) ?? 'F').slice(0, 1).toUpperCase();
+    const sex = sexRaw === 'M' ? 'M' : 'F';
+    const hasCom = !!col<string>(row, ['comorbidities']);
+    const out = lookup(age, sex, hasCom);
+    return { ...row, ...(out ?? {}) };
+  });
+
+  return json({
+    scenario: body.scenario.trim(),
+    drugs,
+    refs,
+    sampleSize,
+    inputRows: body.rows.length,
+    augmentedColumns: Object.keys(augmented[0] ?? {}).filter((k) => k.startsWith('sim_')),
+    rows: augmented,
+  });
+});
+
+interface RefsBody {
+  drugs: string[];
+}
+
+route('POST', '/api/simulate/references', async ({ req }) => {
+  const body = await readBody<RefsBody>(req);
+  const drugs = (body.drugs ?? []).filter((d): d is string => !!d && d.trim().length > 0);
+  const refs = await fetchReferenceBundle(drugs);
+  return json({ refs, formatted: formatReferenceBlock(refs) });
+});
+
+function modeOf<T extends string>(xs: T[]): T | '' {
+  if (xs.length === 0) return '' as T;
+  const counts = new Map<T, number>();
+  for (const x of xs) counts.set(x, (counts.get(x) ?? 0) + 1);
+  let best: T = xs[0];
+  let bestN = -1;
+  for (const [k, v] of counts) if (v > bestN) { best = k; bestN = v; }
+  return best;
+}
 
 route('GET', '/api/run/:id', ({ params }) => {
   const run = getRun(params.id);

@@ -62,6 +62,7 @@ import { AgentInspector } from './components/AgentInspector';
 import { GroupInspector } from './components/GroupInspector';
 import { SocietyInspector } from './components/SocietyInspector';
 import { SynthesisView } from './components/SynthesisView';
+import { SimulationView } from './components/SimulationView';
 import { CanonPanel } from './components/CanonPanel';
 import { HelpOverlay } from './components/HelpOverlay';
 import { ResizeHandle } from './components/ResizeHandle';
@@ -1030,7 +1031,7 @@ export function App() {
               top of the canvas. When empty, the heading is hoisted INTO the
               canvas-empty-stage below so it sits right above the scenario
               card (per slide 1's tight greeting → card spacing). */}
-          {(run || tab === 'canon') && (
+          {(run || tab === 'canon' || tab === 'simulation') && (
             <CenterHeading
               scenario={run ? run.scenario : null}
               scenarioSummary={run?.scenarioSummary ?? null}
@@ -1074,7 +1075,7 @@ export function App() {
             {/* No-run empty state: drop the scenario card into the centre per
                 slide 1, regardless of the active tab. Once a run lands, the
                 tab content (graph / synthesis / canon) takes over. */}
-            {!run && tab !== 'canon' ? (
+            {!run && tab !== 'canon' && tab !== 'simulation' ? (
               <div className="canvas-empty-stage">
                 <CenterHeading scenario={null} tab={tab} />
                 <ScenarioCard
@@ -1176,6 +1177,7 @@ export function App() {
                 {tab === 'synthesis' && run && (
                   <SynthesisView run={run} onSelectAgent={setSelectedAgentId} />
                 )}
+                {tab === 'simulation' && <SimulationView />}
                 {tab === 'canon' && <CanonPanel works={canon} onChange={setCanon} />}
               </>
             )}
