@@ -50,19 +50,71 @@ export type LegalJurisdiction = typeof LEGAL_JURISDICTIONS[number];
 export const DEFAULT_LEGAL_JURISDICTION: LegalJurisdiction = 'ZA';
 
 // Hex constants used inside ECharts options (which can't resolve CSS vars).
-// Must stay in sync with the --bg/--fg/etc tokens in src/client/styles.css.
-export const COLORS = {
-  bg: '#ffffff',
-  bg2: '#fafafa',
-  fg: '#111111',
-  muted: '#888888',
-  grid: '#ececec',
-  border: '#d0d0d0',
-  consensus: '#2ea36b',
-  dissent: '#c47a00',
-  adversarial: '#d23a3a',
-  accent: '#d23a3a',
-} as const;
+// Mirrored from --bg / --fg / etc in src/client/styles.css for BOTH the
+// light and dark palettes — chart components call `colorsForTheme(resolved)`
+// and pass the result into ECharts options so axis labels, tooltips, and
+// stroked elements all flip on a theme switch.
+export type ResolvedTheme = 'light' | 'dark';
+
+export interface ThemeColors {
+  bg: string;
+  bg2: string;
+  fg: string;
+  fgMute: string;
+  muted: string;
+  grid: string;
+  border: string;
+  consensus: string;
+  dissent: string;
+  adversarial: string;
+  accent: string;
+  // Tooltip styling — ECharts inlines these on the tooltip element.
+  tooltipBg: string;
+  tooltipBorder: string;
+  tooltipText: string;
+}
+
+const LIGHT: ThemeColors = {
+  bg: '#E8E4D8',
+  bg2: '#F2EEE2',
+  fg: '#181715',
+  fgMute: '#5E5A52',
+  muted: '#8C8476',
+  grid: 'rgba(24, 23, 21, 0.10)',
+  border: '#CDC7B8',
+  consensus: '#309061',
+  dissent: '#C87D32',
+  adversarial: '#B73A3A',
+  accent: '#309061',
+  tooltipBg: 'rgba(242, 238, 226, 0.95)',
+  tooltipBorder: '#CDC7B8',
+  tooltipText: '#181715',
+};
+
+const DARK: ThemeColors = {
+  bg: '#1B1815',
+  bg2: '#221E1A',
+  fg: '#F1ECDF',
+  fgMute: '#AAA294',
+  muted: '#746C60',
+  grid: 'rgba(241, 236, 223, 0.12)',
+  border: '#423A31',
+  consensus: '#82D7AF',
+  dissent: '#EBB46E',
+  adversarial: '#E66E6E',
+  accent: '#82D7AF',
+  tooltipBg: 'rgba(34, 30, 26, 0.95)',
+  tooltipBorder: '#423A31',
+  tooltipText: '#F1ECDF',
+};
+
+export function colorsForTheme(theme: ResolvedTheme): ThemeColors {
+  return theme === 'dark' ? DARK : LIGHT;
+}
+
+/** Back-compat shim. Defaults to light. New code should call
+ *  `colorsForTheme(resolved)` from `useTheme().resolved`. */
+export const COLORS: ThemeColors = LIGHT;
 
 export const PROFESSION_PALETTE: Record<Profession, string> = {
   Finance: '#4a9eff',

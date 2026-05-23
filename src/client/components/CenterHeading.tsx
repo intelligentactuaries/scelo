@@ -1,5 +1,6 @@
 import type { RunSummary } from '../../shared/types';
-import { COLORS } from '../../shared/constants';
+import { colorsForTheme } from '../../shared/constants';
+import { useTheme } from '../lib/theme';
 import type { TabId } from './ViewTabs';
 
 type Props = {
@@ -59,10 +60,12 @@ function StanceDominantPill({ summary }: { summary: RunSummary }) {
   // In this run the council votes on the FORECAST, not on a proposition.
   // We reuse the existing stance vocabulary but re-label for that frame:
   //   support → trust   |   oppose → distrust   |   abstain → uncertain.
+  const { resolved } = useTheme();
+  const colors = colorsForTheme(resolved);
   const entries = [
-    { key: 'support', label: 'Trust', pct: summary.supportPct, color: COLORS.consensus },
-    { key: 'oppose', label: 'Distrust', pct: summary.opposePct, color: COLORS.adversarial },
-    { key: 'abstain', label: 'Uncertain', pct: summary.abstainPct, color: COLORS.muted },
+    { key: 'support', label: 'Trust', pct: summary.supportPct, color: colors.consensus },
+    { key: 'oppose', label: 'Distrust', pct: summary.opposePct, color: colors.adversarial },
+    { key: 'abstain', label: 'Uncertain', pct: summary.abstainPct, color: colors.muted },
   ] as const;
   const dominant = entries.reduce((a, b) => (b.pct > a.pct ? b : a));
   return (

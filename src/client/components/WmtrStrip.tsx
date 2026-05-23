@@ -21,6 +21,8 @@ import type {
   RunWmtr,
 } from '../../shared/types';
 import { OUTCOME_COLOR, type Outcome } from '../../shared/wmtr';
+import { colorsForTheme, type ThemeColors } from '../../shared/constants';
+import { useTheme } from '../lib/theme';
 import { api } from '../lib/api';
 
 echarts.use([
@@ -37,34 +39,34 @@ echarts.use([
 
 const ECHART_GRID = { left: 44, right: 16, top: 22, bottom: 30, containLabel: false };
 
-function baseOption() {
+function baseOption(colors: ThemeColors) {
   return {
     backgroundColor: 'transparent',
     textStyle: {
-      color: 'rgba(80,76,68,0.92)',
+      color: colors.fg,
       fontFamily: "'JetBrains Mono', ui-monospace, monospace",
     },
     grid: ECHART_GRID,
     xAxis: {
       type: 'value' as const,
-      axisLine: { lineStyle: { color: 'rgba(94,90,82,0.4)' } },
-      axisLabel: { color: 'rgba(80,76,68,0.85)', fontSize: 10 },
-      splitLine: { lineStyle: { color: 'rgba(140,132,118,0.18)' } },
+      axisLine: { lineStyle: { color: colors.border } },
+      axisLabel: { color: colors.fgMute, fontSize: 10 },
+      splitLine: { lineStyle: { color: colors.grid } },
     },
     yAxis: {
       type: 'value' as const,
-      axisLine: { lineStyle: { color: 'rgba(94,90,82,0.4)' } },
-      axisLabel: { color: 'rgba(80,76,68,0.85)', fontSize: 10 },
-      splitLine: { lineStyle: { color: 'rgba(140,132,118,0.18)' } },
+      axisLine: { lineStyle: { color: colors.border } },
+      axisLabel: { color: colors.fgMute, fontSize: 10 },
+      splitLine: { lineStyle: { color: colors.grid } },
     },
     tooltip: {
       trigger: 'axis' as const,
-      backgroundColor: 'rgba(20,22,28,0.94)',
-      borderColor: 'rgba(128,128,128,0.3)',
-      textStyle: { color: '#fafafa', fontSize: 11 },
+      backgroundColor: colors.tooltipBg,
+      borderColor: colors.tooltipBorder,
+      textStyle: { color: colors.tooltipText, fontSize: 11 },
     },
     legend: {
-      textStyle: { color: 'rgba(80,76,68,0.85)', fontSize: 10 },
+      textStyle: { color: colors.fgMute, fontSize: 10 },
       top: 0,
       right: 8,
     },
@@ -95,6 +97,8 @@ export function WmtrStrip({ wmtr, clusters, runId, scenario, onInterveneStarted 
   const finalSurv = res.meanSurv[last] ?? 0;
   const ratio = res.w0 > 0 ? finalW / res.w0 : 0;
   const pct = (x: number) => `${(x * 100).toFixed(0)}%`;
+  const { resolved } = useTheme();
+  const colors = colorsForTheme(resolved);
 
   return (
     <section className="wmtr-strip" aria-label="WMTR nanoeconomics simulator evidence">
@@ -115,16 +119,16 @@ export function WmtrStrip({ wmtr, clusters, runId, scenario, onInterveneStarted 
 
       <div className="wmtr-strip-grid">
         <WmtrPanel title="Wealth trajectory · 25–75 band + mean">
-          <WmtrChart options={trajectoryOption(wmtr)} height={150} />
+          <WmtrChart options={trajectoryOption(wmtr, colors)} height={150} />
         </WmtrPanel>
         <WmtrPanel title="Survival probability S(t)">
-          <WmtrChart options={survivalOption(wmtr)} height={150} />
+          <WmtrChart options={survivalOption(wmtr, colors)} height={150} />
         </WmtrPanel>
         <WmtrPanel title="Outcome distribution">
-          <WmtrChart options={outcomeOption(wmtr)} height={150} />
+          <WmtrChart options={outcomeOption(wmtr, colors)} height={150} />
         </WmtrPanel>
         <WmtrPanel title="Components · M / T / R (mean across paths)">
-          <WmtrChart options={componentsOption(wmtr)} height={150} />
+          <WmtrChart options={componentsOption(wmtr, colors)} height={150} />
         </WmtrPanel>
       </div>
 
@@ -205,14 +209,15 @@ export function WmtrChart({ options, height }: { options: object; height: number
 
 // ─── ECharts option builders (port of /lab/wmtr equivalents) ─────────
 
-export function trajectoryOption(w: RunWmtr): object {
+export function trajectoryOption(w: RunWmtr, colors: ThemeColors): object {
   const r = w.result;
   const xs = r.years;
+  const b = baseOption(colors);
   return {
-    ...baseOption(),
-    xAxis: { ...baseOption().xAxis, data: xs, name: '', boundaryGap: false },
-    yAxis: { ...baseOption().yAxis, name: '' },
-    legend: { ...baseOption().legend, show: false },
+    ...b,
+    xAxis: { ...b.xAxis, data: xs, name: '', boundaryGap: false },
+    yAxis: { ...b.yAxis, name: '' },
+    legend: { ...b.legend, show: false },
     series: [
       {
         name: 'p25',
@@ -229,7 +234,7 @@ export function trajectoryOption(w: RunWmtr): object {
         data: r.p75W.map((v, i) => v - r.p25W[i]),
         showSymbol: false,
         lineStyle: { opacity: 0 },
-        areaStyle: { color: 'rgba(48,145,95,0.18)' },
+        areaStyle: { color: `${colors.consensus}30` },
         stack: 'band',
       },
       {
@@ -237,53 +242,55 @@ export function trajectoryOption(w: RunWmtr): object {
         type: 'line',
         data: r.meanW,
         showSymbol: false,
-        lineStyle: { color: 'rgb(48,145,95)', width: 2 },
+        lineStyle: { color: colors.consensus, width: 2 },
       },
       {
         name: 'W₀',
         type: 'line',
         data: xs.map(() => r.w0),
         showSymbol: false,
-        lineStyle: { color: 'rgba(140,132,118,0.6)', type: 'dashed', width: 1 },
+        lineStyle: { color: colors.muted, type: 'dashed', width: 1 },
       },
     ],
   };
 }
 
-export function survivalOption(w: RunWmtr): object {
+export function survivalOption(w: RunWmtr, colors: ThemeColors): object {
   const r = w.result;
+  const b = baseOption(colors);
   return {
-    ...baseOption(),
-    xAxis: { ...baseOption().xAxis, boundaryGap: false },
-    yAxis: { ...baseOption().yAxis, min: 0, max: 1.05 },
-    legend: { ...baseOption().legend, show: false },
+    ...b,
+    xAxis: { ...b.xAxis, boundaryGap: false },
+    yAxis: { ...b.yAxis, min: 0, max: 1.05 },
+    legend: { ...b.legend, show: false },
     series: [
       {
         name: 'S(t)',
         type: 'line',
         data: r.years.map((y, i) => [y, r.meanSurv[i]]),
         showSymbol: false,
-        lineStyle: { color: 'rgb(48,145,95)', width: 2 },
-        areaStyle: { color: 'rgba(48,145,95,0.14)' },
+        lineStyle: { color: colors.consensus, width: 2 },
+        areaStyle: { color: `${colors.consensus}24` },
       },
     ],
   };
 }
 
-export function componentsOption(w: RunWmtr): object {
+export function componentsOption(w: RunWmtr, colors: ThemeColors): object {
   const r = w.result;
+  const b = baseOption(colors);
   return {
-    ...baseOption(),
-    xAxis: { ...baseOption().xAxis, boundaryGap: false },
-    yAxis: { ...baseOption().yAxis },
-    legend: { ...baseOption().legend, data: ['M', 'T', 'R'] },
+    ...b,
+    xAxis: { ...b.xAxis, boundaryGap: false },
+    yAxis: { ...b.yAxis },
+    legend: { ...b.legend, data: ['M', 'T', 'R'] },
     series: [
       {
         name: 'M',
         type: 'line',
         data: r.years.map((y, i) => [y, r.meanM[i]]),
         showSymbol: false,
-        lineStyle: { color: '#c47a00', width: 1.6 },
+        lineStyle: { color: colors.dissent, width: 1.6 },
       },
       {
         name: 'T',
@@ -297,26 +304,27 @@ export function componentsOption(w: RunWmtr): object {
         type: 'line',
         data: r.years.map((y, i) => [y, r.meanR[i]]),
         showSymbol: false,
-        lineStyle: { color: '#d23a3a', width: 1.6 },
+        lineStyle: { color: colors.adversarial, width: 1.6 },
       },
     ],
   };
 }
 
-export function outcomeOption(w: RunWmtr): object {
+export function outcomeOption(w: RunWmtr, colors: ThemeColors): object {
   const order: Outcome[] = ['grew', 'stabilized', 'declined', 'collapsed'];
   const f = w.result.outcomeFractions;
+  const b = baseOption(colors);
   return {
-    ...baseOption(),
+    ...b,
     grid: { ...ECHART_GRID, left: 56, bottom: 32 },
     legend: { show: false },
     xAxis: {
-      ...baseOption().xAxis,
+      ...b.xAxis,
       type: 'category' as const,
       data: order.map((o) => o[0].toUpperCase() + o.slice(1, 4)),
       boundaryGap: true,
     },
-    yAxis: { ...baseOption().yAxis, max: 105 },
+    yAxis: { ...b.yAxis, max: 105 },
     series: [
       {
         type: 'bar',
@@ -329,7 +337,7 @@ export function outcomeOption(w: RunWmtr): object {
           show: true,
           position: 'top',
           formatter: (p: { value: number }) => `${p.value.toFixed(0)}%`,
-          color: 'rgba(80,76,68,0.85)',
+          color: colors.fgMute,
           fontFamily: "'JetBrains Mono', ui-monospace, monospace",
           fontSize: 10,
         },

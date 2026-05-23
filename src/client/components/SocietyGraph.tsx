@@ -4,18 +4,21 @@ import { GraphChart } from 'echarts/charts';
 import { LegendComponent, TooltipComponent } from 'echarts/components';
 import { CanvasRenderer } from 'echarts/renderers';
 import type { Run, Sentiment } from '../../shared/types';
-import { COLORS } from '../../shared/constants';
+import { colorsForTheme, type ThemeColors } from '../../shared/constants';
+import { useTheme } from '../lib/theme';
 import type { CrossHighlight } from './CouncilGraph';
 
 echarts.use([GraphChart, LegendComponent, TooltipComponent, CanvasRenderer]);
 
-const SENTIMENT_COLOR: Record<Sentiment, string> = {
-  enthusiastic: COLORS.consensus,
-  supportive: '#7fef7c',
-  neutral: COLORS.fg,
-  skeptical: COLORS.dissent,
-  hostile: COLORS.adversarial,
-};
+function sentimentColor(c: ThemeColors): Record<Sentiment, string> {
+  return {
+    enthusiastic: c.consensus,
+    supportive: '#7fef7c',
+    neutral: c.fg,
+    skeptical: c.dissent,
+    hostile: c.adversarial,
+  };
+}
 
 const SENTIMENT_ORDER: Sentiment[] = ['enthusiastic', 'supportive', 'neutral', 'skeptical', 'hostile'];
 
@@ -49,6 +52,9 @@ export function SocietyGraph({
 }: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const chartRef = useRef<echarts.ECharts | null>(null);
+  const { resolved } = useTheme();
+  const colors = useMemo(() => colorsForTheme(resolved), [resolved]);
+  const SENTIMENT_COLOR = useMemo(() => sentimentColor(colors), [colors]);
 
   // Live cross-highlight callback + state held in refs so the
   // chart.on(...) listeners (registered once on mount) keep seeing the
@@ -62,7 +68,7 @@ export function SocietyGraph({
     crossHighlightRef.current = crossHighlight;
   }, [crossHighlight]);
 
-  const { option, clusterChips } = useMemo(() => buildOption(run), [run]);
+  const { option, clusterChips } = useMemo(() => buildOption(run, colors), [run, colors]);
 
   useEffect(() => {
     if (!ref.current) return;
@@ -369,7 +375,8 @@ export function SocietyGraph({
   );
 }
 
-function buildOption(run: Run): { option: echarts.EChartsCoreOption; clusterChips: ClusterChip[] } {
+function buildOption(run: Run, colors: ThemeColors): { option: echarts.EChartsCoreOption; clusterChips: ClusterChip[] } {
+  const SENTIMENT_COLOR = sentimentColor(colors);
   const clusterIds = new Set<number>();
   for (const r of run.societyResults) if (r.cluster !== undefined) clusterIds.add(r.cluster);
   const clusters = [...clusterIds].sort((a, b) => a - b);
@@ -413,13 +420,13 @@ function buildOption(run: Run): { option: echarts.EChartsCoreOption; clusterChip
     };
   });
 
-  // Edge tone tuned for white background: a soft mid-grey at low opacity reads
-  // as connective tissue without competing with the node colour palette.
+  // Connective-tissue edges in theme-aware muted tone so they don't
+  // compete with the node palette on either background.
   const links = run.societyEdges.map((e) => ({
     source: e.source,
     target: e.target,
     value: e.value,
-    lineStyle: { color: '#9aa0a6', opacity: 0.5, width: 0.9 },
+    lineStyle: { color: colors.muted, opacity: 0.5, width: 0.9 },
   }));
 
   const option: echarts.EChartsCoreOption = {
@@ -430,16 +437,16 @@ function buildOption(run: Run): { option: echarts.EChartsCoreOption; clusterChip
       enterable: false,
       showDelay: 0,
       hideDelay: 60,
-      // liquid-glass tooltip — clear surface, blur + saturate carry the
-      // legibility so the graph behind reads through.
-      backgroundColor: 'rgba(255, 255, 255, 0.18)',
-      borderColor: 'rgba(255, 255, 255, 0.7)',
+      // theme-aware tooltip — opaque enough to read on either background,
+      // blur + saturate keep the glass feel.
+      backgroundColor: colors.tooltipBg,
+      borderColor: colors.tooltipBorder,
       borderWidth: 1,
       extraCssText:
-        'box-shadow: 0 8px 28px rgba(0,0,0,0.12), inset 0 1px 0 rgba(255,255,255,0.85);' +
+        'box-shadow: 0 8px 28px rgba(0,0,0,0.18);' +
         'border-radius: 10px;' +
         '-webkit-backdrop-filter: blur(8px) saturate(140%); backdrop-filter: blur(8px) saturate(140%);',
-      textStyle: { color: COLORS.fg, fontFamily: 'SN Pro, system-ui, sans-serif', fontSize: 12 },
+      textStyle: { color: colors.tooltipText, fontFamily: 'SN Pro, system-ui, sans-serif', fontSize: 12 },
       formatter: (p: { dataType?: string; data?: Record<string, unknown> }) => {
         if (!p.data) return '';
         if (p.dataType === 'node') {
@@ -504,7 +511,7 @@ function buildOption(run: Run): { option: echarts.EChartsCoreOption; clusterChip
         data: nodes,
         edges: links,
         force: { edgeLength: 8, repulsion: 35, gravity: 0.15, layoutAnimation: true },
-        lineStyle: { color: '#9aa0a6', opacity: 0.4 },
+        lineStyle: { color: colors.muted, opacity: 0.4 },
       },
     ],
   };
