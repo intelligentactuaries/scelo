@@ -33,7 +33,7 @@ const PRICES: Record<string, Array<[string, Price]>> = {
   ],
 };
 
-const FREE_PROVIDERS = new Set(["ollama", "openai_compat", "rule_based_only", "hermes"]);
+const FREE_PROVIDERS = new Set(["ollama", "openai_compat", "rule_based_only"]);
 
 export function estimateUSD(
   provider: string | undefined,

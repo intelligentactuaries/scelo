@@ -90,7 +90,7 @@ describe("AgentChat reducer", () => {
     const before: ChatItem[] = [{ kind: "user", text: "hi" }];
     const after = reduce(before, {
       kind: "done",
-      payload: { routing_engine: "hermes" },
+      payload: { routing_engine: "openrouter" },
     });
     expect(after).toBe(before);
   });

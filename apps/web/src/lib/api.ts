@@ -200,7 +200,7 @@ export type OrchestratorEvent =
       };
     }
   | { kind: "error"; payload: { code?: string; message: string; reconnect?: boolean } }
-  | { kind: "done"; payload: { routing_engine: "hermes" | "rule_based" | string } };
+  | { kind: "done"; payload: { routing_engine: "openrouter" | "rule_based" | string } };
 
 // ── CSV parsing (shared between drag-drop and sample loading) ────────────────
 

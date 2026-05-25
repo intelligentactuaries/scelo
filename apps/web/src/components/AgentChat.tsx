@@ -26,11 +26,11 @@ type ChatItem =
 const HISTORY_TURNS = 10;
 
 type ProviderStatus = {
-  agent_provider: "ollama" | "hermes" | "rule_based_only";
-  llm_label: "ollama" | "hermes" | "rule_based";
+  agent_provider: "ollama" | "openrouter" | "rule_based_only";
+  llm_label: "ollama" | "openrouter" | "rule_based";
   llm_available: boolean;
   ollama_model: string;
-  hermes_configured: boolean;
+  openrouter_configured: boolean;
 };
 
 const STATUS_POLL_MS = 30_000;
@@ -56,7 +56,7 @@ export function AgentChat() {
           llm_label: body.llm_label ?? "rule_based",
           llm_available: Boolean(body.llm_available),
           ollama_model: body.ollama_model ?? "",
-          hermes_configured: Boolean(body.hermes_configured),
+          openrouter_configured: Boolean(body.openrouter_configured),
         });
       } catch {
         if (!cancelled) {
@@ -65,7 +65,7 @@ export function AgentChat() {
             llm_label: "rule_based",
             llm_available: false,
             ollama_model: "",
-            hermes_configured: false,
+            openrouter_configured: false,
           });
         }
       }
@@ -224,18 +224,18 @@ function renderStatusIndicator(status: ProviderStatus | null) {
       </span>
     );
   }
-  if (status.agent_provider === "hermes") {
+  if (status.agent_provider === "openrouter") {
     if (status.llm_available) {
       return (
-        <span className="text-blue-400" title="Hermes — cloud">
-          ● Hermes — cloud
+        <span className="text-blue-400" title="OpenRouter — cloud">
+          ● OpenRouter — cloud
         </span>
       );
     }
     return (
       <span
         className="text-fg-dim"
-        title="deterministic routing — set HERMES_API_KEY for LLM orchestration"
+        title="deterministic routing — set OPENROUTER_API_KEY for LLM orchestration"
       >
         deterministic
       </span>
