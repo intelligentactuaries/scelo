@@ -1,0 +1,521 @@
+Scelo IDE Source-Available License Agreement
+Version 1.0 — Effective Date: 25 May 2026
+
+SPDX-License-Identifier: LicenseRef-Scelo-IDE-1.0
+
+Copyright (c) 2026 Intelligent Actuaries (Pty) Ltd and its contributors.
+All rights reserved.
+
+
+────────────────────────────────────────────────────────────────────────
+NOT LEGAL ADVICE. This document is the licensing instrument governing
+the Scelo IDE software. It is not legal advice. Before adopting or
+relying on this License, You should consult independent legal counsel
+in Your jurisdiction. Intelligent Actuaries (Pty) Ltd recommends that
+all parties — Licensor and Licensee alike — obtain such advice.
+────────────────────────────────────────────────────────────────────────
+
+
+This License governs Your use of the Scelo IDE software, including the
+desktop application, its installer artefacts, its accompanying sample
+workspace templates, its bundled scripts, and the source code in the
+`apps/scelo-ide/` directory and `apps/web/` directory of the
+Intelligent Actuaries monorepo (collectively, the "Software"). By
+downloading, installing, copying, accessing, executing, embedding,
+modifying, or otherwise using the Software, You agree to be bound by
+these terms. If You do not agree, You must not use the Software.
+
+This License is global in scope. The rights granted in Sections 2 and
+3 are available to any natural or legal person, anywhere in the world,
+on identical terms. The Licensor is incorporated in the Republic of
+South Africa, and this License is governed by South African law (see
+Section 13), but the License itself is intended for international use:
+the revenue gate in Section 2 applies worldwide via currency
+conversion (Section 1.5), and the Nanoeconomics carve-out in Section 3
+is available to researchers and practitioners in every jurisdiction.
+
+This License is independent of the Intelligent Actuaries License v1.0
+(`LICENSE` at the repository root). Where this License and IA v1.0
+would both apply to the Software, this License governs. Where this
+License is silent, IA v1.0 fills the gap by analogy, but only to the
+extent consistent with the terms below.
+
+It is a source-available, revenue-gated license with a dedicated
+free-use carve-out for nanoeconomics research conducted for poverty
+eradication. It is NOT an Open Source Initiative–approved open-source
+license.
+
+
+────────────────────────────────────────────────────────────────────────
+1.  DEFINITIONS
+────────────────────────────────────────────────────────────────────────
+
+1.1  "Affiliate" means, with respect to any entity, any other entity
+     that directly or indirectly controls, is controlled by, or is
+     under common control with that entity. "Control" means ownership
+     of fifty percent (50%) or more of the voting securities or the
+     power to direct the management of the entity.
+
+1.2  "Annual Report" means the public-facing self-attested report
+     described in Section 4.
+
+1.3  "Commercial Use" means any use of the Software (i) by or on
+     behalf of a for-profit entity, (ii) embedded in a product or
+     service sold or licensed to third parties, (iii) used to render
+     services to clients for a fee, (iv) used to generate revenue
+     directly or indirectly, or (v) used by an entity whose Gross
+     Revenue equals or exceeds the Revenue Threshold.
+
+1.4  "Eligible Nanoeconomics Use" has the meaning given in Section 3.
+
+1.5  "Gross Revenue" means all worldwide revenue earned by You and
+     Your Affiliates in aggregate, from any source whatsoever and
+     measured before any deduction, computed in South African Rand
+     (ZAR) at the relevant period-end. Revenue earned in any other
+     currency is converted to ZAR at the spot exchange rate published
+     by the South African Reserve Bank on the last business day of
+     Your fiscal year, or, if such rate is not available, the
+     applicable mid-market rate published by a major international
+     financial data provider.
+
+1.6  "Licensor" means Intelligent Actuaries (Pty) Ltd, a private
+     company incorporated under the laws of the Republic of South
+     Africa, and its lawful assignees.
+
+1.7  "Nanoeconomics Methodology" means the body of work published by
+     the Licensor under the name "Nanoeconomics", including its
+     definitions, methods, boundary conditions, simulators, and
+     reproducible artefacts, as those works exist from time to time on
+     the Licensor's public research surfaces (including
+     intelligentactuaries.com, the public GitHub organisation
+     intelligentactuaries, and the public Hugging Face organisation
+     intelligentactuaries). Where a specific publication is cited in
+     an Annual Report, that publication is the governing reference
+     for that report.
+
+1.8  "Revenue Threshold" means South African Rand one million
+     (ZAR 1,000,000.00) of Gross Revenue, in aggregate, earned by You
+     and Your Affiliates in any twelve-month period, measured at the
+     end of Your most recently completed fiscal year (or, where You
+     have no fiscal year, the calendar year).
+
+1.9  "Software" has the meaning given in the opening paragraphs.
+
+1.10 "You" (or "Your") means the individual or legal entity exercising
+     rights under this License. If You exercise such rights on behalf
+     of an entity, You represent that You have authority to bind that
+     entity, and "You" includes that entity and its Affiliates.
+
+
+────────────────────────────────────────────────────────────────────────
+2.  GRANT OF LICENSE — STANDARD (REVENUE-GATED)
+────────────────────────────────────────────────────────────────────────
+
+2.1  For so long as Your Gross Revenue, aggregated with that of Your
+     Affiliates, is LESS THAN the Revenue Threshold, the Licensor
+     grants You a worldwide, non-exclusive, royalty-free,
+     non-transferable, revocable license to:
+
+     (a)  install, execute, and use the Software for any lawful
+          purpose, including Commercial Use;
+
+     (b)  modify, fork, and create derivative works of the Software
+          for Your own internal use; and
+
+     (c)  copy and redistribute the Software, in source or binary
+          form, with or without modification, provided that every
+          copy preserves this License in full, the copyright notice,
+          and the attribution required by Section 6.
+
+2.2  The rights in Section 2.1 are conditioned on Your continued
+     compliance with this License. They terminate automatically the
+     moment Your Gross Revenue first equals or exceeds the Revenue
+     Threshold, unless You either (i) qualify for, and continue to
+     comply with, Section 3 (Eligible Nanoeconomics Use), or (ii) have
+     in place a Commercial License under Section 5.
+
+
+────────────────────────────────────────────────────────────────────────
+3.  ELIGIBLE NANOECONOMICS USE — FREE WITHOUT REVENUE LIMIT
+────────────────────────────────────────────────────────────────────────
+
+3.1  Notwithstanding Section 2.2, You may use the Software for any
+     "Eligible Nanoeconomics Use" without regard to the Revenue
+     Threshold, and at no royalty, provided that every condition in
+     Sections 3.2 through 3.4 is met and remains met.
+
+3.2  "Eligible Nanoeconomics Use" means use of the Software:
+
+     (a)  for research, simulation, policy design, programme
+          delivery, or other activity directed at the eradication of
+          poverty;
+
+     (b)  conducted in substantial reliance on the Nanoeconomics
+          Methodology, including its published definitions, methods,
+          boundary conditions, and reproducibility requirements as
+          they appear on the Licensor's public research surfaces from
+          time to time; and
+
+     (c)  not used as a wrapper around a commercial product or
+          service whose primary purpose is something other than the
+          Eligible Nanoeconomics Use described above. The carve-out
+          covers research and direct-delivery work; it does not cover
+          ordinary commercial activity that incidentally cites the
+          Nanoeconomics Methodology.
+
+3.3  You shall publish, no later than sixty (60) days after the end of
+     each calendar year in which You exercised the rights granted by
+     this Section, an Annual Report that:
+
+     (a)  identifies You and any Affiliates relying on this carve-out;
+
+     (b)  identifies the specific Nanoeconomics Methodology
+          publication(s) on which the work is based, by title, version
+          or revision identifier, and URL;
+
+     (c)  summarises the work undertaken, including its scope,
+          population reached, geography, period covered, and the
+          outcome metrics You used to evaluate it;
+
+     (d)  states honestly any departures from the Nanoeconomics
+          Methodology and the reasons for them; and
+
+     (e)  is published in full on a public web surface under Your
+          control, or, where that is not possible, attached to the
+          submission described in Section 3.4.
+
+3.4  You shall submit the Annual Report by electronic mail to BOTH of
+     the following addresses simultaneously:
+
+          scelo@intelligentactuaries.com
+          nanoeconomics@scelo.ai
+
+     Submission is by transmission. The Licensor is not required to
+     review, approve, or acknowledge the Annual Report. The Licensor
+     reserves the right to publish the list of submitting parties on
+     its public research surfaces.
+
+3.5  The carve-out lapses, with respect to a given calendar year, if
+     no Annual Report meeting the requirements above has been
+     submitted within the deadline. A lapse does not retroactively
+     invalidate prior years' compliance, but it does revert You to
+     the Section 2.2 revenue test for the year of lapse and every
+     subsequent year, until a fresh Annual Report restores Eligible
+     Nanoeconomics Use status.
+
+
+────────────────────────────────────────────────────────────────────────
+4.  CROSSING THE REVENUE THRESHOLD WITHOUT THE CARVE-OUT
+────────────────────────────────────────────────────────────────────────
+
+4.1  If, at any time, Your Gross Revenue aggregated with that of Your
+     Affiliates equals or exceeds the Revenue Threshold during any
+     measured period, and You do not qualify for Eligible
+     Nanoeconomics Use, then on that date:
+
+     (a)  the license in Section 2.1 terminates automatically; and
+
+     (b)  You must, within sixty (60) days, either (i) cease all use
+          of the Software and destroy all copies in Your possession
+          and control, or (ii) enter into a Commercial License with
+          the Licensor under Section 5.
+
+4.2  You shall notify the Licensor in writing within sixty (60) days
+     of first equalling or exceeding the Revenue Threshold. The
+     notice shall be sent to legal@intelligentactuaries.com and shall
+     state the date of first crossing, Your Gross Revenue figure, and
+     Your election under Section 4.1(b).
+
+
+────────────────────────────────────────────────────────────────────────
+5.  COMMERCIAL LICENSE
+────────────────────────────────────────────────────────────────────────
+
+5.1  Commercial Licenses are granted on negotiated, written terms.
+     Pricing, scope, term, support level, and any other commercial
+     matters are agreed between the Licensor and the Commercial
+     Licensee, and supersede this License for the duration of the
+     Commercial Licence.
+
+5.2  Enquiries: legal@intelligentactuaries.com.
+
+
+────────────────────────────────────────────────────────────────────────
+6.  ATTRIBUTION
+────────────────────────────────────────────────────────────────────────
+
+6.1  Every copy of the Software, in source or binary form, shall
+     include a clearly visible attribution to "Scelo IDE, Intelligent
+     Actuaries (Pty) Ltd" together with a URL pointing to the
+     Licensor's public repository (currently
+     https://github.com/intelligentactuaries/intelligentactuaries).
+
+6.2  Derivative works shall further include a notice identifying the
+     changes made and the date thereof, and shall not represent
+     themselves as the unmodified Scelo IDE.
+
+
+────────────────────────────────────────────────────────────────────────
+7.  PROHIBITED ACTS
+────────────────────────────────────────────────────────────────────────
+
+You shall not, and shall not permit any third party to:
+
+(a)  remove, obscure, or alter any copyright, attribution, or
+     licensing notice in the Software;
+
+(b)  represent that the Software, or any derivative thereof, is
+     endorsed or certified by the Licensor unless a separate written
+     agreement says so;
+
+(c)  use the Software in a manner that violates applicable law,
+     regulatory requirements, or third-party rights;
+
+(d)  use the Software to design, train, evaluate, or deploy any system
+     intended to cause physical or psychological harm, or to evade
+     consumer-protection, anti-discrimination, or actuarial-
+     soundness requirements that would otherwise apply to a regulated
+     product;
+
+(e)  reverse-engineer or circumvent any technical protection measure
+     embedded in the Software, except to the extent applicable law
+     expressly prohibits such restriction;
+
+(f)  misrepresent Your Gross Revenue, Your Affiliates, the Eligible
+     Nanoeconomics Use claimed, the contents of an Annual Report, or
+     any other fact material to Your rights under this License; or
+
+(g)  structure Your operations, contractual relationships, or
+     reporting practices for the purpose of avoiding the Revenue
+     Threshold or the requirements of Section 3 (for example, by
+     splitting one effective entity across multiple coordinated
+     entities, or by routing revenue through formally-unrelated
+     intermediaries).
+
+
+────────────────────────────────────────────────────────────────────────
+8.  ABUSE — REMEDIES AND BACK-CHARGE
+────────────────────────────────────────────────────────────────────────
+
+8.1  If You materially breach this License — including, without
+     limitation, by exceeding the Revenue Threshold without electing
+     Commercial Use, by claiming Eligible Nanoeconomics Use without
+     meeting its conditions, or by committing any act in Section 7 —
+     this License terminates automatically and without notice.
+
+8.2  Upon termination under Section 8.1, in addition to ceasing use
+     and destroying copies of the Software as required by Section
+     4.1(b)(i), You shall pay to the Licensor:
+
+     (a)  a back-charge equal to the Licensor's then-current standard
+          commercial fee for the Software, applied retroactively from
+          the date Your first non-conforming use commenced through
+          the date of termination; and
+
+     (b)  the Licensor's reasonable legal costs, including attorneys'
+          fees and disbursements, incurred in connection with
+          detecting, documenting, and enforcing the breach.
+
+8.3  The remedies in Section 8.2 are cumulative with any other remedy
+     available to the Licensor at law or in equity, including
+     injunctive relief and damages for misrepresentation. Nothing in
+     this License limits the Licensor's right to seek specific
+     performance, to seek criminal sanctions where applicable
+     (including for fraud, theft, or misrepresentation under the laws
+     of the Republic of South Africa), or to publish the fact of the
+     breach.
+
+8.4  Inadvertent or de minimis breaches — including a late Annual
+     Report, a clerical error in revenue reporting, or a good-faith
+     misunderstanding of these terms — may, at the Licensor's sole
+     discretion, be cured by the breaching party within thirty (30)
+     days of written notice from the Licensor, in which case Sections
+     8.1 and 8.2 do not apply.
+
+
+────────────────────────────────────────────────────────────────────────
+9.  INBOUND = OUTBOUND (CONTRIBUTOR TERMS)
+────────────────────────────────────────────────────────────────────────
+
+By submitting any contribution to the Software (whether by pull
+request, patch, issue attachment, or otherwise), You agree that the
+contribution is licensed to the Licensor and to all subsequent
+licensees under this License. You grant the Licensor a perpetual,
+worldwide, non-exclusive, royalty-free, irrevocable license to
+reproduce, prepare derivative works of, sublicense (including under a
+Commercial License), publicly display, publicly perform, and
+distribute the contribution. You represent that You have the legal
+right to make the contribution under these terms.
+
+
+────────────────────────────────────────────────────────────────────────
+10. DISCLAIMER OF WARRANTY
+────────────────────────────────────────────────────────────────────────
+
+THE SOFTWARE IS PROVIDED "AS IS" AND "AS AVAILABLE", WITHOUT WARRANTY
+OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING WITHOUT LIMITATION ANY
+WARRANTY OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, TITLE,
+NON-INFRINGEMENT, ACCURACY, OR ABSENCE OF ERRORS. WITHOUT LIMITING THE
+GENERALITY OF THE FOREGOING, THE LICENSOR DOES NOT WARRANT THAT THE
+SOFTWARE WILL MEET YOUR REQUIREMENTS, THAT ITS OPERATION WILL BE
+UNINTERRUPTED OR ERROR-FREE, OR THAT ANY OUTPUT IT PRODUCES WILL BE
+ACTUARIALLY SOUND, REGULATORILY COMPLIANT, OR FIT FOR ANY PARTICULAR
+DECISION. You assume the entire risk arising out of Your use of the
+Software.
+
+
+────────────────────────────────────────────────────────────────────────
+11. LIMITATION OF LIABILITY
+────────────────────────────────────────────────────────────────────────
+
+11.1 To the maximum extent permitted by applicable law, the Licensor
+     shall not be liable for any indirect, incidental, special,
+     consequential, exemplary, or punitive damages, or for any loss
+     of profits, revenue, data, business, goodwill, or use, arising
+     out of or in connection with this License or the Software,
+     regardless of the cause of action and regardless of whether the
+     Licensor has been advised of the possibility of such damages.
+
+11.2 The Licensor's aggregate liability arising out of or in
+     connection with this License shall not exceed the greater of
+     (i) the amounts actually paid by You to the Licensor under any
+     applicable Commercial License during the twelve (12) months
+     preceding the event giving rise to the claim, or (ii) one
+     thousand South African Rand (ZAR 1,000.00), or its equivalent
+     in any other currency at the spot rate referenced in Section
+     1.5 on the date the claim arises.
+
+11.3 Nothing in this License excludes or limits liability to the
+     extent that exclusion or limitation is prohibited by applicable
+     law (including liability for gross negligence, wilful misconduct,
+     or death or personal injury caused by negligence).
+
+
+────────────────────────────────────────────────────────────────────────
+12. INDEMNIFICATION
+────────────────────────────────────────────────────────────────────────
+
+You shall indemnify, defend, and hold harmless the Licensor and its
+officers, directors, employees, and contractors from and against any
+and all third-party claims, liabilities, losses, damages, and expenses
+(including reasonable attorneys' fees) arising out of or relating to
+(a) Your use of the Software, (b) Your breach of this License,
+(c) Your violation of any law or regulation, or (d) Your infringement
+of any third-party right.
+
+
+────────────────────────────────────────────────────────────────────────
+13. GOVERNING LAW AND DISPUTE RESOLUTION
+────────────────────────────────────────────────────────────────────────
+
+13.1 Governing Law. This License is governed by and construed in
+     accordance with the laws of the Republic of South Africa, without
+     regard to its conflict-of-laws principles. The choice of South
+     African law is administrative: the Licensor is incorporated
+     there. It is not intended to and does not restrict the global
+     scope of the rights granted in Sections 2 and 3, which are
+     available to any person worldwide on identical terms.
+
+13.2 International Arbitration (default). Any dispute, controversy,
+     or claim arising out of or in connection with this License shall
+     be finally resolved by arbitration under the Rules of Arbitration
+     of the International Chamber of Commerce (ICC) by one or more
+     arbitrators appointed in accordance with those Rules. The seat
+     of arbitration shall be Johannesburg, South Africa, unless the
+     parties agree in writing on another seat. The language of the
+     arbitration shall be English. The arbitral award shall be final
+     and binding on the parties and may be enforced in any court of
+     competent jurisdiction.
+
+13.3 Small-Claims Carve-Out. Notwithstanding Section 13.2, either
+     party may bring an action in the small-claims (or equivalent
+     lowest-jurisdiction) court of the defending party's principal
+     place of business for matters within that court's monetary and
+     subject-matter jurisdiction.
+
+13.4 Licensor's IP-Enforcement Carve-Out. Notwithstanding the
+     foregoing, the Licensor may, at its sole election, bring
+     proceedings in any court of competent jurisdiction anywhere in
+     the world to (i) enforce its intellectual-property rights,
+     (ii) obtain interim or injunctive relief, or (iii) pursue
+     remedies for breaches of Sections 7 (Prohibited Acts) or 8
+     (Abuse). For these purposes, "court of competent jurisdiction"
+     includes the courts of the country in which You reside, are
+     domiciled, do business, host infringing copies of the Software,
+     or hold assets.
+
+13.5 Recognition of Awards. The parties acknowledge and rely on the
+     Convention on the Recognition and Enforcement of Foreign
+     Arbitral Awards (New York, 1958) for the cross-border
+     enforcement of any arbitral award rendered under Section 13.2.
+
+13.6 No Forum Selection Against Consumers. Where applicable consumer-
+     protection law (in any jurisdiction) grants a natural-person
+     user the right to bring proceedings in the courts of that user's
+     country of residence, nothing in this Section restricts that
+     right.
+
+
+────────────────────────────────────────────────────────────────────────
+14. MISCELLANEOUS
+────────────────────────────────────────────────────────────────────────
+
+14.1 Severability. If any provision of this License is held invalid
+     or unenforceable, the remaining provisions remain in full force
+     and effect, and the invalid provision shall be replaced with a
+     valid one that most closely approximates the original intent.
+
+14.2 No Waiver. No failure or delay by the Licensor in exercising any
+     right under this License shall operate as a waiver of that right.
+
+14.3 Entire Agreement. This License, together with any Commercial
+     License agreed in writing between the parties, constitutes the
+     entire agreement between the parties with respect to the
+     Software and supersedes all prior or contemporaneous
+     communications and proposals with respect to its subject matter.
+
+14.4 Amendment. The Licensor may publish revised versions of this
+     License from time to time. New downloads or installations of the
+     Software shall be governed by the version in effect at the time
+     of acquisition. Existing licensees may continue to operate under
+     the version in effect at the time they first accepted these
+     terms, or migrate to the current version at their election.
+
+14.5 Notices. All notices to the Licensor under this License shall be
+     sent to legal@intelligentactuaries.com, with a courtesy copy to
+     scelo@intelligentactuaries.com. Notices are effective upon
+     transmission and a confirmation read-receipt or acknowledgement.
+
+14.6 Assignment. You may not assign or transfer this License or any
+     rights or obligations under it without the Licensor's prior
+     written consent. The Licensor may assign this License freely.
+
+14.7 Language. The English-language version of this License is the
+     controlling version. Translations into other languages may be
+     made available for convenience, but in the event of any conflict
+     the English version shall prevail.
+
+14.8 Partial Enforceability by Jurisdiction. If a court or arbitral
+     tribunal of competent jurisdiction holds that any provision of
+     this License is unenforceable in that jurisdiction, Your rights
+     in that jurisdiction shall continue to the maximum extent
+     permitted by local law, and the unenforceability shall not
+     affect Your rights or the Licensor's rights in any other
+     jurisdiction.
+
+
+────────────────────────────────────────────────────────────────────────
+15. CONTACT
+────────────────────────────────────────────────────────────────────────
+
+  Commercial enquiries          legal@intelligentactuaries.com
+  General Scelo enquiries       scelo@intelligentactuaries.com
+  Nanoeconomics carve-out       nanoeconomics@scelo.ai
+                                scelo@intelligentactuaries.com
+  Public surfaces               https://intelligentactuaries.com
+                                https://github.com/intelligentactuaries
+                                https://huggingface.co/intelligentactuaries
+
+────────────────────────────────────────────────────────────────────────
+END OF LICENSE
+────────────────────────────────────────────────────────────────────────

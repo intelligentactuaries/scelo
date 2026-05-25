@@ -1,0 +1,6 @@
+data/*.csv
+!data/.gitkeep
+__pycache__/
+.venv/
+.Rhistory
+.RData

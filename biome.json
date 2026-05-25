@@ -1,0 +1,52 @@
+{
+  "$schema": "https://biomejs.dev/schemas/1.9.0/schema.json",
+  "vcs": { "enabled": false, "clientKind": "git", "useIgnoreFile": true },
+  "files": {
+    "ignoreUnknown": true,
+    "ignore": [
+      "**/node_modules",
+      "**/dist",
+      "**/build",
+      "**/.bun",
+      "**/.cache",
+      "data/schemas/**",
+      "**/*.geo.json"
+    ]
+  },
+  "formatter": {
+    "enabled": true,
+    "indentStyle": "space",
+    "indentWidth": 2,
+    "lineWidth": 100
+  },
+  "organizeImports": { "enabled": true },
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "recommended": true,
+      "suspicious": {
+        "noExplicitAny": "warn"
+      },
+      "style": {
+        "useNodejsImportProtocol": "off"
+      },
+      "nursery": {
+        "noRestrictedImports": {
+          "level": "error",
+          "options": {
+            "paths": {
+              "recharts": "Use ECharts via <EChart>. See ADR-0003.",
+              "chart.js": "Use ECharts via <EChart>. See ADR-0003.",
+              "plotly": "Use ECharts via <EChart>. See ADR-0003.",
+              "victory": "Use ECharts via <EChart>. See ADR-0003.",
+              "d3": "Use ECharts via <EChart>. See ADR-0003."
+            }
+          }
+        }
+      }
+    }
+  },
+  "javascript": {
+    "formatter": { "quoteStyle": "double", "trailingCommas": "all", "semicolons": "always" }
+  }
+}

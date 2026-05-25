@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <script>
+      // Pre-paint theme — mirrors src/lib/theme.ts so the first frame is
+      // already painted in the right palette (no FOUC).
+      (function () {
+        try {
+          var v = localStorage.getItem("ia.theme");
+          var resolved =
+            v === "light" || v === "dark"
+              ? v
+              : matchMedia("(prefers-color-scheme: dark)").matches
+                ? "dark"
+                : "light";
+          document.documentElement.setAttribute("data-theme", resolved);
+          document.documentElement.classList.add(resolved);
+        } catch (e) {
+          document.documentElement.setAttribute("data-theme", "dark");
+          document.documentElement.classList.add("dark");
+        }
+      })();
+    </script>
+    <link rel="icon" type="image/png" href="/logo_dot.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+    <!-- Fonts (Fraunces, Inter, JetBrains Mono, SN Pro) are self-hosted via
+         @fontsource imports in src/main.tsx so the app works fully offline
+         inside the Scelo IDE desktop shell (no Google Fonts CDN). -->
+
+    <title>Workbench</title>
+  </head>
+  <body class="bg-bg text-fg font-sans">
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

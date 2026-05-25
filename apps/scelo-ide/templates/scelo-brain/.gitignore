@@ -1,0 +1,5 @@
+artefacts/*.csv
+!artefacts/.gitkeep
+__pycache__/
+.venv/
+node_modules/

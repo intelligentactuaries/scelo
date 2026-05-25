@@ -1,0 +1,35 @@
+{
+  "name": "scelo",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Scelo — soft data → tools → hard data. Desktop workbench for actuaries from Intelligent Actuaries.",
+  "license": "LicenseRef-Scelo-IDE-1.0",
+  "homepage": "https://github.com/intelligentactuaries/scelo",
+  "bugs": {
+    "url": "https://github.com/intelligentactuaries/scelo/issues",
+    "email": "bugs@scelo.ai"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/intelligentactuaries/scelo.git"
+  },
+  "workspaces": ["apps/web", "apps/scelo-ide"],
+  "scripts": {
+    "dev": "bun run --cwd apps/scelo-ide dev",
+    "dev:web": "bun run --cwd apps/web dev",
+    "build": "bun run --cwd apps/scelo-ide build",
+    "check": "bun run --cwd apps/web check && bun run --cwd apps/scelo-ide build:main",
+    "test": "bun run --cwd apps/web test",
+    "ide:dist:linux": "bun run --cwd apps/scelo-ide dist:linux",
+    "ide:dist:mac": "bun run --cwd apps/scelo-ide dist:mac",
+    "ide:dist:win": "bun run --cwd apps/scelo-ide dist:win"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^1.9.0",
+    "typescript": "^5.6.0"
+  },
+  "engines": {
+    "bun": ">=1.1.0"
+  }
+}
