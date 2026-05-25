@@ -1,3 +1,16 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+build/
+*.tsbuildinfo
+.vite/
+
+# Electron-builder staging
+apps/scelo-ide/resources/renderer/
+apps/scelo-ide/resources/runtime/
+
 # OS junk
 .DS_Store
 Thumbs.db
@@ -7,12 +20,16 @@ Thumbs.db
 .idea/
 *.swp
 
-# Build / dependency artefacts (none expected in this landing repo yet,
-# but listed so a future contributor doesn't accidentally check them in)
-node_modules/
-dist/
-build/
-
-# IA runtime
+# IA runtime state
 .ia/
 .ia-state/
+
+# Local env
+.env
+.env.local
+.env.*.local
+
+# Test artefacts
+coverage/
+playwright-report/
+test-results/

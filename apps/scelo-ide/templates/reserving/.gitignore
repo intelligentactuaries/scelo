@@ -1,0 +1,6 @@
+data/*.json
+out/
+__pycache__/
+.venv/
+.Rhistory
+.RData

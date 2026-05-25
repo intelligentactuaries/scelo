@@ -1,67 +1,97 @@
 <div align="center">
-  <img src="logo/scelo.svg" alt="Scelo" width="120" />
+  <img src="logo/scelo.svg" alt="Scelo" width="140" />
 
 # Scelo
 
 **Soft data → Tools → Hard data.**
 
+A desktop workbench for actuaries who want AI-assisted analysis
+without sending client data to a cloud.
+
 </div>
 
 ---
 
-Scelo is a desktop workbench for actuaries who want AI-assisted analysis
-without sending client data to a cloud. You ask a question in plain
-English, the right specialist runs the right model, and the result
-comes back in a form your regulator can trace.
+## What Scelo is
 
-The mark says what the system is: three nodes on one axis. Left is
-**soft data** ⏤ what you can't easily see or decide on. Middle is the
-**tools / brain layer** ⏤ the statistical and actuarial models that
-transform soft into hard. Right is **hard data** ⏤ board-pack-ready,
-defensible, reproducible.
+The mark says what the system is: three nodes on one axis.
 
-This repository is currently the public face of the project. The
-working source code is developed inside the wider Intelligent
-Actuaries monorepo and will be split into a self-contained app here
-in due course (see *Status* below).
+| | What |
+|:---:|---|
+| **Soft data** | What you cannot easily see or decide on. Raw inputs, fuzzy signals, uncommitted material. |
+| **Tools / brain layer** | The statistical and actuarial models that focus soft into hard. The audit trail lives here. |
+| **Hard data** | Board-pack-ready numbers — defensible, reproducible, traceable. |
+
+The pipeline is one-way: soft never writes to hard directly, hard
+never reads from soft. The tools layer is the only path between them.
 
 ## What's in this repository
 
 | Path | What |
 |---|---|
-| [`LICENSE`](LICENSE) | Scelo IDE Source-Available License v1.0. Free up to ZAR 1,000,000 in revenue worldwide; free without limit for nanoeconomics-for-poverty-eradication work; commercial licensing above that. See [License](#license) below. |
-| [`ONBOARDING.md`](ONBOARDING.md) | Orientation for contributors. Architecture, the bus pattern, the migrations registry, the templates tree, dev / build / test commands. |
-| [`logo/`](logo/) | The Scelo mark as both a standalone SVG and a React component. |
+| [`apps/scelo-ide/`](apps/scelo-ide/) | The Electron desktop wrapper. Bundles Python 3.13 + R 4.3 + Pyright + R-LSP + ripgrep + git plumbing. Owns OS-touching surfaces (file I/O, exec, terminal, dataset downloads, OS keychain, auto-update). |
+| [`apps/web/`](apps/web/) | The React + Vite renderer. Workspace shell (Monaco editor + file tree + xterm terminal + sidebar panels: files, search, outline, git, problems, tests), the Scelo brain layer (soft → tools → hard workstations), the workspace AI panel, the welcome view, the swarm route. |
+| [`LICENSE`](LICENSE) | Scelo IDE Source-Available License v1.0. See [License](#license). |
+| [`CONTRIBUTING.md`](CONTRIBUTING.md) | How to file bugs, propose changes, set up locally, the commit / PR conventions. |
+| [`SECURITY.md`](SECURITY.md) | Responsible-disclosure policy. |
+| [`ONBOARDING.md`](ONBOARDING.md) | Architecture tour — the apps/web ↔ apps/scelo-ide IPC contract, the bus pattern, migrations, sample workspaces, house rules. |
+| [`logo/`](logo/) | The Scelo mark as a standalone SVG and a React component. |
+
+## Quick start
+
+Prerequisites: [Bun](https://bun.sh) ≥ 1.1.
+
+```bash
+git clone git@github.com:intelligentactuaries/scelo.git
+cd scelo
+bun install
+
+# Renderer dev server (browser preview at localhost:5173)
+bun run dev:web
+
+# Full Electron IDE — builds main + launches Electron
+bun run dev
+```
+
+To produce a signed installer for your platform see the
+[CONTRIBUTING.md](CONTRIBUTING.md) build section.
+
+## Reporting bugs, concerns, issues
+
+Three channels, all read by the maintainers:
+
+- 🐛 **[GitHub Issues](https://github.com/intelligentactuaries/scelo/issues)** — the public default once the repo flips to open.
+- 📬 **bugs@scelo.ai** — for reports you'd rather keep off the public tracker.
+- 📬 **scelo@scelo.ai** + **scelo@intelligentactuaries.com** — general concerns, ethical worries, anything that isn't a clean bug.
+
+For **security vulnerabilities**, please use the disclosure flow in
+[`SECURITY.md`](SECURITY.md) (not the public tracker).
 
 ## Status
 
 > *Active development. Pre-1.0. No public binaries yet.*
 
-The Scelo IDE is currently in the polish phase of its v1 cycle. The
-core of the IDE is complete:
+The Scelo IDE is in the polish phase of its v1 cycle. The core is
+complete:
 
-- Bundled Python 3.13 and R 4.3 runtimes, Pyright and R-LSP language
-  servers, ripgrep, git plumbing
-- Monaco-based editor with file tree, terminal, search, source
-  control, problems panel, tests panel
-- Workspace-scoped AI panel (Ollama default; bring-your-own Claude /
-  OpenAI / Gemini / OpenAI-compat key in the OS keychain)
-- Soft → tools → hard pipeline as the canonical model view, with three
-  scoped chatbots and a reference Hard Data workstation that ties out
-  to the **Swarm** (256-agent council + 1000-agent society simulator)
+- Bundled Python 3.13 + R 4.3 + Pyright + R-LSP + ripgrep + git
+- Monaco editor with file tree, terminal, search, source control,
+  problems panel, tests panel
+- Workspace-scoped AI panel (Ollama default; BYO Claude / OpenAI /
+  Gemini / OpenAI-compat key in the OS keychain)
+- Soft → tools → hard pipeline as the canonical model view, with
+  three scoped chatbots and a Hard Data workstation that ties out
+  to the swarm-council (256-agent council + 1000-agent society)
 - Sample workspace scaffolds (`life-pricing`, `climate-risk`,
   `scelo-brain`, `reserving`) you can spin up in one click
 - Data-aware viewers for CSV, Markdown, and Jupyter notebooks
 - Per-workspace session persistence: nothing clears unless you ask
 
-What remains before this repository becomes the canonical home:
+What remains before v1:
 
-- [ ] Extract the Scelo source from the monorepo into a self-contained,
-      build-passable app here.
-- [ ] Real signing certificates (Apple Developer + Windows EV). These
-      are paid prerequisites; until they're in place, installer
-      artefacts ship unsigned and Gatekeeper / SmartScreen warn on
-      first launch.
+- [ ] Real signing certificates (Apple Developer + Windows EV) — paid
+      prerequisites. Until they're in place, installer artefacts ship
+      unsigned and Gatekeeper / SmartScreen warn on first launch.
 - [ ] First public release notes + signed installer artefacts on the
       *Releases* tab.
 - [ ] Flip this repository from private to public.
@@ -119,10 +149,12 @@ counsel in your jurisdiction.
 
 | Topic | Where |
 |---|---|
-| Scelo general | scelo@intelligentactuaries.com |
-| Commercial licensing | legal@intelligentactuaries.com |
-| Nanoeconomics carve-out (Annual Report) | scelo@intelligentactuaries.com **and** nanoeconomics@scelo.ai |
-| Lab | hello@intelligentactuaries.com · [intelligentactuaries.com](https://intelligentactuaries.com) |
+| Bugs | **bugs@scelo.ai** · [GitHub Issues](https://github.com/intelligentactuaries/scelo/issues) |
+| Security vulnerabilities | **security@intelligentactuaries.com** · see [`SECURITY.md`](SECURITY.md) |
+| General Scelo | **scelo@intelligentactuaries.com** · **scelo@scelo.ai** |
+| Commercial licensing | **legal@intelligentactuaries.com** |
+| Nanoeconomics Annual Report | **scelo@intelligentactuaries.com** **and** **nanoeconomics@scelo.ai** |
+| Lab | **hello@intelligentactuaries.com** · [intelligentactuaries.com](https://intelligentactuaries.com) |
 
 ---
 

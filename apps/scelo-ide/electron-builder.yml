@@ -1,0 +1,131 @@
+appId: io.intelligentactuaries.scelo
+productName: Scelo IDE
+copyright: Copyright © 2026 Intelligent Actuaries
+artifactName: ${productName}-${version}-${arch}.${ext}
+
+# ─── Publish ───────────────────────────────────────────────────────────
+# Releases land on GitHub Releases under the monorepo so electron-updater
+# can poll for new versions. Tag format expected by CI: scelo-ide-v0.1.0.
+# Channel control: latest = stable, beta = pre-release.
+publish:
+  - provider: github
+    owner: intelligentactuaries
+    repo: intelligentactuaries
+    releaseType: release
+    publishAutoUpdate: true
+
+directories:
+  output: build
+  buildResources: resources
+
+# What ships INSIDE the installer beyond the JS bundle. The renderer dir is
+# the apps/web Vite dist; runtime/ holds the bundled Python + R interpreters
+# + the resolved package set staged by scripts/bundle-runtimes.sh.
+extraResources:
+  - from: resources/renderer
+    to: renderer
+    filter: ["**/*"]
+  - from: resources/runtime
+    to: runtime
+    filter: ["**/*"]
+  - from: resources/icons
+    to: icons
+    filter: ["**/*"]
+
+# The main process .js + node_modules. We keep dependencies minimal — most
+# code is in the renderer (apps/web) and the bundled runtimes.
+files:
+  - dist/**/*
+  - package.json
+  - "!**/*.map"
+  - "!**/*.ts"
+  - "!**/node_modules/**/test/**"
+  - "!**/node_modules/**/tests/**"
+  - "!**/node_modules/**/*.md"
+  # Sample workspace templates copied by scelo:workspace:create-from-template.
+  # Listed AFTER the !*.ts exclude so the brain starter's *.ts files survive;
+  # plain text only, no binaries, so safe to live inside the asar.
+  - templates/**/*
+
+asar: true
+asarUnpack:
+  # Anything we need to spawn from disk must be unpacked, otherwise it sits
+  # inside the asar archive and isn't executable.
+  - "**/*.node"
+  # node-pty ships per-platform helper binaries (winpty-agent on Windows,
+  # the conpty wrapper, etc.); without unpacking the dlopen path is wrong.
+  - "**/node_modules/@homebridge/node-pty-prebuilt-multiarch/**/*"
+  # @vscode/ripgrep's per-platform prebuilt `rg` binary — same rationale
+  # as node-pty: must be executable on disk, not zipped inside the asar.
+  - "**/node_modules/@vscode/ripgrep/**/*"
+  - "**/node_modules/@vscode/ripgrep-*/**/*"
+
+# ─── Linux ─────────────────────────────────────────────────────────────
+linux:
+  category: Development
+  synopsis: Actuarial workbench with bundled Python + R
+  description: |
+    Scelo IDE is a downloadable desktop workbench for actuaries: a
+    soft-data → tools → hard-data pipeline with a bundled Python and R
+    runtime, the lifelib + chainladder + climada stack, and AI co-pilots
+    scoped to each stage. Works fully offline once installed.
+  desktop:
+    entry:
+      Name: Scelo IDE
+      Comment: Actuarial workbench
+      Keywords: actuarial;data-science;python;r;reserving;mortality;capital
+  target:
+    - target: AppImage
+      arch: [x64]
+    - target: deb
+      arch: [x64]
+  icon: resources/icons
+
+# ─── macOS ─────────────────────────────────────────────────────────────
+#
+# Signing + notarisation: electron-builder picks these up automatically
+# when set. All optional — when unset the build still produces a .dmg, just
+# unsigned (Gatekeeper shows "unidentified developer" on first launch).
+#   CSC_LINK                  base64 .p12 or path to .p12
+#   CSC_KEY_PASSWORD          .p12 password
+#   APPLE_ID                  apple developer account email
+#   APPLE_APP_SPECIFIC_PASSWORD   app-specific password from appleid.apple.com
+#   APPLE_TEAM_ID             10-char team ID from developer.apple.com
+mac:
+  category: public.app-category.developer-tools
+  target:
+    - target: dmg
+      arch: [x64, arm64]
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  # `notarize: true` only kicks in when APPLE_ID + APPLE_APP_SPECIFIC_PASSWORD +
+  # APPLE_TEAM_ID are present. Setting it as a literal here gives CI the right
+  # default; missing env vars cause notarisation to be skipped gracefully.
+  notarize: true
+  entitlements: resources/entitlements.mac.plist
+  entitlementsInherit: resources/entitlements.mac.plist
+  extendInfo:
+    NSHighResolutionCapable: true
+    NSHumanReadableCopyright: Copyright © 2026 Intelligent Actuaries
+
+# ─── Windows ───────────────────────────────────────────────────────────
+#
+# Signing: same env contract as macOS (electron-builder reuses CSC_*).
+# WIN_CSC_LINK / WIN_CSC_KEY_PASSWORD override only on Windows. Without
+# either set the .exe ships unsigned (SmartScreen warns on download).
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+  icon: resources/icons/icon.ico
+  signingHashAlgorithms:
+    - sha256
+  # signtoolOptions: { signingHashAlgorithms: [sha256] }  # electron-builder ≥26
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: Scelo IDE
