@@ -1,5 +1,8 @@
 <div align="center">
-  <img src="logo/scelo.svg" alt="Scelo" width="140" />
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="logo/scelo-dark.svg" />
+    <img src="logo/scelo-light.svg" alt="Scelo" width="140" />
+  </picture>
 
 # Scelo
 
