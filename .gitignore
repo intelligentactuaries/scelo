@@ -1,0 +1,18 @@
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Editor scratch
+.vscode/
+.idea/
+*.swp
+
+# Build / dependency artefacts (none expected in this landing repo yet,
+# but listed so a future contributor doesn't accidentally check them in)
+node_modules/
+dist/
+build/
+
+# IA runtime
+.ia/
+.ia-state/
