@@ -20,6 +20,7 @@ import { isDesktopIDE } from "./sceloIDE";
 
 export type ProviderId =
   | "ollama"
+  | "openrouter"
   | "anthropic"
   | "openai"
   | "gemini"
@@ -55,6 +56,18 @@ export const PROVIDER_CATALOG: ProviderDescriptor[] = [
     modelHint: "Set via the orchestrator env; the model must be pulled via `ollama pull`.",
     needsBaseUrl: false,
     keyHelpUrl: "https://ollama.com/download",
+  },
+  {
+    id: "openrouter",
+    label: "OpenRouter (Claude · GPT · Gemini · Llama · DeepSeek · …)",
+    blurb:
+      "One key, dozens of models. Unified API for Anthropic Claude, OpenAI GPT, Google Gemini, Meta Llama, DeepSeek, Mistral, Qwen, and the free-tier open-source set. Pick the model per request; pricing surfaces on openrouter.ai.",
+    needsKey: true,
+    defaultModel: "anthropic/claude-3.5-sonnet",
+    modelHint:
+      "Provider/model slug, eg anthropic/claude-3.5-sonnet, openai/gpt-4o, google/gemini-pro-1.5, meta-llama/llama-3.1-405b-instruct.",
+    needsBaseUrl: false,
+    keyHelpUrl: "https://openrouter.ai/keys",
   },
   {
     id: "anthropic",
