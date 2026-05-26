@@ -1,7 +1,7 @@
 Scelo IDE Source-Available License Agreement
-Version 1.0 — Effective Date: 25 May 2026
+Version 1.1 — Effective Date: 27 May 2026
 
-SPDX-License-Identifier: LicenseRef-Scelo-IDE-1.0
+SPDX-License-Identifier: LicenseRef-Scelo-IDE-1.1
 
 Copyright (c) 2026 Intelligent Actuaries (Pty) Ltd and its contributors.
 All rights reserved.
@@ -12,7 +12,44 @@ NOT LEGAL ADVICE. This document is the licensing instrument governing
 the Scelo IDE software. It is not legal advice. Before adopting or
 relying on this License, You should consult independent legal counsel
 in Your jurisdiction. Intelligent Actuaries (Pty) Ltd recommends that
-all parties — Licensor and Licensee alike — obtain such advice.
+all parties, Licensor and Licensee alike, obtain such advice.
+────────────────────────────────────────────────────────────────────────
+
+
+────────────────────────────────────────────────────────────────────────
+PRICING SUMMARY (non-binding; the operative text begins at Section 1)
+────────────────────────────────────────────────────────────────────────
+
+  In the interest of transparency, the pricing model is published in
+  full and applies on identical terms to every licensee worldwide.
+
+  • You may install, run, modify, fork, and use Scelo IDE for any
+    purpose, including building commercial products and services.
+    There is no fee for using the Software itself.
+
+  • For each product, service, model, dataset, application, or other
+    distributable artefact that You build or substantially produce
+    using Scelo IDE (each, a "Licensed Product"), the first
+    ZAR 1,000,000 of that Licensed Product's lifetime Gross Revenue
+    is royalty-free.
+
+  • Above that per-Product threshold, You owe Intelligent Actuaries
+    a flat royalty of three percent (3%) of that Licensed Product's
+    Gross Revenue in excess of ZAR 1,000,000, for the lifetime of the
+    Licensed Product.
+
+  • Nanoeconomics-for-poverty research and direct-delivery work
+    conducted under the published Nanoeconomics Methodology remains
+    free without revenue limit, conditional on the public annual
+    report described in Section 3.
+
+  • Misrepresentation of revenue, of affiliates, or of carve-out
+    eligibility triggers retroactive back-charge plus the Licensor's
+    legal costs (Section 8).
+
+  Where this summary and the operative text below conflict, the
+  operative text governs.
+
 ────────────────────────────────────────────────────────────────────────
 
 
@@ -30,9 +67,10 @@ This License is global in scope. The rights granted in Sections 2 and
 on identical terms. The Licensor is incorporated in the Republic of
 South Africa, and this License is governed by South African law (see
 Section 13), but the License itself is intended for international use:
-the revenue gate in Section 2 applies worldwide via currency
-conversion (Section 1.5), and the Nanoeconomics carve-out in Section 3
-is available to researchers and practitioners in every jurisdiction.
+the per-Product royalty gate in Section 2 and Section 4 applies
+worldwide via the currency conversion mechanic in Section 1.5, and the
+Nanoeconomics carve-out in Section 3 is available to researchers and
+practitioners in every jurisdiction.
 
 This License is independent of the Intelligent Actuaries License v1.0
 (`LICENSE` at the repository root). Where this License and IA v1.0
@@ -40,10 +78,10 @@ would both apply to the Software, this License governs. Where this
 License is silent, IA v1.0 fills the gap by analogy, but only to the
 extent consistent with the terms below.
 
-It is a source-available, revenue-gated license with a dedicated
-free-use carve-out for nanoeconomics research conducted for poverty
-eradication. It is NOT an Open Source Initiative–approved open-source
-license.
+It is a source-available, royalty-bearing license measured on a
+per-Product basis, with a dedicated free-use carve-out for
+nanoeconomics research conducted for poverty eradication. It is NOT an
+Open Source Initiative–approved open-source license.
 
 
 ────────────────────────────────────────────────────────────────────────
@@ -57,67 +95,100 @@ license.
      power to direct the management of the entity.
 
 1.2  "Annual Report" means the public-facing self-attested report
-     described in Section 4.
+     described in Section 3 (Nanoeconomics carve-out) or, in the
+     context of Section 4, the annual royalty report described in
+     Section 4.4. The context indicates which is meant.
 
-1.3  "Commercial Use" means any use of the Software (i) by or on
-     behalf of a for-profit entity, (ii) embedded in a product or
-     service sold or licensed to third parties, (iii) used to render
-     services to clients for a fee, (iv) used to generate revenue
-     directly or indirectly, or (v) used by an entity whose Gross
-     Revenue equals or exceeds the Revenue Threshold.
+1.3  "Commercial Use" means any use of the Software in the design,
+     development, training, evaluation, deployment, distribution, or
+     operation of a Licensed Product.
 
 1.4  "Eligible Nanoeconomics Use" has the meaning given in Section 3.
 
-1.5  "Gross Revenue" means all worldwide revenue earned by You and
-     Your Affiliates in aggregate, from any source whatsoever and
-     measured before any deduction, computed in South African Rand
-     (ZAR) at the relevant period-end. Revenue earned in any other
-     currency is converted to ZAR at the spot exchange rate published
-     by the South African Reserve Bank on the last business day of
-     Your fiscal year, or, if such rate is not available, the
-     applicable mid-market rate published by a major international
-     financial data provider.
+1.5  "Gross Revenue", in respect of a Licensed Product, means all
+     worldwide revenue earned by You and Your Affiliates in aggregate,
+     in respect of that Licensed Product, from any source whatsoever
+     and measured before any deduction (including but not limited to
+     refunds, chargebacks, taxes, distribution fees, hosting costs,
+     payment-processor fees, or cost of goods sold). It includes
+     subscription fees, one-time purchase fees, in-app purchases,
+     advertising revenue attributable to the Licensed Product,
+     sponsorship revenue attributable to the Licensed Product,
+     consulting or service fees where the Licensed Product is the
+     subject of the engagement, license fees and royalties received
+     from sub-distributors, and the fair market value of any non-cash
+     consideration received in connection with the Licensed Product.
+     Gross Revenue is computed in South African Rand (ZAR). Revenue
+     earned in any other currency is converted to ZAR at the spot
+     exchange rate published by the South African Reserve Bank on the
+     last business day of the fiscal year in which that revenue was
+     earned, or, if such rate is not available, the applicable
+     mid-market rate published by a major international financial
+     data provider on that date.
 
-1.6  "Licensor" means Intelligent Actuaries (Pty) Ltd, a private
+1.6  "Licensed Product" means any product, service, application,
+     model, dataset, software library, simulation, report, or other
+     distributable, sold, licensed, or revenue-generating artefact
+     that You or Your Affiliates create, distribute, license, host,
+     or otherwise commercialise, where the Software was used in the
+     design, development, training, evaluation, or production of that
+     artefact in any non-trivial way. Use is non-trivial if removing
+     the Software from the development process would have required
+     material additional work, cost, or time. Internal-only artefacts
+     that are never distributed and never used to generate revenue
+     are not Licensed Products.
+
+     For the avoidance of doubt, Licensed Products are counted
+     individually: separate products, services, or service-tiers
+     constitute separate Licensed Products even where they share
+     code, models, or branding, unless they are functionally a single
+     offering distinguished only by packaging or pricing. The
+     Licensor and Licensee shall, in case of doubt, resolve product
+     boundaries by reference to how the Licensee presents the
+     offering(s) to its customers in the ordinary course.
+
+1.7  "Licensor" means Intelligent Actuaries (Pty) Ltd, a private
      company incorporated under the laws of the Republic of South
      Africa, and its lawful assignees.
 
-1.7  "Nanoeconomics Methodology" means the body of work published by
+1.8  "Nanoeconomics Methodology" means the body of work published by
      the Licensor under the name "Nanoeconomics", including its
      definitions, methods, boundary conditions, simulators, and
-     reproducible artefacts, as those works exist from time to time on
-     the Licensor's public research surfaces (including
+     reproducible artefacts, as those works exist from time to time
+     on the Licensor's public research surfaces (including
      intelligentactuaries.com, the public GitHub organisation
      intelligentactuaries, and the public Hugging Face organisation
      intelligentactuaries). Where a specific publication is cited in
      an Annual Report, that publication is the governing reference
      for that report.
 
-1.8  "Revenue Threshold" means South African Rand one million
-     (ZAR 1,000,000.00) of Gross Revenue, in aggregate, earned by You
-     and Your Affiliates in any twelve-month period, measured at the
-     end of Your most recently completed fiscal year (or, where You
-     have no fiscal year, the calendar year).
+1.9  "Revenue Threshold" means South African Rand one million
+     (ZAR 1,000,000.00) of lifetime Gross Revenue, in respect of a
+     single Licensed Product, aggregated across You and Your
+     Affiliates and across all fiscal years in which that Licensed
+     Product has earned revenue.
 
-1.9  "Software" has the meaning given in the opening paragraphs.
+1.10 "Royalty Rate" means three percent (3.00%).
 
-1.10 "You" (or "Your") means the individual or legal entity exercising
+1.11 "Software" has the meaning given in the opening paragraphs.
+
+1.12 "You" (or "Your") means the individual or legal entity exercising
      rights under this License. If You exercise such rights on behalf
      of an entity, You represent that You have authority to bind that
      entity, and "You" includes that entity and its Affiliates.
 
 
 ────────────────────────────────────────────────────────────────────────
-2.  GRANT OF LICENSE — STANDARD (REVENUE-GATED)
+2.  GRANT OF LICENSE
 ────────────────────────────────────────────────────────────────────────
 
-2.1  For so long as Your Gross Revenue, aggregated with that of Your
-     Affiliates, is LESS THAN the Revenue Threshold, the Licensor
-     grants You a worldwide, non-exclusive, royalty-free,
+2.1  The Licensor grants You a worldwide, non-exclusive, royalty-free,
      non-transferable, revocable license to:
 
      (a)  install, execute, and use the Software for any lawful
-          purpose, including Commercial Use;
+          purpose, including Commercial Use and including the design,
+          development, training, evaluation, and operation of
+          Licensed Products;
 
      (b)  modify, fork, and create derivative works of the Software
           for Your own internal use; and
@@ -127,19 +198,22 @@ license.
           copy preserves this License in full, the copyright notice,
           and the attribution required by Section 6.
 
-2.2  The rights in Section 2.1 are conditioned on Your continued
-     compliance with this License. They terminate automatically the
-     moment Your Gross Revenue first equals or exceeds the Revenue
-     Threshold, unless You either (i) qualify for, and continue to
-     comply with, Section 3 (Eligible Nanoeconomics Use), or (ii) have
-     in place a Commercial License under Section 5.
+2.2  The rights in Section 2.1 are royalty-free with respect to use
+     of the Software itself. They are conditional on Your continued
+     compliance with this License, including the per-Product royalty
+     obligation in Section 4 where a Licensed Product crosses the
+     Revenue Threshold.
+
+2.3  Nothing in this Section terminates the license merely because a
+     Licensed Product earns revenue. The license continues; a royalty
+     obligation under Section 4 attaches in addition.
 
 
 ────────────────────────────────────────────────────────────────────────
 3.  ELIGIBLE NANOECONOMICS USE — FREE WITHOUT REVENUE LIMIT
 ────────────────────────────────────────────────────────────────────────
 
-3.1  Notwithstanding Section 2.2, You may use the Software for any
+3.1  Notwithstanding Section 4, You may use the Software for any
      "Eligible Nanoeconomics Use" without regard to the Revenue
      Threshold, and at no royalty, provided that every condition in
      Sections 3.2 through 3.4 is met and remains met.
@@ -199,45 +273,102 @@ license.
      no Annual Report meeting the requirements above has been
      submitted within the deadline. A lapse does not retroactively
      invalidate prior years' compliance, but it does revert You to
-     the Section 2.2 revenue test for the year of lapse and every
+     the Section 4 royalty regime for the year of lapse and every
      subsequent year, until a fresh Annual Report restores Eligible
      Nanoeconomics Use status.
 
 
 ────────────────────────────────────────────────────────────────────────
-4.  CROSSING THE REVENUE THRESHOLD WITHOUT THE CARVE-OUT
+4.  ROYALTY OBLIGATION ON LICENSED PRODUCTS
 ────────────────────────────────────────────────────────────────────────
 
-4.1  If, at any time, Your Gross Revenue aggregated with that of Your
-     Affiliates equals or exceeds the Revenue Threshold during any
-     measured period, and You do not qualify for Eligible
-     Nanoeconomics Use, then on that date:
+4.1  The first ZAR 1,000,000 of lifetime Gross Revenue earned in
+     respect of any single Licensed Product is royalty-free.
 
-     (a)  the license in Section 2.1 terminates automatically; and
+4.2  Once a Licensed Product's lifetime Gross Revenue, aggregated
+     across You and Your Affiliates and across all fiscal years,
+     equals or exceeds the Revenue Threshold, You shall pay to the
+     Licensor a royalty equal to the Royalty Rate (three percent,
+     3.00%) of every additional ZAR of Gross Revenue earned by that
+     Licensed Product, for the lifetime of the Licensed Product. The
+     royalty applies only to Gross Revenue in excess of ZAR 1,000,000;
+     the first ZAR 1,000,000 remains royalty-free in perpetuity.
 
-     (b)  You must, within sixty (60) days, either (i) cease all use
-          of the Software and destroy all copies in Your possession
-          and control, or (ii) enter into a Commercial License with
-          the Licensor under Section 5.
+4.3  Royalties accrue at the moment Gross Revenue is earned. They are
+     due and payable annually in arrears, no later than ninety (90)
+     days after the end of Your fiscal year in which the relevant
+     Gross Revenue was earned. Payment shall be made in ZAR by
+     electronic transfer to bank-account details provided by the
+     Licensor on written request to legal@intelligentactuaries.com.
 
-4.2  You shall notify the Licensor in writing within sixty (60) days
-     of first equalling or exceeding the Revenue Threshold. The
-     notice shall be sent to legal@intelligentactuaries.com and shall
-     state the date of first crossing, Your Gross Revenue figure, and
-     Your election under Section 4.1(b).
+4.4  Within the same ninety (90) day window, You shall submit a
+     royalty report to legal@intelligentactuaries.com (with a courtesy
+     copy to scelo@intelligentactuaries.com) that, for each Licensed
+     Product that has crossed the Revenue Threshold:
+
+     (a)  identifies the Licensed Product by name and description;
+
+     (b)  states the fiscal year covered;
+
+     (c)  states the Gross Revenue earned by that Licensed Product in
+          the fiscal year, in its original currency or currencies,
+          and the ZAR-equivalent amount computed under Section 1.5;
+
+     (d)  states the cumulative lifetime Gross Revenue of the
+          Licensed Product through the end of that fiscal year;
+
+     (e)  states the royalty amount due in respect of that fiscal
+          year (3% of the portion of Gross Revenue in excess of
+          ZAR 1,000,000); and
+
+     (f)  identifies the Affiliates whose revenue is included.
+
+     The royalty report shall be self-attested by an officer or
+     equivalent authorised representative of the Licensee.
+
+4.5  The Licensor may, no more than once per Licensed Product per
+     fiscal year, request reasonable supporting documentation of the
+     figures in a royalty report. You shall provide such documentation
+     within thirty (30) days of the request, redacted only to the
+     extent necessary to protect customer-identifying information or
+     other lawfully confidential material.
+
+4.6  Affiliate aggregation is mandatory. Revenue earned in respect of
+     a Licensed Product by any of Your Affiliates is included in that
+     Licensed Product's Gross Revenue, regardless of contractual,
+     accounting, or legal structuring. The Licensee that first
+     adopted this License in respect of a Licensed Product is jointly
+     and severally liable, with its Affiliates, for the royalty due
+     on that Licensed Product.
+
+4.7  An election to enter into a Commercial License under Section 5
+     supersedes the royalty obligation in this Section for the
+     Licensed Product(s) covered by that Commercial License, for the
+     term of that Commercial License.
 
 
 ────────────────────────────────────────────────────────────────────────
-5.  COMMERCIAL LICENSE
+5.  COMMERCIAL LICENSE (OPTIONAL ALTERNATIVE)
 ────────────────────────────────────────────────────────────────────────
 
-5.1  Commercial Licenses are granted on negotiated, written terms.
+5.1  The royalty regime in Section 4 is the default and applies to
+     all Licensees by operation of this License. As an alternative,
+     You may, at Your election, negotiate a Commercial License with
+     the Licensor that supersedes Section 4 for the Licensed
+     Product(s) and term agreed in writing. Typical reasons to
+     negotiate a Commercial License include: preferring a fixed
+     annual fee over a variable royalty, requesting expanded rights
+     (for example, sublicensing or rebranding rights not otherwise
+     granted), or requesting a support and service level.
+
+5.2  Commercial Licenses are granted on negotiated, written terms.
      Pricing, scope, term, support level, and any other commercial
      matters are agreed between the Licensor and the Commercial
      Licensee, and supersede this License for the duration of the
-     Commercial Licence.
+     Commercial Licence, with respect to the Licensed Product(s)
+     covered.
 
-5.2  Enquiries: legal@intelligentactuaries.com.
+5.3  Enquiries: legal@intelligentactuaries.com.
 
 
 ────────────────────────────────────────────────────────────────────────
@@ -281,40 +412,48 @@ You shall not, and shall not permit any third party to:
      embedded in the Software, except to the extent applicable law
      expressly prohibits such restriction;
 
-(f)  misrepresent Your Gross Revenue, Your Affiliates, the Eligible
-     Nanoeconomics Use claimed, the contents of an Annual Report, or
-     any other fact material to Your rights under this License; or
+(f)  misrepresent the Gross Revenue of any Licensed Product, the
+     identity or scope of Your Affiliates, the boundaries between
+     Licensed Products, the Eligible Nanoeconomics Use claimed, the
+     contents of an Annual Report or royalty report, or any other
+     fact material to Your rights or obligations under this License;
+     or
 
-(g)  structure Your operations, contractual relationships, or
-     reporting practices for the purpose of avoiding the Revenue
-     Threshold or the requirements of Section 3 (for example, by
-     splitting one effective entity across multiple coordinated
-     entities, or by routing revenue through formally-unrelated
-     intermediaries).
+(g)  structure Your operations, Your contractual relationships, Your
+     product packaging, or Your reporting practices for the purpose
+     of avoiding the Revenue Threshold, depressing reported per-
+     Product Gross Revenue, fragmenting one functional Licensed
+     Product into multiple nominal ones, or otherwise defeating the
+     royalty mechanic in Section 4 or the conditions in Section 3.
 
 
 ────────────────────────────────────────────────────────────────────────
 8.  ABUSE — REMEDIES AND BACK-CHARGE
 ────────────────────────────────────────────────────────────────────────
 
-8.1  If You materially breach this License — including, without
-     limitation, by exceeding the Revenue Threshold without electing
-     Commercial Use, by claiming Eligible Nanoeconomics Use without
-     meeting its conditions, or by committing any act in Section 7 —
-     this License terminates automatically and without notice.
+8.1  If You materially breach this License, including without
+     limitation by failing to pay royalties due under Section 4, by
+     failing to submit a royalty report by its deadline, by claiming
+     Eligible Nanoeconomics Use without meeting its conditions, or by
+     committing any act in Section 7, this License terminates
+     automatically and without notice with respect to the Licensed
+     Product(s) in breach.
 
-8.2  Upon termination under Section 8.1, in addition to ceasing use
-     and destroying copies of the Software as required by Section
-     4.1(b)(i), You shall pay to the Licensor:
+8.2  Upon termination under Section 8.1, in addition to any cessation
+     of use that follows from termination, You shall pay to the
+     Licensor the unpaid royalties due under Section 4 in respect of
+     the Licensed Product(s) in breach, computed retroactively from
+     the date the Licensed Product first crossed the Revenue
+     Threshold (or, in cases involving misrepresentation, from the
+     date the misrepresentation began), together with compound
+     interest at the prevailing prime lending rate published by the
+     South African Reserve Bank plus three percentage points,
+     accruing from the date each unpaid royalty fell due.
 
-     (a)  a back-charge equal to the Licensor's then-current standard
-          commercial fee for the Software, applied retroactively from
-          the date Your first non-conforming use commenced through
-          the date of termination; and
-
-     (b)  the Licensor's reasonable legal costs, including attorneys'
-          fees and disbursements, incurred in connection with
-          detecting, documenting, and enforcing the breach.
+     You shall additionally pay the Licensor's reasonable legal
+     costs, including attorneys' fees and disbursements, incurred in
+     connection with detecting, documenting, and enforcing the
+     breach.
 
 8.3  The remedies in Section 8.2 are cumulative with any other remedy
      available to the Licensor at law or in equity, including
@@ -325,12 +464,12 @@ You shall not, and shall not permit any third party to:
      of the Republic of South Africa), or to publish the fact of the
      breach.
 
-8.4  Inadvertent or de minimis breaches — including a late Annual
-     Report, a clerical error in revenue reporting, or a good-faith
-     misunderstanding of these terms — may, at the Licensor's sole
-     discretion, be cured by the breaching party within thirty (30)
-     days of written notice from the Licensor, in which case Sections
-     8.1 and 8.2 do not apply.
+8.4  Inadvertent or de minimis breaches, including a late royalty
+     report, a clerical error in revenue reporting, a late Nanoeconomics
+     Annual Report, or a good-faith misunderstanding of these terms,
+     may, at the Licensor's sole discretion, be cured by the breaching
+     party within thirty (30) days of written notice from the Licensor,
+     in which case Sections 8.1 and 8.2 do not apply.
 
 
 ────────────────────────────────────────────────────────────────────────
@@ -378,12 +517,13 @@ Software.
 
 11.2 The Licensor's aggregate liability arising out of or in
      connection with this License shall not exceed the greater of
-     (i) the amounts actually paid by You to the Licensor under any
-     applicable Commercial License during the twelve (12) months
-     preceding the event giving rise to the claim, or (ii) one
-     thousand South African Rand (ZAR 1,000.00), or its equivalent
-     in any other currency at the spot rate referenced in Section
-     1.5 on the date the claim arises.
+     (i) the royalties actually paid by You to the Licensor under
+     Section 4, or the amounts actually paid by You to the Licensor
+     under any applicable Commercial License, during the twelve (12)
+     months preceding the event giving rise to the claim, or
+     (ii) one thousand South African Rand (ZAR 1,000.00), or its
+     equivalent in any other currency at the spot rate referenced in
+     Section 1.5 on the date the claim arises.
 
 11.3 Nothing in this License excludes or limits liability to the
      extent that exclusion or limitation is prohibited by applicable
@@ -509,6 +649,7 @@ of any third-party right.
 ────────────────────────────────────────────────────────────────────────
 
   Commercial enquiries          legal@intelligentactuaries.com
+  Royalty reports & payment     legal@intelligentactuaries.com
   General Scelo enquiries       scelo@intelligentactuaries.com
   Nanoeconomics carve-out       nanoeconomics@scelo.ai
                                 scelo@intelligentactuaries.com
