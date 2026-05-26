@@ -97,18 +97,18 @@ What remains before v1:
       unsigned and Gatekeeper / SmartScreen warn on first launch.
 - [ ] First public release notes + signed installer artefacts on the
       *Releases* tab.
-- [x] Flip this repository from private to public. (done 2026-05-26)
+- [ ] Flip this repository from private to public.
 
 ## Concepts
 
 ### The pipeline
 
-<div align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="logo/pipeline-dark.svg" />
-    <img src="logo/pipeline-light.svg" alt="soft data → brain layer (tools) → hard data, one-way" width="640" />
-  </picture>
-</div>
+```
+                   ┌─────────────┐
+   soft data  ───▶ │ brain layer │ ───▶  hard data
+                   │   (tools)   │
+                   └─────────────┘
+```
 
 One-way edges only. Soft never writes to hard directly; hard never
 reads from soft. The tools layer is where the audit trail lives.
