@@ -98,7 +98,7 @@ the body when it isn't obvious from the diff.
 
 By submitting any contribution (pull request, patch, issue
 attachment, etc.) you agree that the contribution is licensed under
-the [Scelo IDE Source-Available License v1.0](LICENSE) ("Inbound =
+the [Scelo IDE Source-Available License v1.1](LICENSE) ("Inbound =
 outbound", §9 of the License). You also grant the Licensor a
 perpetual, worldwide, non-exclusive, royalty-free, irrevocable
 license to reproduce, prepare derivative works of, sublicense

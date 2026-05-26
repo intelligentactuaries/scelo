@@ -34,7 +34,7 @@ never reads from soft. The tools layer is the only path between them.
 |---|---|
 | [`apps/scelo-ide/`](apps/scelo-ide/) | The Electron desktop wrapper. Bundles Python 3.13 + R 4.3 + Pyright + R-LSP + ripgrep + git plumbing. Owns OS-touching surfaces (file I/O, exec, terminal, dataset downloads, OS keychain, auto-update). |
 | [`apps/web/`](apps/web/) | The React + Vite renderer. Workspace shell (Monaco editor + file tree + xterm terminal + sidebar panels: files, search, outline, git, problems, tests), the Scelo brain layer (soft → tools → hard workstations), the workspace AI panel, the welcome view, the swarm route. |
-| [`LICENSE`](LICENSE) | Scelo IDE Source-Available License v1.0. See [License](#license). |
+| [`LICENSE`](LICENSE) | Scelo IDE Source-Available License v1.1. See [License](#license). |
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | How to file bugs, propose changes, set up locally, the commit / PR conventions. |
 | [`SECURITY.md`](SECURITY.md) | Responsible-disclosure policy. |
 | [`ONBOARDING.md`](ONBOARDING.md) | Architecture tour — the apps/web ↔ apps/scelo-ide IPC contract, the bus pattern, migrations, sample workspaces, house rules. |
@@ -127,23 +127,31 @@ nanoeconomics@scelo.ai
 
 ## License
 
-[Scelo IDE Source-Available License v1.0](LICENSE).
+[Scelo IDE Source-Available License v1.1](LICENSE).
 
-In short:
+The pricing is published, not negotiated. In short:
 
 | Who you are | What you owe |
 |---|---|
-| Anyone with worldwide Gross Revenue under **ZAR 1,000,000** per year | Nothing. Free for any use, including commercial. |
-| Anyone above that threshold | A [Commercial License](mailto:legal@intelligentactuaries.com), unless the use qualifies under the Nanoeconomics carve-out below. |
+| Anyone using Scelo itself (install, modify, fork, distribute) | Nothing. Free for any purpose, including commercial. |
+| For each **Licensed Product** you build using Scelo, on its first **ZAR 1,000,000** of lifetime Gross Revenue | Nothing. The first ZAR 1M per product is royalty-free. |
+| For each Licensed Product, on Gross Revenue above ZAR 1,000,000 lifetime | A flat **3%** royalty on the excess, annually in arrears, for the lifetime of that product. A [Commercial License](mailto:legal@intelligentactuaries.com) is available as an optional alternative for parties wanting fixed fees or expanded rights. |
 | Anyone applying the published Nanoeconomics Methodology to **poverty-eradication work** | Free regardless of revenue, conditional on a public annual report submitted to both `scelo@intelligentactuaries.com` and `nanoeconomics@scelo.ai`. |
-| Anyone who tries to dodge either of the above | Auto-termination + retroactive back-charge at the standard commercial rate + legal costs. |
+| Anyone who misrepresents revenue, product boundaries, or carve-out eligibility | Auto-termination of the offending Product(s); back-charge = unpaid 3% royalty + SARB prime+3% compound interest, retroactive to first non-conforming use, plus legal costs. |
+
+"Licensed Product" is defined broadly in §1.6 of the License: any
+product, service, application, model, dataset, library, simulation,
+report, or other distributable or revenue-generating artefact that
+used Scelo in a non-trivial way to build. Per-product fragmentation
+to dodge the threshold is prohibited (§7(g)).
 
 The license is global. The Licensor is incorporated in the Republic
 of South Africa, contract is governed by South African law, but
 disputes default to ICC arbitration and the Licensor can enforce IP
-rights in any competent court worldwide. Read the full text — it
-covers attribution, prohibited acts, the abuse remedy, warranty
-disclaimer, liability cap, and consumer-protection carve-outs.
+rights in any competent court worldwide. Read the full text: it
+covers attribution, the royalty-reporting mechanic, prohibited acts,
+the abuse remedy, warranty disclaimer, liability cap, and consumer-
+protection carve-outs.
 
 ⚠️ **Not legal advice.** Before relying on this license, consult
 counsel in your jurisdiction.
