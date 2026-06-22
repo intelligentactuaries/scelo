@@ -1,55 +1,45 @@
-// Scelo logo / mark.
+// Scelo logo / mark — the versioned wordmark "S₀.₁" (S for Scelo, release
+// version as a subscript). Source of truth is the brand kit in /brand
+// (SN Pro 400, glyphs outlined by generate_logo.py); these paths are the
+// outlined output for v0.1, lifted from brand/scelo_S0_1.svg.
 //
-// One concept : the soft → tools → hard pipeline that Scelo IS. Three
-// nodes on a horizontal axis :
-//   * Left hollow disc      = soft data (uncommitted)
-//   * Middle ring + core    = tools / the brain layer (the "lens" that
-//                              focuses soft into hard)
-//   * Right hollow disc     = hard data (board-pack-ready)
-// Connected by two hairlines so the directionality is implicit.
+// Rendered with `currentColor` on a transparent background so it inherits
+// the parent's colour and themes light/dark for free. The viewBox is
+// cropped to the lockup's ink bounding box so the mark fills its box rather
+// than floating in the generator's 1000×1000 padding.
 //
-// Follows the website_v2 ICONOGRAPHY spec verbatim :
-//   * 64x64 viewBox
-//   * fill="none", stroke="currentColor", strokeWidth=1.5
-//   * round caps + joins
-//   * no fills, no shadows, no gradients
-//   * inherits its colour from the parent's currentColor so it themes
-//     light/dark for free.
+// To bump the version, run `python generate_logo.py --version X.Y` in
+// /brand and replace the four <path> d-strings below with the new output.
 //
-// Use with Tailwind size utilities, eg :
-//   <SceloLogo className="h-6 w-6 text-fg" />
+// Use with Tailwind size utilities, eg : <SceloLogo className="h-6 w-6 text-fg" />
 
 export function SceloLogo({ className }: { className?: string }) {
   return (
     <svg
-      viewBox="0 0 64 64"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={1.5}
-      strokeLinecap="round"
-      strokeLinejoin="round"
+      viewBox="179 222 642 556"
+      fill="currentColor"
       role="img"
       aria-label="Scelo"
       className={className}
     >
-      {/* Soft : hollow disc, small. */}
-      <circle cx={12} cy={32} r={5} />
-
-      {/* Edge soft → tools (gap to nodes on both ends). */}
-      <path d="M18 32h6" />
-
-      {/* Tools / brain layer : outer ring + inner core. The two
-       *  concentric circles read as a lens; one stroke, no fill, the
-       *  inner ring's smaller radius makes it feel like a focused
-       *  pupil rather than a target. */}
-      <circle cx={32} cy={32} r={9} />
-      <circle cx={32} cy={32} r={3} />
-
-      {/* Edge tools → hard. */}
-      <path d="M40 32h6" />
-
-      {/* Hard : hollow disc, small. */}
-      <circle cx={52} cy={32} r={5} />
+      <g transform="translate(161.1653153772159,690.0673354404287) scale(0.6596124776693693)">
+        {/* S */}
+        <g transform="matrix(1,0,0,-1,0,0)">
+          <path d="M321 -9Q277 -9 230.5 0.5Q184 10 143.5 28.5Q103 47 76 74Q63 87 60.0 101.5Q57 116 62.0 128.0Q67 140 78.0 147.0Q89 154 102.0 153.0Q115 152 128 140Q168 102 216.0 87.0Q264 72 320 72Q391 72 435.5 97.5Q480 123 479 171Q479 201 452.5 225.0Q426 249 356 268L250 298Q155 325 110.0 365.0Q65 405 65 471Q65 534 98.5 581.0Q132 628 190.5 653.5Q249 679 325 679Q370 679 408.5 667.5Q447 656 479.0 637.0Q511 618 535 593Q549 580 551.5 566.0Q554 552 548.5 540.0Q543 528 532.5 521.0Q522 514 509.0 515.5Q496 517 482 529Q448 560 409.0 578.0Q370 596 324 596Q275 596 238.5 582.0Q202 568 182.0 542.0Q162 516 162 479Q162 439 188.0 419.0Q214 399 279 381L385 351Q451 332 493.0 309.0Q535 286 555.0 253.5Q575 221 576 175Q576 114 543.0 73.0Q510 32 452.5 11.5Q395 -9 321 -9Z" />
+        </g>
+        {/* 0 */}
+        <g transform="matrix(0.3,0,0,-0.3,637.0,100.0)">
+          <path d="M300 -9Q178 -9 109.0 76.0Q40 161 40 336Q40 455 71.0 530.5Q102 606 160.5 642.5Q219 679 300 679Q382 679 440.0 643.0Q498 607 529.0 531.5Q560 456 560 337Q560 220 529.0 143.0Q498 66 440.0 28.5Q382 -9 300 -9ZM300 72Q353 72 390.0 98.0Q427 124 446.0 182.5Q465 241 465 337Q465 435 446.0 492.0Q427 549 390.0 573.5Q353 598 300 598Q247 598 210.0 573.0Q173 548 154.0 491.0Q135 434 135 337Q135 241 154.0 182.5Q173 124 210.0 98.0Q247 72 300 72Z" />
+        </g>
+        {/* . */}
+        <g transform="matrix(0.3,0,0,-0.3,817.0,100.0)">
+          <path d="M118 -4Q91 -4 74.0 13.0Q57 30 57 57Q57 83 74.0 100.0Q91 117 118 117Q146 117 162.0 100.0Q178 83 178 57Q178 30 162.0 13.0Q146 -4 118 -4Z" />
+        </g>
+        {/* 1 */}
+        <g transform="matrix(0.3,0,0,-0.3,887.2,100.0)">
+          <path d="M223 -7Q200 -7 188.0 6.0Q176 19 176 42V591H224L92 472Q80 461 66.5 459.0Q53 457 43.0 462.5Q33 468 27.5 478.5Q22 489 25.0 502.0Q28 515 42 528L182 659Q195 670 206.0 673.5Q217 677 230 677Q243 677 252.0 672.0Q261 667 266.0 657.5Q271 648 271 634V42Q271 19 259.5 6.0Q248 -7 223 -7Z" />
+        </g>
+      </g>
     </svg>
   );
 }
