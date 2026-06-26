@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Scelo IDE
+Comment=Actuarial workbench with bundled Python + R
+Exec=scelo-ide %U
+Icon=io.intelligentactuaries.scelo
+Terminal=false
+Categories=Development;Science;
+Keywords=actuarial;data-science;python;r;reserving;mortality;capital;
+StartupWMClass=Scelo IDE
+StartupNotify=true

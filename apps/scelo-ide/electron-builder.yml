@@ -82,6 +82,26 @@ linux:
       arch: [x64]
   icon: resources/icons
 
+# ─── Snap (verified-publisher distribution) ────────────────────────────
+# Not in the default linux targets above (snap needs snapcraft/snapd). Build
+# it explicitly with `electron-builder --linux snap`, then `snapcraft upload`
+# to the Snap Store, where the listing reads as a VERIFIED publisher and is
+# not flagged "third party" the way a side-loaded .deb is. See packaging/
+# PUBLISHING.md.
+#
+# Classic confinement: the IDE spawns the bundled Python / R interpreters and
+# an embedded terminal, which the strict sandbox blocks. Classic gives full
+# system access (same model VS Code uses) and requires a one-time Snap Store
+# review to grant.
+snap:
+  confinement: classic
+  summary: Actuarial workbench with bundled Python + R
+  description: |
+    Scelo IDE is a downloadable desktop workbench for actuaries: a
+    soft-data → tools → hard-data pipeline with a bundled Python and R
+    runtime, the lifelib + chainladder + climada stack, and AI co-pilots
+    scoped to each stage. Works fully offline once installed.
+
 # ─── macOS ─────────────────────────────────────────────────────────────
 #
 # Signing + notarisation: electron-builder picks these up automatically
