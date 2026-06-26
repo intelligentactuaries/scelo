@@ -16,6 +16,7 @@
 // layer.
 
 import { useTheme } from "@/lib/theme";
+import { emitToast } from "@/lib/toastBus";
 import ReactECharts from "echarts-for-react";
 import { BarChart, BoxplotChart, ScatterChart } from "echarts/charts";
 import { GridComponent, TitleComponent, TooltipComponent } from "echarts/components";
@@ -42,10 +43,17 @@ import { StageChatPanel } from "./StageChatPanel";
 import {
   type CleaningOpKey,
   type CleaningPlan,
+  DATE_STYLE_LABEL,
+  type DateStyle,
   analyseCleaning,
   applyCleaning,
+  augmentDataset,
+  cleanColumnCells,
+  clearNonDateCells,
   defaultEnabled,
   describeOp,
+  detectDateColumns,
+  reformatDateColumns,
 } from "./cleaning";
 import { CLIMATE_SAMPLE } from "./climateSampleData";
 import { buildDirtySample } from "./dirtySampleData";
@@ -1085,6 +1093,88 @@ function TypeChip({ type }: { type: ColumnType }) {
   return <span className={`font-mono text-[9px] uppercase tracking-wider ${cls}`}>{label}</span>;
 }
 
+// Clickable type badge for date-content columns: opens a small dropdown to set
+// the display format (American / European / ISO). Replaces the plain TypeChip
+// on columns we detect as dates so the format is changeable the traditional,
+// button-driven way — the same engine the chat uses. Positioned fixed so it
+// isn't clipped by the grid's overflow-auto.
+const DATE_FORMAT_OPTIONS: Array<[DateStyle, string, string]> = [
+  ["us", "American", "MM/DD/YYYY"],
+  ["eu", "European", "DD/MM/YYYY"],
+  ["iso", "ISO 8601", "YYYY-MM-DD"],
+];
+
+function ColumnFormatMenu({
+  column,
+  onPick,
+}: {
+  column: string;
+  onPick: (style: DateStyle) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [rect, setRect] = useState<DOMRect | null>(null);
+  const btnRef = useRef<HTMLButtonElement | null>(null);
+
+  const toggle = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (btnRef.current) setRect(btnRef.current.getBoundingClientRect());
+    setOpen((o) => !o);
+  };
+
+  const MENU_W = 210;
+  const vw = typeof window !== "undefined" ? window.innerWidth : 1200;
+  const left = rect ? Math.max(8, Math.min(rect.right - MENU_W, vw - MENU_W - 8)) : 0;
+  const top = rect ? rect.bottom + 4 : 0;
+
+  return (
+    <>
+      <button
+        ref={btnRef}
+        type="button"
+        onClick={toggle}
+        title={`Date column — click to set the display format for \`${column}\``}
+        className="flex shrink-0 items-center gap-0.5 rounded border border-border bg-bg-2 px-1 py-0.5 font-mono text-[9px] uppercase tracking-wider text-accent-3 hover:border-primary hover:text-primary"
+      >
+        📅<span className="text-fg-dim">▾</span>
+      </button>
+      {open && rect && (
+        <>
+          {/* click-away backdrop */}
+          <button
+            type="button"
+            aria-label="close menu"
+            onClick={() => setOpen(false)}
+            className="fixed inset-0 z-[59] cursor-default"
+          />
+          <div
+            style={{ position: "fixed", left, top, width: MENU_W, zIndex: 60 }}
+            className="overflow-hidden rounded-lg border border-border bg-bg-1 shadow-2xl"
+          >
+            <div className="truncate border-b border-border px-2 py-1 font-mono text-[9px] uppercase tracking-wider text-fg-dim">
+              date format · {column}
+            </div>
+            {DATE_FORMAT_OPTIONS.map(([style, label, pattern]) => (
+              <button
+                key={style}
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setOpen(false);
+                  onPick(style);
+                }}
+                className="flex w-full items-center justify-between gap-2 px-2 py-1.5 text-left text-[11px] text-fg-mute hover:bg-bg-2 hover:text-primary"
+              >
+                <span>{label}</span>
+                <span className="font-mono text-[10px] text-fg-dim">{pattern}</span>
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+    </>
+  );
+}
+
 // Wraps the list-item button with a hover region that anchors a small
 // chat popover. Each column gets its own thread (memory-keyed when a
 // project is active). The popover has a hover-bridge close behaviour:
@@ -1102,6 +1192,9 @@ function DataGrid({
   selectedColumn,
   onSelectColumn,
   derivedColumnNames,
+  dateColumns,
+  onReformatColumnDates,
+  onColumnCommand,
 }: {
   dataset: Dataset;
   rows: Row[];
@@ -1111,12 +1204,16 @@ function DataGrid({
   selectedColumn: string | null;
   onSelectColumn: (name: string) => void;
   derivedColumnNames: Set<string>;
+  dateColumns: string[];
+  onReformatColumnDates: (column: string, style: DateStyle) => void;
+  onColumnCommand: (column: string, text: string) => string | null;
 }) {
   const metaByName = useMemo(() => {
     const map = new Map<string, ColumnMeta>();
     for (const m of columnMetas) map.set(m.name, m);
     return map;
   }, [columnMetas]);
+  const dateColSet = useMemo(() => new Set(dateColumns), [dateColumns]);
   const filterByColumn = useMemo(() => {
     const map = new Map<string, Filter>();
     for (const f of filters) map.set(f.column, f);
@@ -1174,6 +1271,10 @@ function DataGrid({
                 const activeFilter = filterByColumn.get(c) ?? null;
                 const filtered = activeFilter !== null;
                 const isDerived = derivedColumnNames.has(c);
+                // The column whose scoped chat popover is open is "in play" —
+                // frame the whole column in green so it's obvious which one
+                // you're working on.
+                const chatActive = hoveredCol === c;
                 return (
                   <th
                     key={c}
@@ -1183,8 +1284,12 @@ function DataGrid({
                       setHoverAnchor(e.currentTarget.getBoundingClientRect());
                     }}
                     onMouseLeave={scheduleClose}
-                    className={`border-b border-l border-border p-0 text-left align-bottom ${
-                      filtered ? "bg-primary/10" : selectedColumn === c ? "bg-bg-2" : ""
+                    className={`p-0 text-left align-bottom ${
+                      chatActive
+                        ? "border-x-2 border-t-2 border-primary bg-primary/10"
+                        : `border-b border-l border-border ${
+                            filtered ? "bg-primary/10" : selectedColumn === c ? "bg-bg-2" : ""
+                          }`
                     }`}
                     style={{ minWidth: 96 }}
                   >
@@ -1198,23 +1303,23 @@ function DataGrid({
                           />
                         </div>
                       )}
-                      <button
-                        type="button"
-                        onClick={() => onSelectColumn(c)}
-                        className={`flex w-full cursor-pointer items-center justify-between gap-1 px-2 py-1.5 text-left text-[10px] ${
-                          filtered
-                            ? "text-primary"
-                            : selectedColumn === c
+                      <div className="flex w-full items-center justify-between gap-1 px-2 py-1.5">
+                        <button
+                          type="button"
+                          onClick={() => onSelectColumn(c)}
+                          className={`flex min-w-0 flex-1 cursor-pointer items-center gap-1 text-left text-[10px] ${
+                            filtered
                               ? "text-primary"
-                              : "text-fg-mute hover:bg-bg-2"
-                        }`}
-                        title={
-                          activeFilter
-                            ? `filter active: ${describeFilter(activeFilter)}`
-                            : undefined
-                        }
-                      >
-                        <span className="flex min-w-0 items-center gap-1 truncate">
+                              : selectedColumn === c
+                                ? "text-primary"
+                                : "text-fg-mute hover:bg-bg-2"
+                          }`}
+                          title={
+                            activeFilter
+                              ? `filter active: ${describeFilter(activeFilter)}`
+                              : undefined
+                          }
+                        >
                           {filtered && (
                             <span
                               aria-hidden
@@ -1230,9 +1335,17 @@ function DataGrid({
                               ƒ
                             </span>
                           )}
-                        </span>
-                        {meta && <TypeChip type={meta.type} />}
-                      </button>
+                        </button>
+                        {meta &&
+                          (dateColSet.has(c) ? (
+                            <ColumnFormatMenu
+                              column={c}
+                              onPick={(style) => onReformatColumnDates(c, style)}
+                            />
+                          ) : (
+                            <TypeChip type={meta.type} />
+                          ))}
+                      </div>
                     </div>
                   </th>
                 );
@@ -1248,10 +1361,15 @@ function DataGrid({
                 </td>
                 {dataset.columns.map((c) => {
                   const v = row[c];
+                  const chatActive = hoveredCol === c;
                   return (
                     <td
                       key={c}
-                      className={`border-b border-l border-border px-2 py-1 ${
+                      className={`px-2 py-1 ${
+                        chatActive
+                          ? "border-b border-x-2 border-primary bg-primary/[0.06]"
+                          : "border-b border-l border-border"
+                      } ${
                         v === null
                           ? "text-error/70 italic"
                           : selectedColumn === c
@@ -1306,6 +1424,7 @@ function DataGrid({
           onEnter={cancelClose}
           onLeave={scheduleClose}
           onClose={() => setHoveredCol(null)}
+          onLocalCommand={(text) => onColumnCommand(hoveredMeta.name, text)}
         />
       )}
     </div>
@@ -1895,6 +2014,8 @@ export function SoftDataWorkstation() {
     if (!dataset) return null;
     return analyseCleaning(dataset, rawMetas);
   }, [dataset, rawMetas]);
+  // Date columns drive the date-format toolbar (the click-to-reformat path).
+  const dateColumns = useMemo(() => (dataset ? detectDateColumns(dataset) : []), [dataset]);
   const [cleaningOpen, setCleaningOpen] = useState(false);
   const [cleaningDismissed, setCleaningDismissed] = useState(false);
   const [enabledOps, setEnabledOps] = useState<Set<CleaningOpKey>>(() => new Set());
@@ -1911,21 +2032,35 @@ export function SoftDataWorkstation() {
     }
   }, [cleaningPlan?.ops]);
 
+  // Core apply path — takes the explicit op set so both the banner (current
+  // selection) and the chat command ("clean my data" → recommended defaults)
+  // can drive it. Returns the human-readable labels of what it ran.
+  const applyCleaningOps = useCallback(
+    (ops: Set<CleaningOpKey>): string[] => {
+      if (!dataset || !cleaningPlan) return [];
+      const cleaned = applyCleaning(dataset, cleaningPlan, ops);
+      const opLabels = cleaningPlan.ops
+        .filter((op) => ops.has(op.key))
+        .map((op) => describeOp(op, cleaningPlan.sampled).title);
+      setDataset(cleaned);
+      // Recompute happens automatically through the dataset dep. We close the
+      // panel so the user immediately sees the cleaner state.
+      setCleaningOpen(false);
+      setCleaningDismissed(false);
+      // Reset filters because column/row identity may have shifted.
+      setFilters([]);
+      logEvent({ stage: "soft", kind: "cleaning.apply", payload: { opLabels } });
+      return opLabels;
+    },
+    [dataset, cleaningPlan, setDataset, setFilters, logEvent],
+  );
+
+  // Banner "apply cleaning" button — runs whatever the user currently has
+  // checked. (Wired to onClick, so it must stay argless: the click event must
+  // not leak in as an op set.)
   const onApplyCleaning = useCallback(() => {
-    if (!dataset || !cleaningPlan) return;
-    const cleaned = applyCleaning(dataset, cleaningPlan, enabledOps);
-    const opLabels = cleaningPlan.ops
-      .filter((op) => enabledOps.has(op.key))
-      .map((op) => describeOp(op, cleaningPlan.sampled).title);
-    setDataset(cleaned);
-    // Recompute happens automatically through the dataset dep. We close the
-    // panel so the user immediately sees the cleaner state.
-    setCleaningOpen(false);
-    setCleaningDismissed(false);
-    // Reset filters because column/row identity may have shifted.
-    setFilters([]);
-    logEvent({ stage: "soft", kind: "cleaning.apply", payload: { opLabels } });
-  }, [dataset, cleaningPlan, enabledOps, setDataset, setFilters, logEvent]);
+    applyCleaningOps(enabledOps);
+  }, [applyCleaningOps, enabledOps]);
 
   const toggleOp = useCallback((key: CleaningOpKey) => {
     setEnabledOps((prev) => {
@@ -1935,6 +2070,265 @@ export function SoftDataWorkstation() {
       return next;
     });
   }, []);
+
+  // Rewrite the date column(s) into a chosen display style, in place. Used by
+  // the chat ("make the dates american format") so the request actually
+  // mutates the grid instead of just describing what to do.
+  // Core reformatter — takes an explicit column list (one column for the
+  // per-column badge/chat, all detected columns for the global toolbar/chat),
+  // mutates the grid, logs, and returns a human-readable summary.
+  const reformatColumnsTo = useCallback(
+    (cols: string[], style: DateStyle): string => {
+      if (!dataset) return "Load a dataset first, then ask me to reformat its dates.";
+      if (cols.length === 0) {
+        return "I couldn't find a date column to reformat — none of the columns look like dates. If a date column is stored oddly, tidy it first (try `clean my data`).";
+      }
+      const { dataset: next, changed, columns: colStats } = reformatDateColumns(dataset, cols, style);
+      if (changed === 0) {
+        return `${cols.length === 1 ? `\`${cols[0]}\` is` : "Those date columns are"} already in ${DATE_STYLE_LABEL[style]} format — nothing to change.`;
+      }
+      setDataset(next);
+      setFilters([]);
+      logEvent({
+        stage: "soft",
+        kind: "cleaning.reformat-dates",
+        payload: { style, columns: cols, changed },
+      });
+      const named = colStats
+        .filter((c) => c.changed > 0)
+        .map((c) => `\`${c.name}\`${c.dayFirst ? " (read as day-first DD/MM)" : ""}`)
+        .join(", ");
+      const unparsed = colStats.reduce((n, c) => n + c.unparsed, 0);
+      const caveat =
+        unparsed > 0
+          ? ` ${unparsed.toLocaleString()} cell${unparsed === 1 ? "" : "s"} weren't recognisable dates and were left unchanged.`
+          : "";
+      return `Done — reformatted ${named} to ${DATE_STYLE_LABEL[style]} (${changed.toLocaleString()} cell${
+        changed === 1 ? "" : "s"
+      }).${caveat} The data grid now shows the new format.`;
+    },
+    [dataset, setDataset, setFilters, logEvent],
+  );
+
+  // Reformat every detected date column at once (global toolbar + soft chat).
+  // Union the analyser's date columns with a robust direct scan — the scan
+  // infers each column's format (incl. day-first / European), so it catches
+  // mixed-format columns the plan's stricter detector can miss.
+  const reformatDatesInDataset = useCallback(
+    (style: DateStyle): string => {
+      if (!dataset) return "Load a dataset first, then ask me to reformat its dates.";
+      const planDateCols =
+        cleaningPlan?.ops.flatMap((op) => (op.key === "parse-dates" ? op.columns : [])) ?? [];
+      const dateCols = [...new Set([...detectDateColumns(dataset), ...planDateCols])];
+      return reformatColumnsTo(dateCols, style);
+    },
+    [dataset, cleaningPlan, reformatColumnsTo],
+  );
+
+  // Single-column reformat for the badge dropdown — surfaces a toast since
+  // there's no chat bubble to fill. (The grid badge is the only button path;
+  // the bottom soft-chat still drives the all-columns reformat via text.)
+  const onReformatColumnDates = useCallback(
+    (column: string, style: DateStyle) => {
+      const msg = reformatColumnsTo([column], style);
+      emitToast(msg, /already in|couldn't find/.test(msg) ? "info" : "success");
+    },
+    [reformatColumnsTo],
+  );
+
+  // Per-column natural-language intent (the hover chat popover). Same date-style
+  // detection as the soft chat, but scoped to the hovered column so "make this
+  // american" / "change to ISO" affect only that column. Returns the assistant
+  // reply, or null to fall through to the provider for anything else.
+  const handleColumnChatCommand = useCallback(
+    (column: string, text: string): string | null => {
+      if (!dataset) return null;
+      const t = text.toLowerCase().trim();
+      const isDateCol = () =>
+        dateColumns.includes(column) || detectDateColumns(dataset).includes(column);
+
+      // ── remove / clear non-date values ───────────────────────────────────
+      const removeVerb = /\b(remove|clear|drop|delete|strip|null|blank|get rid of|discard)\b/.test(t);
+      const nonDateNoun = /\bnon[\s-]?dates?\b|\bnot? a? ?dates?\b|\binvalid dates?\b/.test(t);
+      if (removeVerb && nonDateNoun) {
+        if (!isDateCol()) {
+          return `\`${column}\` doesn't look like a date column, so there are no non-date values to remove.`;
+        }
+        const { dataset: next, cleared } = clearNonDateCells(dataset, column);
+        if (cleared === 0) {
+          return `Every value in \`${column}\` already parses as a date — nothing to remove.`;
+        }
+        setDataset(next);
+        setFilters([]);
+        logEvent({
+          stage: "soft",
+          kind: "cleaning.column",
+          payload: { column, action: "cleared non-date values (set to null)", affected: cleared },
+        });
+        return `Done — cleared ${cleared.toLocaleString()} non-date value${
+          cleared === 1 ? "" : "s"
+        } in \`${column}\` (set to null). The column now holds only dates and blanks.`;
+      }
+
+      // ── date-format intent (american / european / iso) ───────────────────
+      const wantsUs = /\b(american|america|u\.?s\.?a?|mm\/dd|mdy|month[\s-]?first)\b/.test(t);
+      const wantsEu = /\b(european|europe|uk|british|dd\/mm|dmy|day[\s-]?first)\b/.test(t);
+      const wantsIso = /\b(iso|iso[\s-]?8601|yyyy-mm-dd|standard)\b/.test(t);
+      const stylePicked = wantsUs || wantsEu || wantsIso;
+      const formatVerb =
+        /\b(format|reformat|convert|display|style|show|standardi[sz]e|change|make|turn)\b/.test(t);
+      const mentionsDate = /\bdates?\b/.test(t);
+      if (stylePicked || (mentionsDate && formatVerb)) {
+        if (!isDateCol()) {
+          return `\`${column}\` doesn't look like a date column, so there's no date format to change here.`;
+        }
+        const style: DateStyle = wantsUs ? "us" : wantsEu ? "eu" : "iso";
+        return reformatColumnsTo([column], style);
+      }
+
+      // ── clean this column ────────────────────────────────────────────────
+      // Trim, repair encoding, collapse whitespace, null missing-markers — and
+      // for a date column, also clear leftover non-date junk.
+      if (/\b(clean|cleanse|tidy|scrub|sanit[iy][sz]e)\b/.test(t)) {
+        let working = dataset;
+        const parts: string[] = [];
+        const { dataset: tidiedDs, tidied, nulled } = cleanColumnCells(working, column);
+        working = tidiedDs;
+        if (tidied > 0) parts.push(`tidied ${tidied.toLocaleString()} cell${tidied === 1 ? "" : "s"}`);
+        if (nulled > 0)
+          parts.push(`nulled ${nulled.toLocaleString()} missing-marker${nulled === 1 ? "" : "s"}`);
+        let clearedDates = 0;
+        if (isDateCol()) {
+          const res = clearNonDateCells(working, column);
+          working = res.dataset;
+          clearedDates = res.cleared;
+          if (clearedDates > 0)
+            parts.push(
+              `cleared ${clearedDates.toLocaleString()} non-date value${clearedDates === 1 ? "" : "s"}`,
+            );
+        }
+        if (parts.length === 0) {
+          return `\`${column}\` already looks clean — no whitespace, encoding, missing-marker${
+            isDateCol() ? ", or non-date" : ""
+          } issues to fix.`;
+        }
+        setDataset(working);
+        setFilters([]);
+        logEvent({
+          stage: "soft",
+          kind: "cleaning.column",
+          payload: { column, action: parts.join(", "), affected: tidied + nulled + clearedDates },
+        });
+        return `Done — cleaned \`${column}\`: ${parts.join(", ")}.`;
+      }
+
+      return null;
+    },
+    [dataset, dateColumns, reformatColumnsTo, setDataset, setFilters, logEvent],
+  );
+
+  // Deterministic chat intents handled client-side, so they work even though
+  // the desktop IDE ships no chat backend. Two intents today:
+  //   • date reformatting ("make the dates american format")  → reformat the
+  //     date column(s) to the requested style and mutate the grid.
+  //   • generic cleaning ("clean my data")                    → run the plan.
+  // Returns the assistant reply, or null to let the message fall through to
+  // the orchestrator / direct provider.
+  const handleSoftChatCommand = useCallback(
+    (text: string): string | null => {
+      const t = text.toLowerCase().trim();
+
+      // ── data augmentation ────────────────────────────────────────────────
+      // "add 1000 more rows through augmentation", "generate synthetic rows",
+      // "bootstrap 500 records". Bootstrap-resamples + jitters numerics.
+      const augmentation =
+        /\b(augment|augmentation|synthetic|synthesi[sz]e|bootstrap)\b/.test(t) ||
+        (/\b(add|generate|create|expand|inflate|duplicate)\b/.test(t) &&
+          /\b(rows?|records?|samples?|observations?|data\s?points?)\b/.test(t));
+      if (augmentation) {
+        if (!dataset) return "Load a dataset first, then I can augment it.";
+        if (dataset.rows.length === 0) {
+          return "There's no data to augment yet — load some rows first.";
+        }
+        const numMatch = t.match(/\b(\d[\d,]*)\b/);
+        const requested = numMatch ? Number.parseInt(numMatch[1].replace(/,/g, ""), 10) : 100;
+        const usedDefault = !numMatch;
+        const CAP = 500_000;
+        const toAdd = Math.min(Math.max(1, requested), CAP);
+        const { dataset: next, added } = augmentDataset(dataset, rawMetas, toAdd);
+        if (added === 0) return "There's no data to augment yet — load some rows first.";
+        setDataset(next);
+        setFilters([]);
+        logEvent({
+          stage: "soft",
+          kind: "data.augment",
+          payload: { added, method: "bootstrap resample + Gaussian jitter" },
+        });
+        const capNote = toAdd < requested ? ` (capped from ${requested.toLocaleString()})` : "";
+        const defNote = usedDefault ? " (you didn't give a number, so I added 100)" : "";
+        return `Done — added ${added.toLocaleString()} synthetic row${
+          added === 1 ? "" : "s"
+        }${capNote}${defNote} by bootstrap-resampling real rows with light Gaussian jitter on numeric columns. Categoricals, dates, and ID-like columns are preserved. The dataset now has ${next.rows.length.toLocaleString()} rows.\n\nThis is a fast intake-stage augmentation — for correlation-preserving synthesis (SMOTE, copulas, CTGAN), use the modeling stage.`;
+      }
+
+      // ── date-format intent ───────────────────────────────────────────────
+      // Fires when the user names a date style (american / european / iso) OR
+      // says "date" together with a format verb. We deliberately DON'T require
+      // the literal word "date": "format the dataset american style" clearly
+      // means the dates, and we only act if date columns actually exist (the
+      // reformatter says so otherwise). Checked before generic cleaning so a
+      // style request reformats rather than canonicalising to ISO.
+      const mentionsDate = /\bdates?\b/.test(t);
+      const wantsUs = /\b(american|america|u\.?s\.?a?|mm\/dd|mdy|month[\s-]?first)\b/.test(t);
+      const wantsEu = /\b(european|europe|uk|british|dd\/mm|dmy|day[\s-]?first)\b/.test(t);
+      const wantsIso = /\b(iso|iso[\s-]?8601|yyyy-mm-dd|standard)\b/.test(t);
+      const stylePicked = wantsUs || wantsEu || wantsIso;
+      const formatVerb =
+        /\b(format|reformat|convert|display|style|show|standardi[sz]e|change|make)\b/.test(t);
+      const dataNoun = /\b(date|dates|dataset|data|column|columns|values?|everything|all)\b/.test(t);
+      if ((stylePicked && (formatVerb || dataNoun)) || (mentionsDate && formatVerb)) {
+        const style: DateStyle = wantsUs ? "us" : wantsEu ? "eu" : "iso";
+        return reformatDatesInDataset(style);
+      }
+
+      const mentionsClean =
+        /\b(clean|cleanse|cleaning|tidy|sanit[iy][sz]e|scrub|wrangle|preprocess|pre-process)\b/.test(
+          t,
+        );
+      const cleanPhrase = /\b(initial clean|do the cleaning|run (the )?cleaning|fix (the |my )?data)\b/.test(
+        t,
+      );
+      if (!mentionsClean && !cleanPhrase) return null;
+
+      if (!dataset) return "Load a dataset first, then ask me to clean it.";
+      if (!cleaningPlan || cleaningPlan.ops.length === 0) {
+        return "I scanned the dataset and found no cleaning steps to apply — it already looks tidy.";
+      }
+
+      // Use the user's current banner selection if they've made one; otherwise
+      // run the recommended default set.
+      const ops = enabledOps.size > 0 ? enabledOps : defaultEnabled(cleaningPlan);
+      const applied = applyCleaningOps(ops);
+      if (applied.length === 0) {
+        return "No cleaning steps are selected right now, so I left the data unchanged. Open the cleaning banner above the grid to pick steps.";
+      }
+      const list = applied.map((a) => `- ${a}`).join("\n");
+      return `Done — ran the initial cleaning (${applied.length} step${
+        applied.length === 1 ? "" : "s"
+      }):\n\n${list}\n\nThe data grid now reflects the cleaned dataset.`;
+    },
+    [
+      dataset,
+      cleaningPlan,
+      enabledOps,
+      applyCleaningOps,
+      reformatDatesInDataset,
+      rawMetas,
+      setDataset,
+      setFilters,
+      logEvent,
+    ],
+  );
 
   const toggleFilter = useCallback(
     (f: Filter) => {
@@ -2289,6 +2683,9 @@ export function SoftDataWorkstation() {
               selectedColumn={selectedMeta?.name ?? null}
               onSelectColumn={setSelected}
               derivedColumnNames={derivedColumnNameSet}
+              dateColumns={dateColumns}
+              onReformatColumnDates={onReformatColumnDates}
+              onColumnCommand={handleColumnChatCommand}
             />
           ) : (
             <EmptyState
@@ -2333,6 +2730,7 @@ export function SoftDataWorkstation() {
           title={chatPlaceholder}
           badge="soft · chat"
           dataset={dataset}
+          onLocalCommand={handleSoftChatCommand}
         />
       </div>
 
@@ -2570,18 +2968,23 @@ function ColumnChatPopover({
   onEnter,
   onLeave,
   onClose,
+  onLocalCommand,
 }: {
   meta: ColumnMeta;
   anchor: DOMRect;
   onEnter: () => void;
   onLeave: () => void;
   onClose: () => void;
+  /** Deterministic per-column intent (e.g. "make this american") handled
+   *  client-side. Returns a reply to answer locally, or null to fall through
+   *  to the provider. */
+  onLocalCommand?: (text: string) => string | null;
 }) {
   const { chatMemoryPrefix } = useScelo();
   const memoryKey = chatMemoryPrefix ? `${chatMemoryPrefix}:soft-col:${meta.name}` : undefined;
   const stageContext = useMemo(() => buildColumnStageContext(meta), [meta]);
   const placeholder = useMemo(() => placeholderHintFor(meta), [meta]);
-  const { messages, isStreaming, send, stop } = useNodeChat(stageContext, { memoryKey });
+  const { messages, isStreaming, send, sendLocal, stop } = useNodeChat(stageContext, { memoryKey });
   const [draft, setDraft] = useState("");
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
@@ -2611,6 +3014,13 @@ function ColumnChatPopover({
     const text = draft.trim();
     if (!text || isStreaming) return;
     setDraft("");
+    // Deterministic per-column intents (e.g. "make this american") answer
+    // locally and never hit the provider.
+    const localReply = onLocalCommand?.(text);
+    if (localReply != null) {
+      sendLocal(text, localReply);
+      return;
+    }
     void send(text);
   };
 

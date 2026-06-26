@@ -63,6 +63,29 @@ export type ActivityEvent =
   | {
       ts: number;
       stage: "soft";
+      kind: "cleaning.reformat-dates";
+      payload: { style: "iso" | "us" | "eu"; columns: string[]; changed: number };
+    }
+  | {
+      ts: number;
+      stage: "soft";
+      kind: "cleaning.column";
+      // Per-column micro-clean from the column chat (e.g. "remove all
+      // non-dates", "clean this column"). `action` is a short human label;
+      // `affected` is the count of cells changed.
+      payload: { column: string; action: string; affected: number };
+    }
+  | {
+      ts: number;
+      stage: "soft";
+      kind: "data.augment";
+      // Synthetic rows appended via the soft chat ("add 1000 rows through
+      // augmentation"). `method` is a short human label for how.
+      payload: { added: number; method: string };
+    }
+  | {
+      ts: number;
+      stage: "soft";
       kind: "derived.add";
       payload: { name: string; formula: string };
     }

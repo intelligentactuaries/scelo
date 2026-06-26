@@ -834,6 +834,424 @@ export function defaultEnabled(plan: CleaningPlan): Set<CleaningOpKey> {
   return enabled;
 }
 
+// ─── Date display formats ────────────────────────────────────────────────
+//
+// The `parse-dates` op canonicalises to ISO 8601 because that's what sorts,
+// filters, and bins correctly. But users frequently want the column *shown*
+// in a locale form — most often American MM/DD/YYYY. These helpers let the
+// chat ("make the dates american format") and any future banner control
+// reformat a date column to a chosen style, parsing whatever shape the cells
+// are currently in (ISO, slashed, dotted, month-name) first. Output is
+// date-only — we don't manufacture clock components onto calendar data.
+
+export type DateStyle = "iso" | "us" | "eu";
+
+export const DATE_STYLE_LABEL: Record<DateStyle, string> = {
+  iso: "ISO 8601 (YYYY-MM-DD)",
+  us: "American (MM/DD/YYYY)",
+  eu: "European (DD/MM/YYYY)",
+};
+
+// Calendar date as explicit components — parsed without leaning on the native
+// `Date` parser, which can't read day-first forms (`new Date("29-01-2025")`
+// is Invalid) and silently misreads ambiguous slashed dates as US month-first.
+interface DateParts {
+  y: number;
+  m: number; // 1-12
+  d: number; // 1-31
+}
+
+const MONTH_NAMES: Record<string, number> = {
+  jan: 1,
+  january: 1,
+  feb: 2,
+  february: 2,
+  mar: 3,
+  march: 3,
+  apr: 4,
+  april: 4,
+  may: 5,
+  jun: 6,
+  june: 6,
+  jul: 7,
+  july: 7,
+  aug: 8,
+  august: 8,
+  sep: 9,
+  sept: 9,
+  september: 9,
+  oct: 10,
+  october: 10,
+  nov: 11,
+  november: 11,
+  dec: 12,
+  december: 12,
+};
+
+// 2-digit year → 4-digit. <70 ⇒ 2000s, else 1900s (the de-facto POSIX pivot).
+function expandYear(y: number, digits: number): number {
+  if (digits > 2) return y;
+  return y < 70 ? 2000 + y : 1900 + y;
+}
+
+// Reject impossible component combos (month 13, day 31 in February, etc.).
+function validParts(p: DateParts): DateParts | null {
+  if (p.m < 1 || p.m > 12) return null;
+  if (p.d < 1 || p.d > 31) return null;
+  if (p.y < 1700 || p.y > 2200) return null;
+  // Day-in-month bound, leap years included. Date(y, m, 0) = last day of month m.
+  const lastDay = new Date(p.y, p.m, 0).getDate();
+  if (p.d > lastDay) return null;
+  return p;
+}
+
+// Parse one date string into explicit components. `dayFirst` only disambiguates
+// purely-numeric slashed/dashed/dotted dates where BOTH leading parts are ≤12
+// (e.g. 04/10/2024); ISO, month-name, and forms where one part is >12 are
+// unambiguous and ignore the hint.
+function parseDatePartsFlexible(raw: string, dayFirst: boolean): DateParts | null {
+  const s = raw.trim();
+  if (s.length < 6 || s.length > 35) return null;
+
+  // ISO 8601 (optionally with a time component we don't keep).
+  let m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})(?:[T ]\d.*)?$/);
+  if (m) return validParts({ y: +m[1], m: +m[2], d: +m[3] });
+
+  // Year-first slashed: 2024/01/05.
+  m = s.match(/^(\d{4})\/(\d{1,2})\/(\d{1,2})$/);
+  if (m) return validParts({ y: +m[1], m: +m[2], d: +m[3] });
+
+  // Numeric A?B?C with / - or . separators, C = 2/4-digit year.
+  m = s.match(/^(\d{1,2})[/\-.](\d{1,2})[/\-.](\d{2,4})$/);
+  if (m) {
+    const a = +m[1];
+    const b = +m[2];
+    const y = expandYear(+m[3], m[3].length);
+    let day: number;
+    let mon: number;
+    if (a > 12 && b <= 12) {
+      day = a;
+      mon = b; // first part can't be a month → day-first
+    } else if (b > 12 && a <= 12) {
+      mon = a;
+      day = b; // second part can't be a month → month-first
+    } else if (a > 12 && b > 12) {
+      return null; // neither can be a month
+    } else {
+      // Genuinely ambiguous (both ≤12) — defer to the column-level hint.
+      day = dayFirst ? a : b;
+      mon = dayFirst ? b : a;
+    }
+    return validParts({ y, m: mon, d: day });
+  }
+
+  // Month-name first: "Jan 5, 2024", "January 5 2024".
+  m = s.match(/^([A-Za-z]{3,9})\s+(\d{1,2}),?\s+(\d{2,4})$/);
+  if (m) {
+    const mon = MONTH_NAMES[m[1].toLowerCase()];
+    if (!mon) return null;
+    return validParts({ y: expandYear(+m[3], m[3].length), m: mon, d: +m[2] });
+  }
+
+  // Day-then-month-name: "5 Jan 2024".
+  m = s.match(/^(\d{1,2})\s+([A-Za-z]{3,9}),?\s+(\d{2,4})$/);
+  if (m) {
+    const mon = MONTH_NAMES[m[2].toLowerCase()];
+    if (!mon) return null;
+    return validParts({ y: expandYear(+m[3], m[3].length), m: mon, d: +m[1] });
+  }
+
+  return null;
+}
+
+// Inspect a column's values and decide whether its numeric dates are day-first
+// (DD/MM) or month-first (MM/DD). Any value whose first part is >12 is hard
+// evidence for day-first; second part >12 is evidence for month-first. Majority
+// wins; with no disambiguating evidence we default to month-first (US), which
+// is also what the native parser assumes.
+function inferDayFirst(values: string[]): boolean {
+  let dayFirst = 0;
+  let monthFirst = 0;
+  for (const raw of values) {
+    const m = raw.trim().match(/^(\d{1,2})[/\-.](\d{1,2})[/\-.]\d{2,4}$/);
+    if (!m) continue;
+    const a = +m[1];
+    const b = +m[2];
+    if (a > 12 && b <= 12) dayFirst++;
+    else if (b > 12 && a <= 12) monthFirst++;
+  }
+  return dayFirst > monthFirst;
+}
+
+function partsToStyle(p: DateParts, style: DateStyle): string {
+  const y = String(p.y).padStart(4, "0");
+  const m = String(p.m).padStart(2, "0");
+  const d = String(p.d).padStart(2, "0");
+  switch (style) {
+    case "iso":
+      return `${y}-${m}-${d}`;
+    case "us":
+      return `${m}/${d}/${y}`;
+    case "eu":
+      return `${d}/${m}/${y}`;
+  }
+}
+
+// Reformat a single date string to the requested style, or null if it isn't a
+// parseable date. `dayFirst` disambiguates numeric forms (default month-first).
+export function formatDateStyled(raw: string, style: DateStyle, dayFirst = false): string | null {
+  const p = parseDatePartsFlexible(raw, dayFirst);
+  if (p === null) return null;
+  return partsToStyle(p, style);
+}
+
+// Collect a sampled set of the string values in a column (cap so big datasets
+// stay fast). Used to infer the column's date convention before reformatting.
+function sampleStringValues(dataset: Dataset, column: string, cap = 20_000): string[] {
+  const N = dataset.rows.length;
+  const stride = N > cap ? Math.ceil(N / cap) : 1;
+  const out: string[] = [];
+  for (let i = 0; i < N; i += stride) {
+    const v = dataset.rows[i][column];
+    if (typeof v === "string") {
+      const t = v.trim();
+      if (t !== "") out.push(t);
+    }
+  }
+  return out;
+}
+
+// Find string columns whose non-empty cells are ≥80% date-shaped. Format is
+// inferred per column so day-first (European) columns are detected too — the
+// native parser would reject most of those. Works directly off a Dataset (no
+// metas) so chat can call it before any cleaning plan exists.
+export function detectDateColumns(dataset: Dataset): string[] {
+  if (dataset.rows.length === 0) return [];
+  const out: string[] = [];
+  for (const c of dataset.columns) {
+    const values = sampleStringValues(dataset, c);
+    if (values.length < 4) continue;
+    const dayFirst = inferDayFirst(values);
+    let hits = 0;
+    for (const v of values) if (parseDatePartsFlexible(v, dayFirst) !== null) hits++;
+    if (hits / values.length >= 0.8) out.push(c);
+  }
+  return out;
+}
+
+export interface ReformatColumnResult {
+  name: string;
+  dayFirst: boolean; // how ambiguous numeric source dates were read
+  changed: number; // cells whose text actually changed
+  unparsed: number; // non-empty cells that weren't recognisable dates
+}
+
+// Rewrite the date cells of the named columns into `style`. Each column's
+// source convention is inferred independently, so a column mixing ISO,
+// day-first slashed, and month-name values all land in one consistent target
+// format. Non-date cells (and other columns) pass through untouched. Returns
+// the new Dataset, the total cells changed, and per-column diagnostics so the
+// caller can explain what it did and flag anything it couldn't parse.
+export function reformatDateColumns(
+  dataset: Dataset,
+  columns: string[],
+  style: DateStyle,
+): { dataset: Dataset; changed: number; columns: ReformatColumnResult[] } {
+  const targets = columns.filter((c) => dataset.columns.includes(c));
+  if (targets.length === 0) return { dataset, changed: 0, columns: [] };
+
+  // Infer each target column's day-first convention once, up front.
+  const dayFirstByCol = new Map<string, boolean>();
+  const stats = new Map<string, ReformatColumnResult>();
+  for (const c of targets) {
+    const dayFirst = inferDayFirst(sampleStringValues(dataset, c));
+    dayFirstByCol.set(c, dayFirst);
+    stats.set(c, { name: c, dayFirst, changed: 0, unparsed: 0 });
+  }
+
+  let changed = 0;
+  const targetSet = new Set(targets);
+  const rows = dataset.rows.map((r) => {
+    let touched = false;
+    const out: Row = {};
+    for (const c of dataset.columns) {
+      const v = r[c];
+      if (targetSet.has(c) && typeof v === "string" && v.trim() !== "") {
+        const p = parseDatePartsFlexible(v, dayFirstByCol.get(c) ?? false);
+        const stat = stats.get(c);
+        if (p === null) {
+          if (stat) stat.unparsed++;
+        } else {
+          const f = partsToStyle(p, style);
+          if (f !== v) {
+            out[c] = f;
+            changed++;
+            touched = true;
+            if (stat) stat.changed++;
+            continue;
+          }
+        }
+      }
+      out[c] = v;
+    }
+    return touched ? out : r;
+  });
+
+  return {
+    dataset: { name: dataset.name, columns: dataset.columns, rows },
+    changed,
+    columns: [...stats.values()],
+  };
+}
+
+// Null every cell in `column` that isn't a recognisable date. The column's
+// day-first convention is inferred first so European dates aren't wrongly
+// discarded. Numbers and unparseable strings alike are treated as non-dates;
+// already-null cells are left alone. Returns the new Dataset and the count
+// cleared. Powers the per-column "remove all non-dates" chat intent.
+export function clearNonDateCells(
+  dataset: Dataset,
+  column: string,
+): { dataset: Dataset; cleared: number } {
+  if (!dataset.columns.includes(column)) return { dataset, cleared: 0 };
+  const dayFirst = inferDayFirst(sampleStringValues(dataset, column));
+  let cleared = 0;
+  const rows = dataset.rows.map((r) => {
+    const v = r[column];
+    if (v === null) return r;
+    if (typeof v === "string" && parseDatePartsFlexible(v, dayFirst) !== null) return r;
+    cleared++;
+    return { ...r, [column]: null };
+  });
+  if (cleared === 0) return { dataset, cleared: 0 };
+  return { dataset: { name: dataset.name, columns: dataset.columns, rows }, cleared };
+}
+
+// Light per-column clean scoped to one column (so "clean this column" doesn't
+// touch the rest of the grid): repair encoding, trim, collapse internal
+// whitespace, and null common missing-markers. Returns counts of cells tidied
+// vs nulled.
+export function cleanColumnCells(
+  dataset: Dataset,
+  column: string,
+): { dataset: Dataset; tidied: number; nulled: number } {
+  if (!dataset.columns.includes(column)) return { dataset, tidied: 0, nulled: 0 };
+  let tidied = 0;
+  let nulled = 0;
+  const rows = dataset.rows.map((r) => {
+    const v = r[column];
+    if (typeof v !== "string") return r;
+    const cleaned = fixEncoding(v).trim().replace(/\s{2,}/g, " ");
+    const next: string | null = MISSING_TOKENS.has(cleaned.toLowerCase()) ? null : cleaned;
+    if (next === v) return r;
+    if (next === null) nulled++;
+    else tidied++;
+    return { ...r, [column]: next };
+  });
+  if (tidied === 0 && nulled === 0) return { dataset, tidied: 0, nulled: 0 };
+  return { dataset: { name: dataset.name, columns: dataset.columns, rows }, tidied, nulled };
+}
+
+// ─── Data augmentation ────────────────────────────────────────────────────
+//
+// Quick intake-stage tabular augmentation: bootstrap-resample existing rows
+// (preserving intra-row correlations) and add light Gaussian jitter to numeric
+// columns so the synthetic rows aren't exact duplicates. Categorical / string
+// / date cells are copied from the sampled base row; identifier-like numeric
+// columns (near-unique integers) are extended past the observed max instead of
+// jittered so they stay unique. This is deliberately simple and transparent —
+// for correlation-preserving synthesis (SMOTE, copulas, CTGAN) the modeling
+// stage is the right place.
+
+// Standard normal via Box–Muller. Math.random is fine in app code.
+function gaussianNoise(): number {
+  let u = 0;
+  let v = 0;
+  while (u === 0) u = Math.random();
+  while (v === 0) v = Math.random();
+  return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+}
+
+// Decimal places of a number's literal form, capped — so jittered floats keep
+// roughly the source precision instead of sprouting 15 digits.
+function decimalPlaces(n: number): number {
+  if (Number.isInteger(n)) return 0;
+  const s = String(n);
+  const dot = s.indexOf(".");
+  return dot === -1 ? 0 : Math.min(6, s.length - dot - 1);
+}
+
+export function augmentDataset(
+  dataset: Dataset,
+  metas: ColumnMeta[],
+  addRows: number,
+): { dataset: Dataset; added: number } {
+  const N = dataset.rows.length;
+  if (N === 0 || addRows <= 0) return { dataset, added: 0 };
+
+  type NumStat = { std: number; min: number; max: number; integer: boolean; idLike: boolean };
+  const numStats = new Map<string, NumStat>();
+  for (const m of metas) {
+    if (m.type !== "number") continue;
+    let sum = 0;
+    let sumsq = 0;
+    let cnt = 0;
+    let min = Number.POSITIVE_INFINITY;
+    let max = Number.NEGATIVE_INFINITY;
+    let integer = true;
+    for (const r of dataset.rows) {
+      const v = r[m.name];
+      if (typeof v !== "number") continue;
+      sum += v;
+      sumsq += v * v;
+      cnt++;
+      if (v < min) min = v;
+      if (v > max) max = v;
+      if (!Number.isInteger(v)) integer = false;
+    }
+    if (cnt === 0) continue;
+    const mean = sum / cnt;
+    const std = Math.sqrt(Math.max(0, sumsq / cnt - mean * mean));
+    const uniqueRatio = m.count > 0 ? m.unique / m.count : 0;
+    // Identifier columns must not be jittered (it would corrupt keys) — but a
+    // merely high-cardinality numeric (age, salary, a precise measurement) is
+    // NOT an ID and SHOULD be jittered. So require a name that reads like an
+    // identifier in addition to being a near-unique integer.
+    const idName = /(^|[_\s])(id|ids|key|code|no|num|number|index|idx|uuid|guid)$/i.test(m.name);
+    const idLike = integer && std > 0 && uniqueRatio >= 0.95 && idName;
+    numStats.set(m.name, { std, min, max, integer, idLike });
+  }
+
+  const newRows: Row[] = [];
+  for (let i = 0; i < addRows; i++) {
+    const base = dataset.rows[Math.floor(Math.random() * N)];
+    const out: Row = {};
+    for (const c of dataset.columns) {
+      const v = base[c];
+      const stat = numStats.get(c);
+      if (typeof v === "number" && stat) {
+        if (stat.idLike) {
+          out[c] = Math.round(stat.max) + i + 1; // keep IDs unique & monotonic
+        } else if (stat.std === 0) {
+          out[c] = v; // constant column — nothing to jitter
+        } else {
+          let nv = v + gaussianNoise() * stat.std * 0.25;
+          nv = Math.min(stat.max, Math.max(stat.min, nv));
+          out[c] = stat.integer ? Math.round(nv) : Number(nv.toFixed(decimalPlaces(v)));
+        }
+      } else {
+        out[c] = v; // categorical / date / string / null copied from base row
+      }
+    }
+    newRows.push(out);
+  }
+
+  return {
+    dataset: { name: dataset.name, columns: dataset.columns, rows: [...dataset.rows, ...newRows] },
+    added: addRows,
+  };
+}
+
 // Apply runs at full fidelity (never sampled). Cell-level ops are fused
 // into a single row pass — important for multi-million-row datasets where
 // allocating a fresh Row[] per op would dominate wall time.

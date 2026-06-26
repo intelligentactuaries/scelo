@@ -12,6 +12,7 @@
 import {
   app,
   BrowserWindow,
+  clipboard,
   dialog,
   ipcMain,
   Menu,
@@ -143,6 +144,11 @@ function createMainWindow(): BrowserWindow {
     return { action: "deny" };
   });
 
+  // Right-click context menu (copy / paste / cut / select-all, spelling
+  // suggestions, link + image actions). Chromium gives us no menu by default
+  // in a custom Electron shell, so the whole IDE felt "dead" on right-click.
+  attachContextMenu(win);
+
   // Drop the per-window workspace override when the window closes so
   // _windowWorkspace doesn't accumulate stale webContents ids across
   // reloads / new-window cycles. Capture the id NOW : by the time
@@ -177,6 +183,78 @@ function createMainWindow(): BrowserWindow {
   }
 
   return win;
+}
+
+// Native right-click menu, assembled per-click from the Chromium context
+// params so it offers exactly what's relevant: clipboard ops on editable
+// fields / selections (driven by editFlags so greyed-out items reflect what's
+// actually possible), spelling fixes on a misspelled word, link + image
+// actions, and Inspect Element in dev builds. Roles ('cut'/'copy'/'paste'/
+// 'selectAll') let Chromium perform the action on the focused element, so it
+// works in Monaco, the terminal, inputs, and ordinary selectable text alike.
+function attachContextMenu(win: BrowserWindow): void {
+  win.webContents.on("context-menu", (_event, params) => {
+    const items: Electron.MenuItemConstructorOptions[] = [];
+    const flags = params.editFlags;
+    const hasSelection = params.selectionText.trim().length > 0;
+
+    // Spelling suggestions for a misspelled word in an editable field.
+    if (params.isEditable && params.misspelledWord) {
+      for (const s of params.dictionarySuggestions.slice(0, 5)) {
+        items.push({ label: s, click: () => win.webContents.replaceMisspelling(s) });
+      }
+      if (params.dictionarySuggestions.length === 0) {
+        items.push({ label: "No spelling suggestions", enabled: false });
+      }
+      items.push({
+        label: "Add to dictionary",
+        click: () =>
+          win.webContents.session.addWordToSpellCheckerDictionary(params.misspelledWord),
+      });
+      items.push({ type: "separator" });
+    }
+
+    if (params.isEditable || hasSelection) {
+      items.push(
+        { role: "cut", enabled: flags.canCut },
+        { role: "copy", enabled: flags.canCopy },
+        { role: "paste", enabled: flags.canPaste },
+        { type: "separator" },
+        { role: "selectAll" },
+      );
+    }
+
+    if (params.linkURL) {
+      if (items.length) items.push({ type: "separator" });
+      items.push(
+        { label: "Open link in browser", click: () => shell.openExternal(params.linkURL) },
+        { label: "Copy link address", click: () => clipboard.writeText(params.linkURL) },
+      );
+    }
+
+    if (params.mediaType === "image" && params.srcURL) {
+      if (items.length) items.push({ type: "separator" });
+      items.push(
+        {
+          label: "Copy image",
+          click: () => win.webContents.copyImageAt(params.x, params.y),
+        },
+        { label: "Copy image address", click: () => clipboard.writeText(params.srcURL) },
+      );
+    }
+
+    // Dev-only inspector — handy while building, hidden in packaged builds.
+    if (!app.isPackaged) {
+      if (items.length) items.push({ type: "separator" });
+      items.push({
+        label: "Inspect element",
+        click: () => win.webContents.inspectElement(params.x, params.y),
+      });
+    }
+
+    if (items.length === 0) return;
+    Menu.buildFromTemplate(items).popup({ window: win });
+  });
 }
 
 /** Initial route picker:
@@ -405,6 +483,222 @@ ipcMain.handle("scelo:runPython", (_event, req: ExecRequest) =>
 
 ipcMain.handle("scelo:runR", (_event, req: ExecRequest) =>
   execRuntime(rBinary(), "-e", req),
+);
+
+// ─── LLM bridge ─────────────────────────────────────────────────────────
+//
+// The chat surface and the AI-provider "test connection" button used to POST
+// to /api/agents/orchestrator/{stream,test} — a FastAPI orchestrator that the
+// desktop build never ships or spawns. Those requests fell through to the
+// scelo:// SPA handler, which returned index.html, so the renderer choked on
+// `<!doctype …` (not JSON) and chat replies came back empty. Here we instead
+// call the provider's HTTP API directly from the main process, where there is
+// no CORS restriction and we hold the decrypted key. One request/response per
+// call (no streaming) — the renderer renders the whole reply at once.
+
+type LlmRole = "system" | "user" | "assistant";
+interface LlmMessage {
+  role: LlmRole;
+  content: string;
+}
+interface LlmChatRequest {
+  provider: string;
+  apiKey?: string;
+  model?: string;
+  baseUrl?: string;
+  messages: LlmMessage[];
+  maxTokens?: number;
+}
+interface LlmChatResult {
+  ok: boolean;
+  text?: string;
+  error?: string;
+}
+
+function trimTrailingSlash(s: string): string {
+  return s.replace(/\/+$/, "");
+}
+
+// Pull a short, human-readable error out of a non-2xx provider response.
+async function providerHttpError(resp: Response): Promise<string> {
+  let detail = "";
+  try {
+    const raw = await resp.text();
+    try {
+      const j = JSON.parse(raw);
+      detail = j?.error?.message ?? j?.error ?? j?.message ?? raw;
+    } catch {
+      detail = raw;
+    }
+  } catch {
+    detail = resp.statusText;
+  }
+  if (typeof detail !== "string") detail = JSON.stringify(detail);
+  return `HTTP ${resp.status}: ${detail.slice(0, 300)}`;
+}
+
+// OpenAI-compatible chat completions — covers openrouter, openai, ollama's
+// /v1 shim, and any openai_compat endpoint. `url` is the full endpoint.
+async function chatOpenAICompatible(
+  url: string,
+  apiKey: string | undefined,
+  req: LlmChatRequest,
+): Promise<LlmChatResult> {
+  const headers: Record<string, string> = { "content-type": "application/json" };
+  if (apiKey) headers.authorization = `Bearer ${apiKey}`;
+  // OpenRouter asks for these attribution headers; harmless elsewhere.
+  if (req.provider === "openrouter") {
+    headers["HTTP-Referer"] = "https://scelo.ai";
+    headers["X-Title"] = "Scelo IDE";
+  }
+  const resp = await fetch(url, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      model: req.model,
+      messages: req.messages,
+      max_tokens: req.maxTokens ?? 1024,
+    }),
+  });
+  if (!resp.ok) return { ok: false, error: await providerHttpError(resp) };
+  const data = (await resp.json()) as {
+    choices?: Array<{
+      finish_reason?: string;
+      // `content` is usually a plain string, but some OpenRouter models
+      // return an array of typed parts. Reasoning models (gpt-oss, R1, …)
+      // may leave `content` empty and put visible text under `reasoning`.
+      message?: {
+        content?: string | Array<{ text?: string }> | null;
+        reasoning?: string;
+      };
+    }>;
+  };
+  const choice = data.choices?.[0];
+  const content = choice?.message?.content;
+  let text = "";
+  if (typeof content === "string") text = content;
+  else if (Array.isArray(content)) text = content.map((p) => p?.text ?? "").join("");
+  // Fall back to the reasoning channel when the model emitted no content.
+  if (!text.trim() && choice?.message?.reasoning) text = choice.message.reasoning;
+  // A reasoning model whose token budget was fully consumed before it
+  // produced any answer — surface that instead of a blank reply so the
+  // caller doesn't read empty text as a silent success.
+  if (!text.trim() && choice?.finish_reason === "length") {
+    return {
+      ok: false,
+      error:
+        "The model hit its token limit before replying (it's likely a reasoning model that spent the budget thinking). Raise max tokens or pick a non-reasoning model.",
+    };
+  }
+  return { ok: true, text };
+}
+
+async function chatAnthropic(req: LlmChatRequest): Promise<LlmChatResult> {
+  const system = req.messages
+    .filter((m) => m.role === "system")
+    .map((m) => m.content)
+    .join("\n\n");
+  const turns = req.messages
+    .filter((m) => m.role !== "system")
+    .map((m) => ({ role: m.role, content: m.content }));
+  const resp = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-api-key": req.apiKey ?? "",
+      "anthropic-version": "2023-06-01",
+    },
+    body: JSON.stringify({
+      model: req.model,
+      max_tokens: req.maxTokens ?? 1024,
+      ...(system ? { system } : {}),
+      messages: turns,
+    }),
+  });
+  if (!resp.ok) return { ok: false, error: await providerHttpError(resp) };
+  const data = (await resp.json()) as { content?: Array<{ text?: string }> };
+  const text = (data.content ?? [])
+    .map((b) => b.text ?? "")
+    .join("")
+    .trim();
+  return { ok: true, text };
+}
+
+async function chatGemini(req: LlmChatRequest): Promise<LlmChatResult> {
+  const model = req.model || "gemini-1.5-flash";
+  const system = req.messages
+    .filter((m) => m.role === "system")
+    .map((m) => m.content)
+    .join("\n\n");
+  const contents = req.messages
+    .filter((m) => m.role !== "system")
+    .map((m) => ({
+      role: m.role === "assistant" ? "model" : "user",
+      parts: [{ text: m.content }],
+    }));
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
+    model,
+  )}:generateContent?key=${encodeURIComponent(req.apiKey ?? "")}`;
+  const resp = await fetch(url, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      contents,
+      ...(system ? { systemInstruction: { parts: [{ text: system }] } } : {}),
+    }),
+  });
+  if (!resp.ok) return { ok: false, error: await providerHttpError(resp) };
+  const data = (await resp.json()) as {
+    candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+  };
+  const text = (data.candidates?.[0]?.content?.parts ?? [])
+    .map((p) => p.text ?? "")
+    .join("")
+    .trim();
+  return { ok: true, text };
+}
+
+async function llmChat(req: LlmChatRequest): Promise<LlmChatResult> {
+  try {
+    switch (req.provider) {
+      case "openrouter":
+        return await chatOpenAICompatible(
+          "https://openrouter.ai/api/v1/chat/completions",
+          req.apiKey,
+          req,
+        );
+      case "openai":
+        return await chatOpenAICompatible(
+          "https://api.openai.com/v1/chat/completions",
+          req.apiKey,
+          req,
+        );
+      case "anthropic":
+        return await chatAnthropic(req);
+      case "gemini":
+        return await chatGemini(req);
+      case "ollama": {
+        const base = trimTrailingSlash(req.baseUrl || "http://localhost:11434/v1");
+        return await chatOpenAICompatible(`${base}/chat/completions`, undefined, {
+          ...req,
+          model: req.model || "qwen2.5:7b-instruct",
+        });
+      }
+      case "openai_compat": {
+        if (!req.baseUrl) return { ok: false, error: "base URL required for OpenAI-compatible provider" };
+        const base = trimTrailingSlash(req.baseUrl);
+        return await chatOpenAICompatible(`${base}/chat/completions`, req.apiKey, req);
+      }
+      default:
+        return { ok: false, error: `unknown provider: ${req.provider}` };
+    }
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+ipcMain.handle("scelo:llm:chat", (_event, req: LlmChatRequest): Promise<LlmChatResult> =>
+  llmChat(req),
 );
 
 // ─── Streaming exec ─────────────────────────────────────────────────────

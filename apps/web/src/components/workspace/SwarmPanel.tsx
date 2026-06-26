@@ -97,17 +97,18 @@ export default function SwarmPanel() {
 }
 
 function OfflineFallback() {
-  const startCmd = "cd swarms && PORT=3010 bun run dev";
+  const startCmd = "cd ~/ali/intelligentactuaries/swarms && PORT=3010 bun run dev";
   return (
     <div className="flex flex-1 items-center justify-center p-4">
       <div className="max-w-sm space-y-3 text-center text-xs">
         <p className="text-fg">Swarm server isn't running.</p>
         <p className="text-fg-mute">
-          The Scelo-integrated swarm lives at{" "}
-          <span className="font-mono">swarms/</span> and runs its own Vite +
-          Bun pair on <span className="font-mono">localhost:5190</span> (api
-          on <span className="font-mono">3010</span>). Start it once and this
-          panel will live-attach on the next probe.
+          The Scelo-integrated swarm lives in the{" "}
+          <span className="font-mono">intelligentactuaries/swarms</span> repo and runs its own
+          Vite + Bun pair on <span className="font-mono">localhost:5190</span> (api on{" "}
+          <span className="font-mono">3010</span>). The <span className="font-mono">PORT=3010</span>{" "}
+          is required — its default is 3000. Start it once and this panel will live-attach on the
+          next probe.
         </p>
         <pre className="rounded border border-border bg-bg p-2 text-left font-mono text-[11px] text-fg">
           {startCmd}

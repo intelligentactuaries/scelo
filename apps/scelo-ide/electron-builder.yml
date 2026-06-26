@@ -62,6 +62,7 @@ asarUnpack:
 
 # ─── Linux ─────────────────────────────────────────────────────────────
 linux:
+  maintainer: Intelligent Actuaries <hello@intelligentactuaries.com>
   category: Development
   synopsis: Actuarial workbench with bundled Python + R
   description: |

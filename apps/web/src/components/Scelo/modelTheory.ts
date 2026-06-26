@@ -354,8 +354,8 @@ $$
 **WMTR · forecast** is a Monte Carlo survival projection of three composable capitals — Material (M), Time (T), and Relational (R) — under shocks. The engine is the [Nanoeconomics simulation](https://github.com/intelligentactuaries/nanoeconomics-simulation) at its core, ported to TypeScript for in-browser runs.
 
 **Mechanics**
-- Wealth: \`W = M^α_M · T^α_T · R^α_R\` (Cobb-Douglas). Each period, shocks decrement one or more capitals; surviving structure re-grows R via family, religion, and spatial maintenance.
-- Survival hazard: \`h(t) = h₀ · exp(-β_W · ln(W / W₀))\`. Stronger relative wealth lowers the hazard; collapse becomes likely when W decays past the collapse threshold.
+- Wealth: $W = M^{\\alpha_M} \\cdot T^{\\alpha_T} \\cdot R^{\\alpha_R}$ (Cobb-Douglas). Each period, shocks decrement one or more capitals; surviving structure re-grows R via family, religion, and spatial maintenance.
+- Survival hazard: $h(t) = h_0 \\cdot \\exp(-\\beta_W \\ln(W / W_0))$. Stronger relative wealth lowers the hazard; collapse becomes likely when W decays past the collapse threshold.
 - Shocks: a Poisson event count per year with severity drawn from a clipped normal. Targets cycle over material / time / family / religion / meaning-crisis with a topology mix (idiosyncratic / local / regional / global).
 
 **Domain-agnostic by design.** The same math projects:

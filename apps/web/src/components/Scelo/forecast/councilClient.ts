@@ -72,9 +72,19 @@ export async function conveneCouncil(opts: ConveneOpts): Promise<CouncilSynthesi
   const { runId } = (await start.json()) as { runId: string };
   opts.onStart?.(runId);
 
-  // Poll the run state every 2s until complete or 5 min elapses.
+  // Poll the run state until complete. The budget scales with the run size:
+  // a 192-agent council (+ society) on a local LLM is far slower than the
+  // default 12-agent council, and a fixed 5-min cap would abandon a run that's
+  // still making progress. Roughly ~10s of work per council agent plus a
+  // society allowance, floored at 5 min and capped at 45 so a wedged run still
+  // eventually surfaces an error.
   const POLL_MS = 2000;
-  const TIMEOUT_MS = 5 * 60 * 1000;
+  const perAgentMs = 10_000;
+  const societyMs = (opts.skipSociety ? 0 : 12 * 60 * 1000);
+  const TIMEOUT_MS = Math.min(
+    45 * 60 * 1000,
+    Math.max(5 * 60 * 1000, (opts.subset ?? 12) * perAgentMs + societyMs),
+  );
   const deadline = Date.now() + TIMEOUT_MS;
   while (Date.now() < deadline) {
     if (opts.signal?.aborted) throw new Error("aborted");
@@ -89,7 +99,7 @@ export async function conveneCouncil(opts: ConveneOpts): Promise<CouncilSynthesi
       throw new Error(`swarm run failed: ${run.error ?? "unknown"}`);
     }
   }
-  throw new Error("council timed out (5 min)");
+  throw new Error(`council timed out (${Math.round(TIMEOUT_MS / 60000)} min)`);
 }
 
 // ─── Internal shape we actually need from the swarm's Run JSON ────────────

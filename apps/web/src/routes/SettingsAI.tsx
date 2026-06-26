@@ -20,7 +20,9 @@ import {
   clearProviderConfig,
   getActiveProviderId,
   getProviderConfig,
+  hasLocalLlmBridge,
   isSecureStore,
+  llmChatWithConfig,
   setActiveProviderId,
   setProviderConfig,
 } from "../lib/aiProviders";
@@ -66,11 +68,18 @@ export default function SettingsAI() {
 
   const onSave = async (desc: ProviderDescriptor) => {
     const d = draft[desc.id] ?? {};
+    const existing = configs[desc.id];
     const cfg: ProviderConfig = {
       id: desc.id,
-      apiKey: d.apiKey ?? "",
-      model: d.model || desc.defaultModel,
-      baseUrl: desc.needsBaseUrl ? d.baseUrl || desc.baseUrlPlaceholder : undefined,
+      // Preserve a previously-saved key/model/baseUrl when the field is left
+      // blank — re-saving (e.g. to update just the key) must not silently
+      // reset the model back to the provider default. Only fall back to the
+      // hardcoded default when nothing has ever been set.
+      apiKey: d.apiKey || existing?.apiKey || "",
+      model: d.model || existing?.model || desc.defaultModel,
+      baseUrl: desc.needsBaseUrl
+        ? d.baseUrl || existing?.baseUrl || desc.baseUrlPlaceholder
+        : undefined,
     };
     setSave((s) => ({ ...s, [desc.id]: "saving" }));
     try {
@@ -95,6 +104,25 @@ export default function SettingsAI() {
     if (activeId === id) onSetActive("ollama");
   };
 
+  // Reset every provider back to the original state: no keys/models stored,
+  // active provider back to the local Ollama default. Stored config otherwise
+  // persists across launches (keychain + localStorage), so this is the only
+  // thing that wipes it — the user configures once and resets deliberately.
+  const onResetAll = async () => {
+    const ok =
+      typeof window === "undefined" ||
+      window.confirm(
+        "Reset all AI providers to defaults? This clears every saved key and model and switches back to the local Ollama default.",
+      );
+    if (!ok) return;
+    await Promise.all(PROVIDER_CATALOG.map((p) => clearProviderConfig(p.id)));
+    setConfigs({} as Record<ProviderId, ProviderConfig | null>);
+    setDraft({} as Record<ProviderId, Partial<ProviderConfig>>);
+    setTest({} as Record<ProviderId, TestStatus>);
+    onSetActive("ollama");
+    emitToast("AI providers reset to defaults.", "success");
+  };
+
   const onTest = async (desc: ProviderDescriptor) => {
     setTest((t) => ({ ...t, [desc.id]: "testing" }));
     const cfg = configs[desc.id] ?? null;
@@ -105,6 +133,35 @@ export default function SettingsAI() {
       ? d.baseUrl || cfg?.baseUrl || desc.baseUrlPlaceholder
       : undefined;
     try {
+      // Desktop build: call the provider directly through the main-process
+      // bridge — there is no orchestrator backend to proxy through, and the
+      // old /api path returned the SPA's index.html (the "<!doctype …> is not
+      // valid JSON" failure).
+      if (hasLocalLlmBridge()) {
+        const res = await llmChatWithConfig(
+          { id: desc.id, apiKey, model, baseUrl },
+          [{ role: "user", content: "Reply with the single word: ok" }],
+          // Generous budget: reasoning models (gpt-oss, R1, …) spend tokens
+          // thinking before they emit any visible content, so a tiny cap
+          // comes back blank even when the connection is fine.
+          { maxTokens: 512 },
+        );
+        const reply = (res.text ?? "").trim();
+        setTest((t) => ({
+          ...t,
+          [desc.id]: res.ok
+            ? reply
+              ? { ok: true, reply }
+              : // Connection worked but the model returned no text — say so
+                // plainly rather than showing a cryptic "<empty>".
+                { ok: true, reply: "(connected — model returned no text)" }
+            : { ok: false, error: res.error ?? "unknown error" },
+        }));
+        if (!res.ok) {
+          emitToast(`${desc.label}: test connection failed — ${res.error ?? "unknown error"}`, "error");
+        }
+        return;
+      }
       const r = await fetch(`${API_BASE}/agents/orchestrator/test`, {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -127,10 +184,22 @@ export default function SettingsAI() {
   return (
     <div className="mx-auto max-w-4xl p-8 font-sans text-fg">
       <header className="mb-6">
-        <div className="text-xs uppercase tracking-wider text-fg-mute">
-          settings · AI providers
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <div className="text-xs uppercase tracking-wider text-fg-mute">
+              settings · AI providers
+            </div>
+            <h1 className="text-2xl font-medium">Bring your own AI</h1>
+          </div>
+          <button
+            type="button"
+            onClick={onResetAll}
+            className="ia-btn ia-btn-md ia-btn-secondary shrink-0"
+            title="Clear all saved keys/models and switch back to the local Ollama default. Your settings otherwise persist across launches."
+          >
+            reset to defaults
+          </button>
         </div>
-        <h1 className="text-2xl font-medium">Bring your own AI</h1>
         <p className="mt-1 text-sm text-fg-mute">
           Default is <strong>Ollama</strong> running on this machine: no key, no spend, no
           network. Switch to a hosted provider (Anthropic, OpenAI, Gemini) or any
