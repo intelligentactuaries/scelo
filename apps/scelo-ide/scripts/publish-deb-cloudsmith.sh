@@ -35,16 +35,41 @@ if [ -z "$DEB" ]; then
   exit 1
 fi
 
-if ! command -v cloudsmith >/dev/null 2>&1; then
-  echo "↓ Installing the Cloudsmith CLI (pip)…"
-  pip install --user --quiet cloudsmith-cli || {
-    echo "✗ Could not install cloudsmith-cli. Install it manually: pip install cloudsmith-cli" >&2
-    exit 1
-  }
+# Locate (or install) the Cloudsmith CLI. Modern Debian/Ubuntu mark the system
+# Python "externally managed" (PEP 668), so a plain `pip install` is refused.
+# Try, in order: an existing CLI, pipx, an isolated venv, then a user-site
+# install with the PEP 668 override. CS holds the resolved binary path.
+CS="$(command -v cloudsmith || true)"
+if [ -z "$CS" ]; then
+  echo "↓ Installing the Cloudsmith CLI…"
+  if command -v pipx >/dev/null 2>&1; then
+    pipx install cloudsmith-cli >/dev/null 2>&1 || true
+  fi
+  CS="$(command -v cloudsmith || true)"
+  [ -z "$CS" ] && [ -x "$HOME/.local/bin/cloudsmith" ] && CS="$HOME/.local/bin/cloudsmith"
+fi
+if [ -z "$CS" ]; then
+  VENV="$HOME/.cache/scelo-cloudsmith-venv"
+  if python3 -m venv "$VENV" >/dev/null 2>&1 && \
+     "$VENV/bin/pip" install -q --upgrade pip cloudsmith-cli >/dev/null 2>&1; then
+    CS="$VENV/bin/cloudsmith"
+  fi
+fi
+if [ -z "$CS" ]; then
+  # Last resort: user-site install, overriding the externally-managed guard.
+  python3 -m pip install --user --break-system-packages -q cloudsmith-cli >/dev/null 2>&1 || true
+  CS="$(command -v cloudsmith || true)"
+  [ -z "$CS" ] && [ -x "$HOME/.local/bin/cloudsmith" ] && CS="$HOME/.local/bin/cloudsmith"
+fi
+if [ -z "$CS" ]; then
+  echo "✗ Could not install cloudsmith-cli automatically. Install it manually, e.g.:" >&2
+  echo "    pipx install cloudsmith-cli      # recommended" >&2
+  echo "    pip install --user --break-system-packages cloudsmith-cli" >&2
+  exit 1
 fi
 
 echo "↑ Pushing $(basename "$DEB") → $OWNER/$REPO ($DISTRO)"
-cloudsmith push deb "$OWNER/$REPO/$DISTRO" "$DEB"
+"$CS" push deb "$OWNER/$REPO/$DISTRO" "$DEB"
 
 cat <<EOF
 
