@@ -416,6 +416,119 @@ select:focus {
   color: var(--muted);
 }
 
+/* ── Simulation in-progress panel ──────────────────────────────────────────
+   Quiet, minimal progress for the /api/simulate request: elapsed timer +
+   pipeline phases that walk forward with a soft pulse on the active step. */
+.sim-progress {
+  max-width: 460px;
+  margin: 32px 0 0 2px;
+  animation: simFade 0.45s ease both;
+}
+@keyframes simFade {
+  from { opacity: 0; transform: translateY(5px); }
+  to { opacity: 1; transform: none; }
+}
+.sim-progress-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 18px;
+}
+.sim-progress-eyebrow {
+  font-size: 11px;
+  letter-spacing: var(--track);
+  text-transform: uppercase;
+  color: var(--accent);
+}
+.sim-progress-elapsed {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.sim-progress-phases {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.sim-phase {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  font-size: 12.5px;
+  transition: opacity 0.45s ease;
+}
+.sim-phase-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  border: 1px solid var(--border);
+  background: transparent;
+  transition: background 0.45s ease, border-color 0.45s ease;
+}
+.sim-phase-label {
+  color: var(--fg-2);
+  transition: color 0.45s ease;
+}
+.sim-phase-hint {
+  margin-left: auto;
+  font-size: 10.5px;
+  color: var(--muted);
+  opacity: 0.75;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+}
+.sim-phase.is-pending {
+  opacity: 0.4;
+}
+.sim-phase.is-done .sim-phase-dot {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.sim-phase.is-done .sim-phase-label {
+  color: var(--fg-2);
+}
+.sim-phase.is-active .sim-phase-label {
+  color: var(--fg);
+}
+.sim-phase.is-active .sim-phase-dot {
+  background: var(--accent);
+  border-color: var(--accent);
+  animation: simPulse 1.35s ease-in-out infinite;
+}
+@keyframes simPulse {
+  0%, 100% { box-shadow: 0 0 0 0 var(--accent-soft); }
+  50% { box-shadow: 0 0 0 5px var(--accent-soft); }
+}
+.sim-progress-bar {
+  position: relative;
+  margin-top: 20px;
+  height: 2px;
+  border-radius: 2px;
+  overflow: hidden;
+  background: var(--border);
+}
+.sim-progress-bar span {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  width: 36%;
+  border-radius: 2px;
+  background: var(--accent);
+  animation: simBar 1.5s ease-in-out infinite;
+}
+@keyframes simBar {
+  0% { left: -40%; }
+  100% { left: 100%; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sim-phase.is-active .sim-phase-dot { animation: none; }
+  .sim-progress-bar span { animation-duration: 3s; }
+}
+
 .scenario-input {
   background: var(--bg);
   border-color: var(--border);
@@ -1358,6 +1471,53 @@ code {
   font-size: 11px;
   line-height: 1.5;
   color: var(--fg);
+}
+
+/* recommended_intervention card — replaces the raw JSON the model emits with
+   a compact, legible pill + rationale. */
+.round-intervention {
+  margin-top: 10px;
+  padding: 9px 11px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--accent-soft);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.round-intervention-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+.round-intervention-arrow {
+  font-weight: 700;
+  line-height: 1;
+}
+.round-intervention-arrow.is-up {
+  color: var(--accent);
+}
+.round-intervention-arrow.is-down {
+  color: var(--error, #d9534f);
+}
+.round-intervention-param {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-weight: 600;
+  color: var(--fg);
+}
+.round-intervention-mag {
+  font-size: 10px;
+  letter-spacing: var(--track);
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.round-intervention-why {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--fg-2);
+  font-style: italic;
 }
 
 .synthesis-scroll {

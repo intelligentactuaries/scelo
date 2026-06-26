@@ -62,8 +62,8 @@ import { AgentInspector } from './components/AgentInspector';
 import { GroupInspector } from './components/GroupInspector';
 import { SocietyInspector } from './components/SocietyInspector';
 import { SynthesisView } from './components/SynthesisView';
-import { SimulationView } from './components/SimulationView';
-import { CanonPanel } from './components/CanonPanel';
+import { SimulationView, useSimulationState } from './components/SimulationView';
+import { CanonPanel, useCanonState } from './components/CanonPanel';
 import { HelpOverlay } from './components/HelpOverlay';
 import { ResizeHandle } from './components/ResizeHandle';
 import { ForecastCanvas } from './components/ForecastCanvas';
@@ -111,6 +111,9 @@ export function App() {
   const [helpOpen, setHelpOpen] = useState(false);
 
   const [tab, setTab] = useState<TabId>('forecast');
+  // Simulation-tab state lives at the App level so it survives tab switches
+  // (the view can unmount freely without losing scenario / sliders / results).
+  const simulation = useSimulationState();
   const [run, setRun] = useState<Run | null>(null);
   const [runId, setRunId] = useState<string | null>(null);
   const [runBusy, setRunBusy] = useState(false);
@@ -223,6 +226,9 @@ export function App() {
   const [societyParams, setSocietyParams] = useState<SocietyParams>(DEFAULT_SOCIETY_PARAMS);
   const [societySize, setSocietySize] = useState<number>(200);
   const [canon, setCanon] = useState<CanonWork[] | null>(null);
+  // Canon-tab editor state lifted to App so in-progress edits / import text
+  // survive tab switches (mirrors the simulation lift).
+  const canonState = useCanonState(canon);
 
   const [justifyAllBusy, setJustifyAllBusy] = useState<boolean>(false);
   const [justifyAllProgress, setJustifyAllProgress] = useState<{
@@ -1107,8 +1113,14 @@ export function App() {
                       // phase 2: actually filter the council inspector to
                       // agents whose vote diverges from this outcome
                     }}
-                    onInterveneStarted={(newRunId) => {
-                      if (!newRunId) return;
+                    onInterveneStarted={(newRunId, wmtr) => {
+                      if (!newRunId) {
+                        // Inline re-simulation (recouncil:false): no new run, just
+                        // a fresh forecast payload — swap it into the current run
+                        // so the canvas re-renders the re-simulated trajectory.
+                        if (wmtr) setRun((prev) => (prev ? { ...prev, wmtr } : prev));
+                        return;
+                      }
                       esRef.current?.close();
                       esRef.current = null;
                       setRunId(newRunId);
@@ -1177,8 +1189,11 @@ export function App() {
                 {tab === 'synthesis' && run && (
                   <SynthesisView run={run} onSelectAgent={setSelectedAgentId} />
                 )}
-                {tab === 'simulation' && <SimulationView />}
-                {tab === 'canon' && <CanonPanel works={canon} onChange={setCanon} />}
+                {/* State lives in App (useSimulationState), so the view can
+                    unmount on tab switch without losing scenario / sliders /
+                    results — no keep-mounted hack needed. */}
+                {tab === 'simulation' && <SimulationView state={simulation} />}
+                {tab === 'canon' && <CanonPanel onChange={setCanon} state={canonState} />}
               </>
             )}
             {/* Dropped scenario card removed: chat + refine both live in

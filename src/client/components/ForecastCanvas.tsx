@@ -8,7 +8,7 @@
 // council / society / synthesis tabs become drill-downs from here.
 
 import { useMemo } from 'react';
-import type { Run, InterventionCluster } from '../../shared/types';
+import type { Run, InterventionCluster, RunWmtr } from '../../shared/types';
 import { OUTCOME_COLOR, type Outcome } from '../../shared/wmtr';
 import { colorsForTheme } from '../../shared/constants';
 import { useTheme } from '../lib/theme';
@@ -32,8 +32,10 @@ interface Props {
    *  view to agents whose vote diverges from that outcome. Phase 2 wiring;
    *  the prop is accepted now so the click handler can stub. */
   onFilterByOutcome?: (o: Outcome) => void;
-  /** Click-to-spawn intervention re-simulation. */
-  onInterveneStarted?: (newRunId: string | null) => void;
+  /** Click-to-spawn intervention re-simulation. `wmtr` carries the freshly
+   *  re-simulated forecast when the server re-ran the simulator inline
+   *  (recouncil:false → runId is null); the parent swaps it into `run.wmtr`. */
+  onInterveneStarted?: (newRunId: string | null, wmtr?: RunWmtr) => void;
 }
 
 const pct = (x: number) => `${(x * 100).toFixed(0)}%`;
