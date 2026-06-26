@@ -2,6 +2,7 @@
 // streams from the orchestrator — keeps the macro view's three chatbots
 // independent until the drill-down work lands.
 
+import { type LlmMessage, hasLocalLlmBridge, llmChatActive } from "@/lib/aiProviders";
 import { type OrchestratorMessage, streamOrchestrator } from "@/lib/api";
 import { useCallback, useEffect, useRef, useState } from "react";
 
@@ -121,6 +122,38 @@ export function useNodeChat(stageContext: string, opts?: { memoryKey?: string | 
       setIsStreaming(true);
 
       const history = buildHistory(snapshot);
+
+      // Desktop IDE: there is no orchestrator backend, so talk to the active
+      // provider directly through the main-process bridge. Single-shot (no
+      // streaming) — we fill the bubble with the whole reply when it returns.
+      if (hasLocalLlmBridge()) {
+        try {
+          const messages: LlmMessage[] = [
+            { role: "system", content: stageContext },
+            ...history.map((h) => ({ role: h.role, content: h.content })),
+            { role: "user", content: trimmed },
+          ];
+          const res = await llmChatActive(messages, { maxTokens: 1024 });
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === assistantId
+                ? {
+                    ...m,
+                    content: res.ok
+                      ? (res.text ?? "").trim() ||
+                        "_The provider returned an empty reply. Try a different model, or check the provider in Settings → AI providers._"
+                      : `_error: ${res.error ?? "unknown error"}_`,
+                  }
+                : m,
+            ),
+          );
+        } finally {
+          setIsStreaming(false);
+          abortRef.current = null;
+        }
+        return;
+      }
+
       const ac = new AbortController();
       abortRef.current = ac;
 
@@ -191,15 +224,48 @@ ${trimmed}`;
       } finally {
         setIsStreaming(false);
         abortRef.current = null;
+        // If the stream finished without ever producing content and without
+        // an error (the desktop IDE serves the SPA shell for /api routes
+        // because it ships no orchestrator backend, so the SSE body parses
+        // to zero frames), the bubble would otherwise sit empty — reads as
+        // "it did nothing". Replace it with an explanation so the failure is
+        // visible rather than silent.
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === assistantId && m.content.trim().length === 0
+              ? {
+                  ...m,
+                  content:
+                    "_The Scelo chat backend isn't reachable in this build, so I can't answer free-form questions here. You can still run cleaning and column tools directly — try the cleaning banner above the data grid, or just type `clean my data` and I'll run the initial cleaning for you._",
+                }
+              : m,
+          ),
+        );
       }
     },
     [isStreaming, stageContext],
   );
+
+  // Append a user turn and a locally-computed assistant reply without touching
+  // the orchestrator. Lets a workstation intercept deterministic intents
+  // (e.g. "clean my data") and answer instantly client-side, which also works
+  // when the chat backend is unreachable.
+  const sendLocal = useCallback((userText: string, assistantText: string) => {
+    const trimmed = userText.trim();
+    if (!trimmed) return;
+    const userMsg: NodeChatMessage = { id: newId("u"), role: "user", content: trimmed };
+    const assistantMsg: NodeChatMessage = {
+      id: newId("a"),
+      role: "assistant",
+      content: assistantText,
+    };
+    setMessages((prev) => [...prev, userMsg, assistantMsg]);
+  }, []);
 
   const stop = useCallback(() => {
     abortRef.current?.abort();
     setIsStreaming(false);
   }, []);
 
-  return { messages, isStreaming, send, stop };
+  return { messages, isStreaming, send, sendLocal, stop };
 }

@@ -43,7 +43,9 @@ import { ClimateDataPanel, isClimateFamilyModel } from "./ClimateDataPanel";
 import { ExportButton } from "./ExportScreen";
 import { FlowControls } from "./FlowControls";
 import { ResizablePanel } from "./ResizablePanel";
+import { ScrollFade } from "./ScrollFade";
 import { SceloChatMarkdown } from "./SceloChatMarkdown";
+import { SceloLogo } from "./SceloLogo";
 import { type Dataset, formatNumber } from "./SoftDataWorkstation";
 import { StageChatPanel } from "./StageChatPanel";
 import {
@@ -154,14 +156,22 @@ function MicroTable({
 }) {
   if (spec.rows.length === 0) return null;
   return (
-    <div className="pointer-events-auto mt-1 overflow-hidden rounded border border-border/40">
-      <table className="w-full border-collapse font-mono text-[9px]">
+    // `nowheel`/`nodrag` let the user scroll the table inside the node without
+    // React Flow hijacking the gesture as a canvas pan/zoom. ScrollFade gives
+    // the quiet hover-only scrollbar + a gradient fade on whichever edge is
+    // clipped, so a wide table (or a long per-origin split) reads as "more to
+    // see" rather than an abrupt cut.
+    <ScrollFade
+      axis="both"
+      className="nowheel nodrag pointer-events-auto mt-1 max-h-40 overflow-auto rounded border border-border/40"
+    >
+      <table className="min-w-full border-collapse font-mono text-[9px]">
         <thead>
           <tr>
             {spec.headers.map((h, i) => (
               <th
                 key={h}
-                className={`bg-bg-2/40 px-1.5 py-0.5 uppercase tracking-wider text-fg-dim ${
+                className={`whitespace-nowrap bg-bg-2/40 px-1.5 py-0.5 uppercase tracking-wider text-fg-dim ${
                   i === 0 ? "text-left" : "text-right"
                 }`}
                 style={i === 0 ? { color } : undefined}
@@ -179,7 +189,7 @@ function MicroTable({
                 {row.map((cell, ci) => (
                   <td
                     key={`${rowKey}:${spec.headers[ci] ?? ci}`}
-                    className={`px-1.5 py-0.5 ${
+                    className={`whitespace-nowrap px-1.5 py-0.5 ${
                       typeof cell === "number" && ci > 0
                         ? "text-right tabular-nums text-fg"
                         : ci === 0
@@ -195,7 +205,7 @@ function MicroTable({
           })}
         </tbody>
       </table>
-    </div>
+    </ScrollFade>
   );
 }
 
@@ -376,6 +386,10 @@ type HubNodeData = {
   runCount: number;
   narrative: string | null;
   status: "idle" | "loading" | "ready" | "fallback";
+  // Open the printable board-pack report (same expand affordance the result
+  // nodes have — the report modal is the board pack's "expanded" view and
+  // owns the print-to-PDF path).
+  onExpand: () => void;
 };
 
 function HubNode({ data }: NodeProps<HubNodeData>) {
@@ -395,20 +409,61 @@ function HubNode({ data }: NodeProps<HubNodeData>) {
         isConnectable={false}
         style={{ background: "rgb(var(--rgb-primary))", width: 8, height: 8, opacity: 0 }}
       />
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-1">
         <span className="font-mono text-[10px] uppercase tracking-wider text-primary">
           board pack
         </span>
-        {data.status === "loading" && (
-          <span className="font-mono text-[9px] text-warn">narrating…</span>
-        )}
+        <div className="flex items-center gap-1.5">
+          {data.status === "loading" && (
+            <span className="font-mono text-[9px] text-warn">narrating…</span>
+          )}
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              data.onExpand();
+            }}
+            title="open printable board-pack report (PDF)"
+            aria-label="open printable board-pack report"
+            className="nodrag flex h-3.5 w-3.5 items-center justify-center rounded text-fg-dim hover:bg-bg-2 hover:text-fg"
+          >
+            <svg
+              viewBox="0 0 10 10"
+              width="10"
+              height="10"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.4"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M6 1.5h2.5V4" />
+              <path d="M4 8.5H1.5V6" />
+              <path d="M8.5 1.5 L5.5 4.5" />
+              <path d="M1.5 8.5 L4.5 5.5" />
+            </svg>
+          </button>
+        </div>
       </div>
-      <div className="mt-0.5 truncate text-sm text-fg">{data.dataset.name}</div>
+      <div className="mt-0.5 truncate text-sm text-fg" title={data.dataset.name}>
+        {data.dataset.name}
+      </div>
       <div className="mt-0.5 font-mono text-[11px] text-fg-mute">
         {data.runCount} results · {data.domain ?? "no domain"}
       </div>
       {data.narrative ? (
-        <p className="mt-2 line-clamp-5 text-[11px] leading-snug text-fg-mute">{data.narrative}</p>
+        // Scroll the full narrative inside the node rather than clamping it to
+        // five lines. ScrollFade adds the hover-only bar + a fade on the top/
+        // bottom edge as it's scrolled. `nowheel`/`nodrag` keep the scroll
+        // from panning the canvas.
+        <ScrollFade axis="y" className="nowheel nodrag mt-2 max-h-36 overflow-auto pr-1 text-fg-mute">
+          {/* Markdown so inline code (`moderate`) and emphasis render properly
+              instead of showing literal backticks. */}
+          <SceloChatMarkdown dataset={null} size="xs">
+            {data.narrative}
+          </SceloChatMarkdown>
+        </ScrollFade>
       ) : (
         <p className="mt-2 text-[11px] italic text-fg-dim">
           {data.runCount === 0 ? "no models attached" : "click rerun to generate a narrative"}
@@ -1696,8 +1751,9 @@ function CouncilAttachCta({ focused }: { focused: RunResult }) {
         <div className="mt-1.5 text-[10px] text-error">
           {error}
           <div className="text-[9px] text-fg-dim mt-0.5">
-            Swarm server unreachable at :3010 → make sure `bun src/server/index.ts` is running in
-            swarms/.
+            {/timed out/i.test(error)
+              ? "A large council (192 agents + society) on a local model can take a long time. Try a smaller agent count, enable “Skip society pulse”, or point the swarm at a faster provider — the run may still be finishing server-side."
+              : "Swarm server unreachable at :3010 → start it with `PORT=3010 bun run dev` in swarms/ (its default port is 3000, so the `PORT=3010` is required)."}
           </div>
         </div>
       )}
@@ -1873,6 +1929,8 @@ export function HardDataWorkstation() {
   // Which result node has its detail dashboard open. Null = none.
   const [expandedRunId, setExpandedRunId] = useState<string | null>(null);
   const onExpandRun = useCallback((modelId: string) => setExpandedRunId(modelId), []);
+  // The board-pack hub "expands" into the printable report (which owns PDF).
+  const onExpandHub = useCallback(() => setReportOpen(true), []);
 
   const palette = resolved === "light" ? FAMILY_COLOR_LIGHT : FAMILY_COLOR_DARK;
   const edgeBase = resolved === "light" ? "#bdbdb8" : "#3a3a3a";
@@ -1971,6 +2029,7 @@ export function HardDataWorkstation() {
         runCount: runsList.filter((r) => r.status === "done").length,
         narrative,
         status: narrativeStatus,
+        onExpand: onExpandHub,
       },
       draggable: true,
       selectable: false,
@@ -1986,7 +2045,17 @@ export function HardDataWorkstation() {
       };
     });
     return [hub, ...results];
-  }, [dataset, runsList, domain, narrative, narrativeStatus, focusedId, palette, onExpandRun]);
+  }, [
+    dataset,
+    runsList,
+    domain,
+    narrative,
+    narrativeStatus,
+    focusedId,
+    palette,
+    onExpandRun,
+    onExpandHub,
+  ]);
 
   const desiredEdges: Edge[] = useMemo(() => {
     return runsList.map((r): Edge => {
@@ -2351,12 +2420,15 @@ function ReportPreviewModal({
               className="-mx-8 -mt-8 mb-6 flex items-center gap-4 px-8 py-5"
               style={{ background: "#1f1f1f", color: "#fafafa" }}
             >
-              <img
-                src="/logo_math.JPG"
-                alt="(Iα)ₐᵢ"
-                className="h-14 w-14 rounded"
-                style={{ background: "#ffffff", padding: 2 }}
-              />
+              {/* New S0.1 wordmark on a white chip. SceloLogo paints with
+                  currentColor, so the chip sets a dark `color` to keep the
+                  mark legible (the banner text around it is light). */}
+              <div
+                className="flex h-14 w-14 shrink-0 items-center justify-center rounded"
+                style={{ background: "#ffffff", color: "#1f1f1f" }}
+              >
+                <SceloLogo className="h-9 w-9" />
+              </div>
               <div className="leading-tight">
                 <div
                   className="font-mono text-[15px] font-semibold tracking-wide"
@@ -2400,7 +2472,10 @@ function ReportPreviewModal({
                 executive summary
               </h2>
               {narrative ? (
-                <p className="whitespace-pre-wrap text-sm leading-relaxed text-fg">{narrative}</p>
+                // Render the narrative as markdown so inline code (`moderate`),
+                // emphasis, and any lists/tables format properly instead of
+                // showing literal backticks and run-on text.
+                <SceloChatMarkdown dataset={null}>{narrative}</SceloChatMarkdown>
               ) : (
                 <p data-print-muted className="text-sm italic text-fg-dim">
                   No narrative generated yet — run the model picker on Hard Data first.
@@ -2510,7 +2585,11 @@ function ReportPreviewModal({
                           </dl>
                         )}
                         {r.blurb && (
-                          <p className="mt-2 text-[12px] leading-relaxed text-fg-mute">{r.blurb}</p>
+                          <div className="mt-2 text-fg-mute">
+                            <SceloChatMarkdown dataset={null} size="xs">
+                              {r.blurb}
+                            </SceloChatMarkdown>
+                          </div>
                         )}
                       </li>
                     );
@@ -2785,26 +2864,77 @@ function ModelDiagnostics({ run, color }: { run: RunResult; color: string }) {
     return <BootstrapRange p5={d.p5} p95={d.p95} centre={d.ibnr} color={color} />;
   }
 
-  // Generic fallback — show the keys as a definition list.
+  // Generic fallback — show the keys as a definition list. Null/empty entries
+  // are dropped (they read as "unfinished" rather than informative), and
+  // objects/arrays are summarised in words instead of raw `{ … }` / `[N items]`.
+  const entries = Object.entries(d).filter(([, v]) => !isEmptyDetail(v));
+  if (entries.length === 0) {
+    return (
+      <p className="text-[11px] italic text-fg-dim">
+        No further structured diagnostics for this model.
+      </p>
+    );
+  }
   return (
     <dl className="grid grid-cols-2 gap-x-3 gap-y-1 font-mono text-[11px]">
-      {Object.entries(d)
-        .slice(0, 12)
-        .map(([k, v]) => (
-          <div key={k} className="flex items-baseline gap-1">
-            <dt className="text-fg-dim">{k}</dt>
-            <dd className="truncate text-fg">{formatDetailValue(v)}</dd>
-          </div>
-        ))}
+      {entries.slice(0, 12).map(([k, v]) => (
+        <div key={k} className="flex items-baseline gap-1">
+          <dt className="shrink-0 text-fg-dim">{k}</dt>
+          <dd className="truncate text-fg" title={detailTitle(v)}>
+            {formatDetailValue(v)}
+          </dd>
+        </div>
+      ))}
     </dl>
   );
 }
 
+// Treat null / undefined / empty string / empty array / empty object as "no
+// value" so the diagnostics list doesn't show bare `null` or `{ … }` rows.
+function isEmptyDetail(v: unknown): boolean {
+  if (v === null || v === undefined || v === "") return true;
+  if (Array.isArray(v)) return v.length === 0;
+  if (typeof v === "object") return Object.keys(v as object).length === 0;
+  return false;
+}
+
 function formatDetailValue(v: unknown): string {
   if (typeof v === "number") return formatNumber(v);
-  if (Array.isArray(v)) return `[${v.length} items]`;
-  if (typeof v === "object" && v !== null) return "{ … }";
+  if (typeof v === "boolean") return v ? "yes" : "no";
+  if (Array.isArray(v)) {
+    const n = v.length;
+    return `${n} value${n === 1 ? "" : "s"}`;
+  }
+  if (typeof v === "object" && v !== null) {
+    const keys = Object.keys(v);
+    // Small flat objects of primitives read better expanded inline.
+    const flat = keys.every((k) => {
+      const t = typeof (v as Record<string, unknown>)[k];
+      return t === "number" || t === "string" || t === "boolean";
+    });
+    if (flat && keys.length <= 4) {
+      return keys
+        .map((k) => {
+          const inner = (v as Record<string, unknown>)[k];
+          return `${k} ${typeof inner === "number" ? formatNumber(inner) : String(inner)}`;
+        })
+        .join(" · ");
+    }
+    return `${keys.length} field${keys.length === 1 ? "" : "s"}`;
+  }
   return String(v);
+}
+
+// Full value as a hover tooltip so summarised objects/arrays stay inspectable.
+function detailTitle(v: unknown): string | undefined {
+  if (typeof v === "object" && v !== null) {
+    try {
+      return JSON.stringify(v);
+    } catch {
+      return undefined;
+    }
+  }
+  return undefined;
 }
 
 function SmallBarPanel({

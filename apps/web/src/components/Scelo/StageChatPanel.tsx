@@ -25,6 +25,7 @@ export function StageChatPanel({
   title,
   badge,
   dataset = null,
+  onLocalCommand,
 }: {
   stageContext: string;
   placeholder: string;
@@ -36,10 +37,18 @@ export function StageChatPanel({
   badge: string;
   /** Used by chat-embedded `viz` blocks to read column metas. */
   dataset?: Dataset | null;
+  /**
+   * Optional deterministic intent handler, run before a message is sent to
+   * the orchestrator. Return an assistant reply string to handle the message
+   * locally (no backend round-trip); return null to fall through to the
+   * normal streamed chat. Used so requests like "clean my data" work even
+   * when the chat backend is unreachable.
+   */
+  onLocalCommand?: (text: string) => string | null;
 }) {
   const { chatMemoryPrefix } = useScelo();
   const memoryKey = chatMemoryPrefix ? `${chatMemoryPrefix}:${chatId}` : undefined;
-  const { messages, isStreaming, send, stop } = useNodeChat(stageContext, { memoryKey });
+  const { messages, isStreaming, send, sendLocal, stop } = useNodeChat(stageContext, { memoryKey });
   const [draft, setDraft] = useState("");
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
@@ -53,6 +62,13 @@ export function StageChatPanel({
     const text = draft.trim();
     if (!text || isStreaming) return;
     setDraft("");
+    // Deterministic intents (e.g. "clean my data") are answered locally and
+    // never hit the orchestrator — so they work offline and respond instantly.
+    const localReply = onLocalCommand?.(text);
+    if (localReply != null) {
+      sendLocal(text, localReply);
+      return;
+    }
     void send(text);
   };
 

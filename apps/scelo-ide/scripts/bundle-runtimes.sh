@@ -173,13 +173,27 @@ stage_r_linux() {
     return
   fi
 
-  # Fallback: download the CRAN-recommended r-installer from posit's
-  # r-installer mirror (TAR.GZ). Requires curl + tar.
+  # No system R: on Debian/Ubuntu, install r-base-core via apt (lands at
+  # /usr/lib/R) and repack it. This is the reliable path on dev boxes and CI
+  # runners; posit's CDN has started returning 403 so we no longer lead with
+  # it. Needs passwordless sudo (CI runners + most dev setups have it).
+  if command -v apt-get >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1; then
+    echo "  ↓ No system R — installing r-base-core via apt"
+    if sudo -n apt-get install -y r-base-core >/dev/null 2>&1 && [ -x /usr/lib/R/bin/R ]; then
+      rsync -a "/usr/lib/R/" "$dest/"
+      [ -f "$dest/bin/R" ] && sed -i 's|^R_HOME_DIR=.*|R_HOME_DIR="$(cd "$(dirname "$0")/.." \&\& pwd)"|' "$dest/bin/R"
+      echo "  ✓ Linux R staged via apt ($(du -sh "$dest" | awk '{print $1}'))"
+      return
+    fi
+    echo "  ! apt install of r-base-core did not yield /usr/lib/R; trying CDN"
+  fi
+
+  # Last-ditch fallback: posit's r-installer .deb mirror. Requires curl + tar.
   local url="https://cdn.posit.co/r/ubuntu-2204/pool/main/r/r-${R_VERSION}/r-${R_VERSION}_1_amd64.deb"
   echo "  ↓ Downloading $url"
   local tmp; tmp="$(mktemp -d)"
   if ! curl -L --fail -o "$tmp/r.deb" "$url"; then
-    echo "  ! Linux R download failed (no system R, no network?). Skipping."
+    echo "  ! Linux R download failed (no system R, apt, or network?). Skipping."
     rm -rf "$tmp"
     return 1
   fi
@@ -255,18 +269,36 @@ stage_r_windows() {
     rm -rf "$tmp"
     return 1
   fi
-  # The Inno Setup installer can do unattended install with /VERYSILENT.
-  # When this script runs on Windows (msys/git-bash), we shell out to the
-  # .exe; otherwise we recommend running it on a Windows builder.
-  if [ "$TARGET_OS" = "win" ] && [ "$(uname -s)" != MINGW* ] && [ "$(uname -s)" != MSYS* ]; then
-    echo "  ! Cross-bundling Windows R from $(uname -s) requires Wine. Skipping."
-    echo "    Run TARGET_OS=win bun run bundle:runtime on a Windows builder."
-    rm -rf "$tmp"
+  # The Inno Setup installer does an unattended install with /VERYSILENT.
+  # On a Windows host (msys/git-bash) we shell out to the .exe directly. On
+  # Linux/macOS we cross-install it through Wine — the installer is a plain
+  # Inno Setup package that runs fine under Wine, which lets us produce a
+  # Windows build from a Linux box (paired with `electron-builder --win`,
+  # which also drives Wine).
+  case "$(uname -s)" in
+    MINGW*|MSYS*|CYGWIN*)
+      "$tmp/r.exe" /VERYSILENT /SUPPRESSMSGBOXES "/DIR=$(cygpath -w "$dest" 2>/dev/null || echo "$dest")"
+      ;;
+    *)
+      if ! command -v wine >/dev/null 2>&1; then
+        echo "  ! Cross-bundling Windows R needs Wine (apt install wine). Skipping."
+        rm -rf "$tmp"
+        return 1
+      fi
+      echo "  → Cross-installing Windows R via Wine"
+      local windir
+      windir="$(WINEDEBUG=-all winepath -w "$dest" 2>/dev/null || echo "$dest")"
+      WINEDEBUG=-all wine "$tmp/r.exe" /VERYSILENT /SUPPRESSMSGBOXES "/DIR=$windir" >/dev/null 2>&1 || true
+      WINEDEBUG=-all wineserver -w 2>/dev/null || true  # wait for the install to finish
+      ;;
+  esac
+  rm -rf "$tmp"
+  if [ -x "$dest/bin/R.exe" ] || [ -f "$dest/bin/x64/R.exe" ] || [ -d "$dest/bin" ]; then
+    echo "  ✓ Windows R installed under $dest"
+  else
+    echo "  ! Windows R install produced no bin/ — check the Wine run."
     return 1
   fi
-  "$tmp/r.exe" /VERYSILENT /SUPPRESSMSGBOXES "/DIR=$(cygpath -w "$dest" 2>/dev/null || echo "$dest")"
-  rm -rf "$tmp"
-  echo "  ✓ Windows R installed under $dest"
 }
 
 # ─── 3b. IA R packages ─────────────────────────────────────────────────

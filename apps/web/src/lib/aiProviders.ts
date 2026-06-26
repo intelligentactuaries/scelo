@@ -17,6 +17,9 @@
 // an IPC round-trip on every chat call.
 
 import { isDesktopIDE } from "./sceloIDE";
+import type { LlmChatResult } from "./sceloIDE";
+
+export type LlmMessage = { role: "system" | "user" | "assistant"; content: string };
 
 export type ProviderId =
   | "ollama"
@@ -202,4 +205,45 @@ export async function activeProviderHeaders(): Promise<Record<string, string>> {
   if (cfg.model) headers["X-IA-Provider-Model"] = cfg.model;
   if (cfg.baseUrl) headers["X-IA-Base-URL"] = cfg.baseUrl;
   return headers;
+}
+
+// ── direct provider chat (desktop IDE) ───────────────────────────────────────
+// The desktop build has no orchestrator backend, so chat & the provider
+// "test connection" call the provider's HTTP API directly through the
+// main-process bridge (window.scelo.llm). In a plain browser this bridge is
+// absent and callers fall back to the orchestrator `/api` path.
+
+/** True when the in-process LLM bridge is available (desktop IDE build). */
+export function hasLocalLlmBridge(): boolean {
+  return isDesktopIDE() && typeof window.scelo?.llm?.chat === "function";
+}
+
+/** Chat against an explicit provider config via the main-process bridge. */
+export async function llmChatWithConfig(
+  cfg: ProviderConfig,
+  messages: LlmMessage[],
+  opts?: { maxTokens?: number },
+): Promise<LlmChatResult> {
+  if (!hasLocalLlmBridge()) {
+    return { ok: false, error: "Direct provider chat is only available in the Scelo desktop app." };
+  }
+  const desc = PROVIDER_CATALOG.find((p) => p.id === cfg.id);
+  return window.scelo!.llm.chat({
+    provider: cfg.id,
+    apiKey: cfg.apiKey || undefined,
+    model: cfg.model || desc?.defaultModel,
+    baseUrl: cfg.baseUrl,
+    messages,
+    maxTokens: opts?.maxTokens,
+  });
+}
+
+/** Chat against whichever provider is currently active. */
+export async function llmChatActive(
+  messages: LlmMessage[],
+  opts?: { maxTokens?: number },
+): Promise<LlmChatResult> {
+  const id = getActiveProviderId();
+  const cfg = (await getProviderConfig(id)) ?? { id, apiKey: "" };
+  return llmChatWithConfig(cfg, messages, opts);
 }

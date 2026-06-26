@@ -50,6 +50,7 @@ import { ExportButton } from "./ExportScreen";
 import { FlowControls } from "./FlowControls";
 import { RemovableEdge } from "./RemovableEdge";
 import { ResizablePanel } from "./ResizablePanel";
+import { SciText } from "./SciText";
 import {
   type ColumnMeta,
   type Dataset,
@@ -420,7 +421,7 @@ function ToolNode({ id, data }: NodeProps<ToolNodeData>) {
       </div>
       <div className="mt-0.5 text-xs text-fg">{data.model.name}</div>
       <p className="mt-1 line-clamp-2 text-[10px] text-fg-mute">
-        {data.rationale ?? data.model.description}
+        <SciText>{data.rationale ?? data.model.description}</SciText>
       </p>
 
       {swapOpen && (
@@ -1087,7 +1088,9 @@ function ModelDetailsPanel({
                 {focused.family}
               </div>
               <h2 className="text-sm text-fg">{focused.name}</h2>
-              <p className="mt-1 text-[11px] text-fg-mute">{focused.description}</p>
+              <p className="mt-1 text-[11px] text-fg-mute">
+                <SciText>{focused.description}</SciText>
+              </p>
             </div>
 
             {focusedSelection?.rationale && (
@@ -1095,7 +1098,9 @@ function ModelDetailsPanel({
                 <div className="mb-0.5 font-mono text-[9px] uppercase text-fg-dim">
                   {focusedSelection.source === "ai" ? "ai rationale" : "user pick"}
                 </div>
-                <p className="text-[11px] text-fg-mute">{focusedSelection.rationale}</p>
+                <p className="text-[11px] text-fg-mute">
+                  <SciText>{focusedSelection.rationale}</SciText>
+                </p>
               </div>
             )}
 

@@ -58,6 +58,21 @@ interface SecretsStatus {
   backend: string;
 }
 
+interface LlmChatRequest {
+  provider: string;
+  apiKey?: string;
+  model?: string;
+  baseUrl?: string;
+  messages: Array<{ role: "system" | "user" | "assistant"; content: string }>;
+  maxTokens?: number;
+}
+
+interface LlmChatResult {
+  ok: boolean;
+  text?: string;
+  error?: string;
+}
+
 interface StreamExecRequest {
   runtime: "python" | "r" | "shell";
   script?: string;
@@ -148,6 +163,10 @@ contextBridge.exposeInMainWorld("scelo", {
     ipcRenderer.invoke("scelo:runtimeStatus"),
   stackProbe: (): Promise<StackReport> =>
     ipcRenderer.invoke("scelo:stackProbe"),
+  llm: {
+    chat: (req: LlmChatRequest): Promise<LlmChatResult> =>
+      ipcRenderer.invoke("scelo:llm:chat", req),
+  },
   secrets: {
     list: (): Promise<Record<string, SecretListItem>> =>
       ipcRenderer.invoke("scelo:secrets:list"),

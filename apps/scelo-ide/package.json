@@ -3,8 +3,10 @@
   "version": "0.1.0",
   "private": true,
   "description": "Scelo IDE — a downloadable desktop workbench for actuaries. Bundled Python + R + the IA actuarial stack, ready to run offline.",
+  "homepage": "https://intelligentactuaries.com",
   "author": {
-    "name": "Intelligent Actuaries"
+    "name": "Intelligent Actuaries",
+    "email": "hello@intelligentactuaries.com"
   },
   "license": "LicenseRef-Scelo-IDE-1.0",
   "main": "dist/main.js",

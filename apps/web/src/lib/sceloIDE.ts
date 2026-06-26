@@ -340,11 +340,33 @@ interface GitBridge {
   ): Promise<{ ok: boolean; content?: string; sha?: string; error?: string }>;
 }
 
+export interface LlmChatRequest {
+  provider: string;
+  apiKey?: string;
+  model?: string;
+  baseUrl?: string;
+  messages: Array<{ role: "system" | "user" | "assistant"; content: string }>;
+  maxTokens?: number;
+}
+
+export interface LlmChatResult {
+  ok: boolean;
+  text?: string;
+  error?: string;
+}
+
+interface LlmBridge {
+  /** Call the configured provider's chat API directly from the main process
+   *  (no CORS, holds the decrypted key). Returns the full reply at once. */
+  chat(req: LlmChatRequest): Promise<LlmChatResult>;
+}
+
 interface SceloBridge {
   runPython(req: { script: string; argv?: string[]; stdin?: string }): Promise<ExecResult>;
   runR(req: { script: string; argv?: string[]; stdin?: string }): Promise<ExecResult>;
   runtimeStatus(): Promise<RuntimeStatus>;
   stackProbe(): Promise<StackReport>;
+  llm: LlmBridge;
   secrets: SecretsBridge;
   exec: ExecBridge;
   workspace: WorkspaceBridge;

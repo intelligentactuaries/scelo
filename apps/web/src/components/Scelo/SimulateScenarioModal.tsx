@@ -258,7 +258,8 @@ export function SimulateScenarioModal({
           <div className="mb-3 rounded border border-error/40 bg-error/10 p-2 font-mono text-[11px] text-error">
             {error}
             <div className="mt-1 text-[10px] text-fg-dim">
-              Is the swarms server running? `bun src/server/index.ts` in <code>swarms/</code>, default port 3010.
+              Is the swarms server running? Start it with `PORT=3010 bun run dev` in{" "}
+              <code>swarms/</code> — it must listen on port 3010 (its default is 3000).
             </div>
           </div>
         )}

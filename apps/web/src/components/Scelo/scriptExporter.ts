@@ -71,6 +71,30 @@ function cppStr(s: string): string {
   return `"${s.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n")}"`;
 }
 
+// strftime-style pattern for a chat-driven date reformat, shared by the
+// Python / R exporters (both accept the C strftime codes used here).
+function strftimeFor(style: "iso" | "us" | "eu"): string {
+  switch (style) {
+    case "us":
+      return "%m/%d/%Y";
+    case "eu":
+      return "%d/%m/%Y";
+    default:
+      return "%Y-%m-%d";
+  }
+}
+
+function dateStyleLabel(style: "iso" | "us" | "eu"): string {
+  switch (style) {
+    case "us":
+      return "American (MM/DD/YYYY)";
+    case "eu":
+      return "European (DD/MM/YYYY)";
+    default:
+      return "ISO 8601 (YYYY-MM-DD)";
+  }
+}
+
 // Each language has slightly different idioms for the same filter; expressed
 // as a small `expr` helper so the per-event branches stay readable. "iqr"
 // keeps the data inside the interquartile range; "outliers" KEEPS the
@@ -177,6 +201,28 @@ export function generatePython(events: ActivityEvent[], stage: string): string {
         out.push("df = df.dropna(axis=1, how='all')");
         out.push("df = df.drop_duplicates()");
         break;
+      case "cleaning.reformat-dates": {
+        const fmt = strftimeFor(ev.payload.style);
+        out.push(`# Reformat date column(s) to ${dateStyleLabel(ev.payload.style)}:`);
+        for (const c of ev.payload.columns) {
+          out.push(
+            `df[${pyStr(c)}] = pd.to_datetime(df[${pyStr(c)}], errors="coerce").dt.strftime(${pyStr(fmt)})`,
+          );
+        }
+        break;
+      }
+      case "cleaning.column":
+        out.push(
+          `# Column ${pyStr(ev.payload.column)} — ${ev.payload.action} (${ev.payload.affected} cells).`,
+        );
+        break;
+      case "data.augment":
+        out.push(`# Data augmentation: +${ev.payload.added} synthetic rows (${ev.payload.method}).`);
+        out.push(
+          `df = pd.concat([df, df.sample(n=${ev.payload.added}, replace=True, random_state=0)], ignore_index=True)`,
+        );
+        out.push("# (the app also adds light Gaussian jitter to numeric columns)");
+        break;
       case "derived.add":
         out.push(`# Derived column: ${ev.payload.name} = ${ev.payload.formula}`);
         out.push(
@@ -276,6 +322,27 @@ export function generateR(events: ActivityEvent[], stage: string): string {
         out.push("  mutate(across(where(is.character), stringr::str_trim)) %>%");
         out.push("  select(where(~ !all(is.na(.)))) %>%");
         out.push("  distinct()");
+        break;
+      case "cleaning.reformat-dates": {
+        const fmt = strftimeFor(ev.payload.style);
+        out.push(`# Reformat date column(s) to ${dateStyleLabel(ev.payload.style)}:`);
+        for (const c of ev.payload.columns) {
+          out.push(
+            `df <- df %>% mutate(${c} = format(lubridate::as_date(${c}), ${rStr(fmt)}))`,
+          );
+        }
+        break;
+      }
+      case "cleaning.column":
+        out.push(
+          `# Column ${rStr(ev.payload.column)} — ${ev.payload.action} (${ev.payload.affected} cells).`,
+        );
+        break;
+      case "data.augment":
+        out.push(`# Data augmentation: +${ev.payload.added} synthetic rows (${ev.payload.method}).`);
+        out.push(
+          `df <- dplyr::bind_rows(df, dplyr::slice_sample(df, n = ${ev.payload.added}, replace = TRUE))`,
+        );
         break;
       case "derived.add":
         out.push(`# Derived column: ${ev.payload.name} = ${ev.payload.formula}`);
@@ -414,6 +481,22 @@ export function generateCpp(events: ActivityEvent[], stage: string): string {
         for (const op of ev.payload.opLabels) out.push(`    //   • ${op}`);
         out.push("    // TODO: per-cell trim / null-normalise / dedupe pass.");
         break;
+      case "cleaning.reformat-dates":
+        out.push(`    // Reformat date column(s) to ${dateStyleLabel(ev.payload.style)}:`);
+        for (const c of ev.payload.columns) {
+          out.push(`    //   • parse ${cppStr(c)} and re-emit as ${strftimeFor(ev.payload.style)}.`);
+        }
+        break;
+      case "cleaning.column":
+        out.push(
+          `    // Column ${cppStr(ev.payload.column)} — ${ev.payload.action} (${ev.payload.affected} cells).`,
+        );
+        break;
+      case "data.augment":
+        out.push(
+          `    // Data augmentation: +${ev.payload.added} synthetic rows (${ev.payload.method}).`,
+        );
+        break;
       case "derived.add":
         out.push(`    // Derived column: ${ev.payload.name} = ${ev.payload.formula}`);
         out.push(
@@ -506,6 +589,21 @@ export function generatePrompt(events: ActivityEvent[], stage: string): string {
       case "cleaning.apply":
         out.push(
           `${n}. Applied data-cleaning ops: ${ev.payload.opLabels.join(", ") || "(no specific ops)"}.`,
+        );
+        break;
+      case "cleaning.reformat-dates":
+        out.push(
+          `${n}. Reformatted the date column(s) ${ev.payload.columns.map((c) => `\`${c}\``).join(", ")} to ${dateStyleLabel(ev.payload.style)}.`,
+        );
+        break;
+      case "cleaning.column":
+        out.push(
+          `${n}. On column \`${ev.payload.column}\`: ${ev.payload.action} (${ev.payload.affected} cells).`,
+        );
+        break;
+      case "data.augment":
+        out.push(
+          `${n}. Augmented the dataset: added ${ev.payload.added} synthetic rows (${ev.payload.method}).`,
         );
         break;
       case "derived.add":
