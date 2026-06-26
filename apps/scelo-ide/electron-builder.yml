@@ -1,5 +1,8 @@
 appId: io.intelligentactuaries.scelo
 productName: Scelo IDE
+# Binary name (no spaces). Required for the snap target's `--executable`, and
+# keeps the launcher consistent with the .desktop file's Exec=scelo-ide.
+executableName: scelo-ide
 copyright: Copyright © 2026 Intelligent Actuaries
 artifactName: ${productName}-${version}-${arch}.${ext}
 
