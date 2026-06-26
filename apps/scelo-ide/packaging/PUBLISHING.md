@@ -15,10 +15,42 @@ There are two distinct problems, and they need different fixes:
 
 ---
 
-## Linux — Snap Store (recommended) or Flathub
+## Linux — verified `.deb` via a signed apt repo (Cloudsmith)
 
-A side-loaded `.deb` will **always** read as "third party" in App Center. To be
-a *verified publisher* shown as *safe*, distribute through a store.
+A side-loaded `.deb` (a file you download and `dpkg -i`) will always read as
+"third party". The `.deb`-native way to be *verified* is a **GPG-signed apt
+repository**: users add the repo + key once, then `apt install scelo-ide` is
+cryptographically verified and auto-updates. We host it on **Cloudsmith** (free
+for open source, signs the repo for you).
+
+One-time (yours):
+1. Create a free Cloudsmith account, then a repo (e.g. `scelo`) under your org.
+2. Account → API Settings → make an API key.
+
+Each release:
+```bash
+bun run ide:dist:linux                       # builds the .deb (+ AppImage)
+export CLOUDSMITH_API_KEY=...                 # your key
+export CLOUDSMITH_OWNER=intelligentactuaries  # your org slug
+export CLOUDSMITH_REPO=scelo
+bash apps/scelo-ide/scripts/publish-deb-cloudsmith.sh
+```
+
+Users then install the verified, auto-updating package:
+```bash
+curl -1sLf 'https://dl.cloudsmith.io/public/intelligentactuaries/scelo/setup.deb.sh' | sudo -E bash
+sudo apt install scelo-ide
+```
+
+> Note: this gives cryptographic trust + clean `apt` install + updates (the
+> `.deb` world's "verified"). The literal "verified publisher ⭐" badge in the
+> Ubuntu App Center is Snap-Store-specific; a signed apt repo does not show that
+> exact star, but it removes the untrusted-download problem.
+
+## Linux — Snap Store or Flathub (for the App Center ⭐ badge)
+
+If you specifically want the App Center *verified publisher* star, distribute
+through a store.
 
 ### Option A — Snap Store (easiest for this app)
 
