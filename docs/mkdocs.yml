@@ -1,6 +1,6 @@
 site_name: Scelo IDE
 site_description: The actuarial workbench — soft data → models → hard results, with a bundled Python + R runtime and AI co-pilots scoped to each stage.
-site_url: https://docs.intelligentactuaries.com/
+site_url: https://docs.intelligentactuaries.com/scelo/
 copyright: Copyright © 2026 Intelligent Actuaries
 
 extra_css:
