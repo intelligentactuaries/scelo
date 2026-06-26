@@ -1,0 +1,98 @@
+site_name: Scelo IDE
+site_description: The actuarial workbench — soft data → models → hard results, with a bundled Python + R runtime and AI co-pilots scoped to each stage.
+site_url: https://docs.intelligentactuaries.com/
+copyright: Copyright © 2026 Intelligent Actuaries
+
+extra_css:
+  - stylesheets/extra.css
+
+theme:
+  name: material
+  language: en
+  font:
+    text: Inter
+    code: JetBrains Mono
+  palette:
+    # Light (default) — IA warm cream
+    - scheme: default
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    # Dark — IA warm charcoal
+    - scheme: slate
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.top
+    - navigation.indexes
+    - navigation.tracking
+    - navigation.footer
+    - toc.follow
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.code.annotate
+    - content.tabs.link
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - tables
+  - footnotes
+  - toc:
+      permalink: true
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences
+  - pymdownx.details
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.keys
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+
+plugins:
+  - search
+
+nav:
+  - Home: index.md
+  - Installation:
+      - installation/index.md
+      - Linux: installation/linux.md
+      - Windows & macOS: installation/windows-macos.md
+      - First launch: installation/first-launch.md
+  - Getting started: getting-started.md
+  - The workspace:
+      - workspace/index.md
+      - Editor & files: workspace/editor.md
+      - Terminal & runtimes: workspace/terminal.md
+      - Search, Git, Problems, Tests: workspace/panels.md
+      - Command palette: workspace/command-palette.md
+  - The pipeline:
+      - pipeline/index.md
+      - Soft Data: pipeline/soft-data.md
+      - Tools (models): pipeline/tools.md
+      - Hard Data: pipeline/hard-data.md
+  - The swarm:
+      - swarm/index.md
+      - Running it: swarm/running.md
+      - Council, society & simulation: swarm/views.md
+  - AI providers: ai-providers.md
+  - Chat: chat.md
+  - Exporting: exporting.md
+  - Reference:
+      - reference/shortcuts.md
+      - reference/file-locations.md
+      - reference/troubleshooting.md
+  - Build from source: build-from-source.md
