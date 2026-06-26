@@ -1,0 +1,6 @@
+# MkDocs build output
+site/
+
+# Python venv (built locally / in CI)
+.venv/
+venv/
