@@ -21,7 +21,6 @@ mkdocs build --strict # output in site/ (git-ignored)
 
 - **Brand colours** — IA warm cream (light, default) / warm charcoal (dark),
   defined as Material CSS tokens in `docs/stylesheets/extra.css`.
-- **Diagrams** — inline SVG in the IA iconography language (single-stroke,
-  monochrome, `currentColor`), wrapped in `<figure class="ia-diagram">`. The
-  full recipe lives in [`ICONOGRAPHY.md`](ICONOGRAPHY.md).
+- **Diagrams** — inline SVG in the IA brand iconography language (single-stroke,
+  monochrome, `currentColor`), wrapped in `<figure class="ia-diagram">`.
 - **Screenshots** — `docs/assets/img/`, embedded with `{ .shadow }`.
