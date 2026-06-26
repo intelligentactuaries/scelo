@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  AppStream metainfo for Scelo IDE.
+
+  This is what app stores (Ubuntu App Center / GNOME Software, the Snap Store,
+  Flathub) read to show the publisher name, license, release date, and
+  description instead of "Unknown". It MUST be installed to
+  /usr/share/metainfo/io.intelligentactuaries.scelo.metainfo.xml and its <id>
+  must match the .desktop file id below.
+
+  Validate with:  appstreamcli validate io.intelligentactuaries.scelo.metainfo.xml
+-->
+<component type="desktop-application">
+  <id>io.intelligentactuaries.scelo</id>
+
+  <!-- License of THIS metadata file (permissive, required). -->
+  <metadata_license>CC0-1.0</metadata_license>
+  <!-- License of the application itself. -->
+  <project_license>LicenseRef-Scelo-IDE-1.0</project_license>
+
+  <name>Scelo IDE</name>
+  <summary>Actuarial workbench with bundled Python and R</summary>
+
+  <!-- The "publisher" shown by the store. -->
+  <developer id="com.intelligentactuaries">
+    <name>Intelligent Actuaries</name>
+  </developer>
+  <!-- Legacy element for older AppStream readers. -->
+  <developer_name>Intelligent Actuaries</developer_name>
+
+  <description>
+    <p>
+      Scelo IDE is a downloadable desktop workbench for actuaries: a
+      soft-data, tools, hard-data pipeline with a bundled Python and R
+      runtime, the lifelib, chainladder and climada stack, and AI co-pilots
+      scoped to each stage. It works fully offline once installed.
+    </p>
+  </description>
+
+  <launchable type="desktop-id">io.intelligentactuaries.scelo.desktop</launchable>
+
+  <url type="homepage">https://intelligentactuaries.com/scelo</url>
+  <url type="bugtracker">https://github.com/intelligentactuaries/scelo/issues</url>
+  <url type="vcs-browser">https://github.com/intelligentactuaries/scelo</url>
+
+  <categories>
+    <category>Development</category>
+    <category>Science</category>
+  </categories>
+
+  <keywords>
+    <keyword>actuarial</keyword>
+    <keyword>reserving</keyword>
+    <keyword>mortality</keyword>
+    <keyword>capital</keyword>
+    <keyword>python</keyword>
+    <keyword>r</keyword>
+  </keywords>
+
+  <!-- No objectionable content. -->
+  <content_rating type="oars-1.1" />
+
+  <releases>
+    <release version="0.1.0" date="2026-06-26">
+      <description>
+        <p>First public build of the Scelo IDE.</p>
+      </description>
+    </release>
+  </releases>
+</component>
