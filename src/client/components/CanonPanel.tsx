@@ -1,11 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
+import { type Dispatch, type SetStateAction, useEffect, useRef, useState } from 'react';
 import type { CanonWork } from '../../shared/types';
 import { api } from '../lib/api';
-
-type Props = {
-  works: CanonWork[] | null;
-  onChange: (works: CanonWork[]) => void;
-};
 
 const SAMPLE_JSON = `{
   "works": [
@@ -26,18 +21,76 @@ const SAMPLE_BIB = `@article{example2024,
   doi = {10.0000/example}
 }`;
 
-export function CanonPanel({ works, onChange }: Props) {
+// Canon-tab state, lifted so App can own it — preserves in-progress row edits,
+// the import textarea, and the format/mode toggles across tab switches.
+export interface CanonState {
+  draft: CanonWork[];
+  setDraft: Dispatch<SetStateAction<CanonWork[]>>;
+  importText: string;
+  setImportText: Dispatch<SetStateAction<string>>;
+  importFormat: 'json' | 'bib';
+  setImportFormat: Dispatch<SetStateAction<'json' | 'bib'>>;
+  importMode: 'replace' | 'append';
+  setImportMode: Dispatch<SetStateAction<'replace' | 'append'>>;
+  busy: boolean;
+  setBusy: Dispatch<SetStateAction<boolean>>;
+  msg: string | null;
+  setMsg: Dispatch<SetStateAction<string | null>>;
+}
+
+export function useCanonState(works: CanonWork[] | null): CanonState {
   const [draft, setDraft] = useState<CanonWork[]>(works ?? []);
   const [importText, setImportText] = useState('');
   const [importFormat, setImportFormat] = useState<'json' | 'bib'>('json');
   const [importMode, setImportMode] = useState<'replace' | 'append'>('append');
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
-  const fileRef = useRef<HTMLInputElement>(null);
 
+  // Resync the editable draft to the canonical works whenever those change
+  // (after a save / import). Unsaved edits persist between those events — and
+  // now across tab switches too, since this state lives in App.
   useEffect(() => {
     setDraft(works ?? []);
   }, [works]);
+
+  return {
+    draft,
+    setDraft,
+    importText,
+    setImportText,
+    importFormat,
+    setImportFormat,
+    importMode,
+    setImportMode,
+    busy,
+    setBusy,
+    msg,
+    setMsg,
+  };
+}
+
+export function CanonPanel({
+  onChange,
+  state,
+}: {
+  onChange: (works: CanonWork[]) => void;
+  state: CanonState;
+}) {
+  const {
+    draft,
+    setDraft,
+    importText,
+    setImportText,
+    importFormat,
+    setImportFormat,
+    importMode,
+    setImportMode,
+    busy,
+    setBusy,
+    msg,
+    setMsg,
+  } = state;
+  const fileRef = useRef<HTMLInputElement>(null);
 
   function update(i: number, patch: Partial<CanonWork>) {
     setDraft((d) => d.map((w, idx) => (idx === i ? { ...w, ...patch } : w)));

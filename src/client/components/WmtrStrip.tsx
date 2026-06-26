@@ -84,8 +84,9 @@ interface Props {
   runId?: string | null;
   /** Scenario text — used by the standalone preview path. */
   scenario?: string;
-  /** Called after a successful intervention re-simulation. */
-  onInterveneStarted?: (newRunId: string | null) => void;
+  /** Called after a successful intervention re-simulation. `wmtr` carries the
+   *  re-simulated forecast for the inline (no-recouncil) path. */
+  onInterveneStarted?: (newRunId: string | null, wmtr?: RunWmtr) => void;
 }
 
 export function WmtrStrip({ wmtr, clusters, runId, scenario, onInterveneStarted }: Props) {
@@ -377,7 +378,7 @@ export function InterventionRow({
   clusters: InterventionCluster[];
   runId: string | null;
   scenario: string | null;
-  onInterveneStarted?: (newRunId: string | null) => void;
+  onInterveneStarted?: (newRunId: string | null, wmtr?: RunWmtr) => void;
 }) {
   const [busy, setBusy] = useState(false);
   const [pickedIdx, setPickedIdx] = useState<number>(0);
@@ -396,11 +397,14 @@ export function InterventionRow({
       };
       if (runId) {
         const r = await api.intervene(runId, { intervention: interv, recouncil: false });
-        onInterveneStarted?.(r.runId ?? null);
+        // recouncil:false → server returns the re-simulated forecast inline with
+        // runId null. Hand the wmtr payload up so the forecast actually updates
+        // (previously it was dropped and the click looked like a no-op).
+        onInterveneStarted?.(r.runId ?? null, r.wmtr);
       } else if (scenario) {
-        // Preview path — re-run WMTR only.
-        await api.runWmtr({ scenario, intervention: interv });
-        onInterveneStarted?.(null);
+        // Preview path — re-run WMTR only and surface the new forecast.
+        const p = await api.runWmtr({ scenario, intervention: interv });
+        onInterveneStarted?.(null, p);
       }
     } finally {
       setBusy(false);

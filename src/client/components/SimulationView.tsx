@@ -12,7 +12,7 @@
 //   • per-agent rows — Scelo-ready table with download / send-to-Scelo
 //   • narrative provenance — every macro multiplier with its source
 
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
 type SimRow = Record<string, string | number | boolean>;
 
@@ -119,7 +119,26 @@ function downloadCsv(rows: SimRow[], columns: string[], filename: string): void 
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-export function SimulationView() {
+// All Simulation-tab state lives here so it can be owned by App (lifted out of
+// the view), which keeps the scenario, sliders, and results alive across tab
+// switches even when the view itself unmounts.
+export interface SimulationState {
+  scenario: string;
+  setScenario: (s: string) => void;
+  drugsText: string;
+  setDrugsText: (s: string) => void;
+  sampleSize: number;
+  setSampleSize: (n: number) => void;
+  population: number;
+  setPopulation: (n: number) => void;
+  busy: boolean;
+  error: string | null;
+  result: SimResponse | null;
+  onTemplate: (idx: number) => void;
+  run: () => void;
+}
+
+export function useSimulationState(): SimulationState {
   const [scenario, setScenario] = useState<string>(TEMPLATES[0].scenario);
   const [drugsText, setDrugsText] = useState<string>(TEMPLATES[0].drugs.join(', '));
   const [sampleSize, setSampleSize] = useState<number>(120);
@@ -137,6 +156,7 @@ export function SimulationView() {
   const run = useCallback(() => {
     setBusy(true);
     setError(null);
+    setResult(null); // clear the prior run so the progress panel shows cleanly
     const drugs = drugsText
       .split(/[,\n]/)
       .map((d) => d.trim())
@@ -159,6 +179,40 @@ export function SimulationView() {
       .catch((e) => setError(e instanceof Error ? e.message : String(e)))
       .finally(() => setBusy(false));
   }, [scenario, drugsText, sampleSize, population]);
+
+  return {
+    scenario,
+    setScenario,
+    drugsText,
+    setDrugsText,
+    sampleSize,
+    setSampleSize,
+    population,
+    setPopulation,
+    busy,
+    error,
+    result,
+    onTemplate,
+    run,
+  };
+}
+
+export function SimulationView({ state }: { state: SimulationState }) {
+  const {
+    scenario,
+    setScenario,
+    drugsText,
+    setDrugsText,
+    sampleSize,
+    setSampleSize,
+    population,
+    setPopulation,
+    busy,
+    error,
+    result,
+    onTemplate,
+    run,
+  } = state;
 
   return (
     <div className="simulation-view">
@@ -233,7 +287,65 @@ export function SimulationView() {
         {error && <div className="simulation-error">error: {error}</div>}
       </header>
 
+      {busy && !result && <SimulationProgress />}
       {result && <SimulationResults result={result} />}
+    </div>
+  );
+}
+
+// Lightweight, honest in-progress panel for the (non-streamed) /api/simulate
+// call. The server runs references → sample → simulate → macro as one request,
+// so we can't get true per-phase callbacks; instead we show an elapsed timer
+// (real) and walk the known pipeline phases forward on a gentle cadence,
+// holding on the last until the result lands. Reads as deliberate progress
+// rather than a frozen blank screen.
+const SIM_PHASES: Array<{ key: string; label: string; hint: string }> = [
+  { key: 'refs', label: 'Resolving compound references', hint: 'PubChem · OpenFDA · ChEMBL' },
+  { key: 'sample', label: 'Sampling the population', hint: 'synthetic cohort' },
+  { key: 'sim', label: 'Simulating agent outcomes', hint: 'per-agent disease course' },
+  { key: 'macro', label: 'Scaling macro impact', hint: 'cohort → national' },
+];
+
+function SimulationProgress() {
+  const [elapsed, setElapsed] = useState(0);
+  const [phase, setPhase] = useState(0);
+
+  useEffect(() => {
+    const t0 = performance.now();
+    const tick = window.setInterval(() => setElapsed((performance.now() - t0) / 1000), 100);
+    // Advance through the phases, but never past the last one — the real
+    // result unmounts this panel when it arrives.
+    const advance = window.setInterval(
+      () => setPhase((p) => Math.min(p + 1, SIM_PHASES.length - 1)),
+      1800,
+    );
+    return () => {
+      window.clearInterval(tick);
+      window.clearInterval(advance);
+    };
+  }, []);
+
+  return (
+    <div className="sim-progress" role="status" aria-live="polite">
+      <div className="sim-progress-head">
+        <span className="sim-progress-eyebrow">simulating</span>
+        <span className="sim-progress-elapsed">{elapsed.toFixed(1)}s</span>
+      </div>
+      <ul className="sim-progress-phases">
+        {SIM_PHASES.map((ph, i) => {
+          const state = i < phase ? 'done' : i === phase ? 'active' : 'pending';
+          return (
+            <li key={ph.key} className={`sim-phase is-${state}`}>
+              <span className="sim-phase-dot" aria-hidden />
+              <span className="sim-phase-label">{ph.label}</span>
+              <span className="sim-phase-hint">{ph.hint}</span>
+            </li>
+          );
+        })}
+      </ul>
+      <div className="sim-progress-bar" aria-hidden>
+        <span />
+      </div>
     </div>
   );
 }
