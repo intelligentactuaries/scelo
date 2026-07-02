@@ -15,7 +15,10 @@ export type ExportLang = "python" | "r" | "cpp" | "prompt";
 
 // Header line shown at the top of every generated artifact. Anchors the
 // reader: when, what tool produced it, which slice of the pipeline is in
-// scope. ISO date keeps it locale-stable.
+// scope. ISO date keeps it locale-stable. The fidelity note matters: the
+// script applies filters/cleaning BEFORE any model step, whereas Scelo's
+// in-app quick runs execute against the unfiltered in-memory dataset — so
+// numbers produced by the script may legitimately differ from the app's.
 function headerLines(args: { lang: ExportLang; stage: string; eventCount: number }): string[] {
   const ts = new Date().toISOString();
   const banner = [
@@ -23,6 +26,9 @@ function headerLines(args: { lang: ExportLang; stage: string; eventCount: number
       args.eventCount === 1 ? "" : "s"
     }.`,
     `Generated ${ts} by Scelo · /dashboards/scelo`,
+    "Note: this script applies the recorded filters/cleaning BEFORE the model",
+    "steps. Scelo's in-app quick-run results were computed on the unfiltered",
+    "in-memory dataset, so numbers produced here may differ from the app's.",
   ];
   switch (args.lang) {
     case "python":
@@ -30,7 +36,7 @@ function headerLines(args: { lang: ExportLang; stage: string; eventCount: number
     case "r":
       return banner.map((l) => `# ${l}`).concat([""]);
     case "cpp":
-      return [`// ${banner[0]}`, `// ${banner[1]}`, ""];
+      return banner.map((l) => `// ${l}`).concat([""]);
     case "prompt":
       return banner.map((l) => `# ${l}`).concat([""]);
   }
@@ -217,7 +223,9 @@ export function generatePython(events: ActivityEvent[], stage: string): string {
         );
         break;
       case "data.augment":
-        out.push(`# Data augmentation: +${ev.payload.added} synthetic rows (${ev.payload.method}).`);
+        out.push(
+          `# Data augmentation: +${ev.payload.added} synthetic rows (${ev.payload.method}).`,
+        );
         out.push(
           `df = pd.concat([df, df.sample(n=${ev.payload.added}, replace=True, random_state=0)], ignore_index=True)`,
         );
@@ -327,9 +335,7 @@ export function generateR(events: ActivityEvent[], stage: string): string {
         const fmt = strftimeFor(ev.payload.style);
         out.push(`# Reformat date column(s) to ${dateStyleLabel(ev.payload.style)}:`);
         for (const c of ev.payload.columns) {
-          out.push(
-            `df <- df %>% mutate(${c} = format(lubridate::as_date(${c}), ${rStr(fmt)}))`,
-          );
+          out.push(`df <- df %>% mutate(${c} = format(lubridate::as_date(${c}), ${rStr(fmt)}))`);
         }
         break;
       }
@@ -339,7 +345,9 @@ export function generateR(events: ActivityEvent[], stage: string): string {
         );
         break;
       case "data.augment":
-        out.push(`# Data augmentation: +${ev.payload.added} synthetic rows (${ev.payload.method}).`);
+        out.push(
+          `# Data augmentation: +${ev.payload.added} synthetic rows (${ev.payload.method}).`,
+        );
         out.push(
           `df <- dplyr::bind_rows(df, dplyr::slice_sample(df, n = ${ev.payload.added}, replace = TRUE))`,
         );
@@ -484,7 +492,9 @@ export function generateCpp(events: ActivityEvent[], stage: string): string {
       case "cleaning.reformat-dates":
         out.push(`    // Reformat date column(s) to ${dateStyleLabel(ev.payload.style)}:`);
         for (const c of ev.payload.columns) {
-          out.push(`    //   • parse ${cppStr(c)} and re-emit as ${strftimeFor(ev.payload.style)}.`);
+          out.push(
+            `    //   • parse ${cppStr(c)} and re-emit as ${strftimeFor(ev.payload.style)}.`,
+          );
         }
         break;
       case "cleaning.column":
@@ -636,7 +646,7 @@ export function generatePrompt(events: ActivityEvent[], stage: string): string {
         break;
       case "runs.execute":
         out.push(
-          `${n}. Ran all enabled models (${ev.payload.models.join(", ")}) against the cleaned, filtered, augmented dataset.`,
+          `${n}. Ran all enabled models (${ev.payload.models.join(", ")}). In your reproduction, fit them against the dataset as prepared by the steps above (filters/cleaning applied). Note: Scelo's in-app quick-run numbers were computed on the unfiltered in-memory dataset, so your results may legitimately differ.`,
         );
         break;
     }

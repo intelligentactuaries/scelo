@@ -7,12 +7,23 @@
 // chi², deviance). The in-browser TS port produces a grouped mean as a
 // proxy; this is the real thing pricing actuaries actually run.
 //
-// Categorical covariates are pulled from the dataset's first few
-// `line` / `state` / `sex` / `vehicle_class` columns; users with a
-// richer schema should fall back to the notebook-export path.
+// Covariates and targets are detected from the dataset's own shape (see
+// modelRunner's detect* helpers) — no hardcoded schema. Only the needed
+// columns are serialised, and rows are capped: JSON.stringify of a full
+// 2M-row dataset is a ~1 GB string, past V8's string limit.
+//
+// Error contract: returns null ONLY when the bridge is unavailable
+// (browser build / no bundled Python). Anything else that stops a fit —
+// no usable target, Python error, bad output — THROWS with the reason so
+// the caller can surface it instead of silently substituting the mock.
 
 import { isDesktopIDE, runPython, getRuntimeStatus } from "../../../lib/sceloIDE";
 import type { Dataset } from "../SoftDataWorkstation";
+import {
+  detectCategoricalCovariates,
+  detectFrequencyTarget,
+  detectMonetaryColumn,
+} from "../modelRunner";
 
 export type GlmKind = "frequency" | "severity";
 
@@ -35,7 +46,20 @@ export interface GlmPythonOutput {
   pearsonChi2: number;
   nObservations: number;
   source: "statsmodels-python";
+  // Serialisation cap bookkeeping (TS-side): how many rows were actually
+  // piped to Python vs how many the dataset holds.
+  rowsSent: number;
+  rowsTotal: number;
 }
+
+// Hard cap on rows serialised to the Python child. statsmodels gains
+// nothing past this for a handful of categorical covariates, and the JSON
+// pipe stays comfortably under IPC / string limits.
+const GLM_BRIDGE_ROW_CAP = 200_000;
+
+// Design-matrix guard: 3-4 categorical covariates at ≤20 levels each is
+// plenty for the bridge's coefficient table.
+const GLM_BRIDGE_MAX_COVARIATES = 3;
 
 const SCRIPT = `
 import json, sys
@@ -108,11 +132,6 @@ except Exception as e:
     sys.exit(1)
 `;
 
-function pickCovariates(dataset: Dataset): string[] {
-  const preferred = ["line", "state", "sex", "vehicle_class", "region", "age_band"];
-  return preferred.filter((c) => dataset.columns.includes(c)).slice(0, 3);
-}
-
 export async function runGlmPython(
   dataset: Dataset,
   kind: GlmKind,
@@ -120,29 +139,57 @@ export async function runGlmPython(
   if (!isDesktopIDE()) return null;
   const status = await getRuntimeStatus();
   if (!status.python) return null;
-  const cov = pickCovariates(dataset);
-  if (cov.length === 0) return null;
-  // Frequency models claim count per row (1 if a row IS a claim, else 0)
-  // unless an explicit "claim_count" column is present. Severity models
-  // the paid amount per row.
-  const hasCount = dataset.columns.includes("claim_count");
-  const target = kind === "frequency"
-    ? hasCount ? "claim_count" : "_freq_unit"
-    : "paid";
-  // For the unit-frequency case we synthesise a column locally so the
-  // Python side gets a real frame.
-  const rows = dataset.rows.map((r) => {
-    if (target === "_freq_unit") return { ...r, [target]: 1 };
-    return r;
-  });
+  const cov = detectCategoricalCovariates(dataset).slice(0, GLM_BRIDGE_MAX_COVARIATES);
+  if (cov.length === 0) {
+    throw new Error("no categorical covariates detected (need string columns with 2-20 levels)");
+  }
+  // Frequency prefers an explicit count column (past_claims, claim_count…);
+  // when the data is claims-level (one row per claim) we synthesise a unit
+  // count so the Poisson still fits. Severity requires a monetary column.
+  let target: string;
+  if (kind === "frequency") {
+    target = detectFrequencyTarget(dataset) ?? "_freq_unit";
+  } else {
+    const money = detectMonetaryColumn(dataset);
+    if (!money) {
+      throw new Error("no monetary severity column detected (paid / claim_amt / severity / loss)");
+    }
+    target = money;
+  }
+  // Project ONLY the columns the fit needs and cap rows with an even
+  // stride so the sample spans the file. Sending whole rows at 2M-row
+  // scale serialises hundreds of MB and blows V8's string length limit.
+  const wanted = cov.slice();
+  if (target !== "_freq_unit") wanted.push(target);
+  if (dataset.columns.includes("exposure")) wanted.push("exposure");
+  const rowsTotal = dataset.rows.length;
+  const n = Math.min(rowsTotal, GLM_BRIDGE_ROW_CAP);
+  const stride = rowsTotal > n ? rowsTotal / n : 1;
+  const rows: Array<Record<string, unknown>> = new Array(n);
+  for (let i = 0; i < n; i++) {
+    const src = dataset.rows[Math.floor(i * stride)];
+    const out: Record<string, unknown> = {};
+    for (const c of wanted) out[c] = src[c];
+    if (target === "_freq_unit") out[target] = 1;
+    rows[i] = out;
+  }
   const stdin = JSON.stringify({ kind, target, covariates: cov, rows });
   const res = await runPython(SCRIPT, { stdin });
-  if (!res.ok) return null;
-  try {
-    const parsed = JSON.parse(res.stdout.trim());
-    if (parsed && "error" in parsed) return null;
-    return parsed as GlmPythonOutput;
-  } catch {
-    return null;
+  if (!res.ok) {
+    throw new Error(res.stderr.trim().slice(-400) || `python exited with code ${res.exitCode}`);
   }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(res.stdout.trim());
+  } catch {
+    throw new Error("statsmodels bridge returned non-JSON output");
+  }
+  if (parsed && typeof parsed === "object" && "error" in parsed) {
+    throw new Error(String((parsed as { error: unknown }).error));
+  }
+  return {
+    ...(parsed as Omit<GlmPythonOutput, "rowsSent" | "rowsTotal">),
+    rowsSent: rows.length,
+    rowsTotal,
+  };
 }

@@ -15,6 +15,8 @@
 // so we don't have to round-trip a synthetic ChartSpec through the API
 // layer.
 
+import { delimiterFor } from "@/lib/csvParse";
+import { streamParseCsv } from "@/lib/csvStream";
 import { useTheme } from "@/lib/theme";
 import { emitToast } from "@/lib/toastBus";
 import ReactECharts from "echarts-for-react";
@@ -55,7 +57,16 @@ import {
   detectDateColumns,
   reformatDateColumns,
 } from "./cleaning";
+import {
+  type CombineStats,
+  type CombineStep,
+  type CombineStrategy,
+  type CombineSuggestion,
+  combineAll,
+  suggestCombine,
+} from "./combineData";
 import { CLIMATE_SAMPLE } from "./climateSampleData";
+import { getColumnMetas } from "./columnMetaCache";
 import { buildDirtySample } from "./dirtySampleData";
 import { buildColumnStageContext, placeholderHintFor } from "./columnChatHints";
 import { type ExportFormat, exportDataset } from "./exportDataset";
@@ -97,43 +108,145 @@ export type ColumnMeta = {
   boxHi?: number; // whisker high (max within fences)
   loFence?: number;
   hiFence?: number;
+  // numeric-only — outlier values retained for the scatter display, capped
+  // at OUTLIER_DISPLAY_CAP by a uniform thin. `outlierCount` keeps the true
+  // (or stride-estimated) total when the cap kicked in.
   outliers?: number[];
+  outlierCount?: number;
+  // numeric-only — count of non-null cells that are NOT numeric ("6+",
+  // "unknown") in a number-typed column. They're excluded from every
+  // numeric stat, so without this they'd be invisible (missing stays 0).
+  mixedCount?: number;
   // numeric-only — coarse-binned histogram shape for the in-tooltip
   // sparkline. 12 bins between min and max, value = row count per bin.
   // Kept short so we can ship it on every column without bloating meta.
   histogramBins?: number[];
   // categorical-only — top values by frequency
   topValues?: Array<{ value: string; count: number }>;
+  // date-only — ISO-string range + compact per-year counts (replaces
+  // topValues, which is useless for ~18k distinct dates)
+  dateMin?: string;
+  dateMax?: string;
+  yearHistogram?: Array<{ year: number; count: number }>;
+  // True when order statistics (quantiles / histogram / topValues /
+  // yearHistogram) came from a stride sample rather than every row.
+  // count / missing / unique / min / max / mean stay exact regardless.
+  sampledStats?: boolean;
 };
 
 export type Dataset = {
   name: string;
   rows: Row[];
   columns: string[];
+  /** True when `rows` holds a subset of a larger full-fidelity source. */
+  sampled?: boolean;
+  /** Row count of the full-fidelity source (import file / pre-snapshot data). */
+  sourceTotalRows?: number;
+  /** How the subset was taken: uniform reservoir (CSV import / snapshot
+   *  restore) or the file's leading rows (parquet import). */
+  sampleKind?: "uniform" | "first";
 };
 
-// ── parsing + synthesis ──────────────────────────────────────────────────────
+// Hard cap on rows retained at import. 250k rows × ~25 columns of interned
+// cells measures ~170 MB live heap — comfortably inside the renderer's ~4 GB
+// budget, where the old uncapped whole-file parse measured 4.26 GB on a
+// 2M-row CSV and killed the window. Beyond the cap the CSV path keeps a
+// uniform reservoir sample; parquet keeps the first N rows.
+export const DEFAULT_IMPORT_ROW_CAP = 250_000;
 
-function parseCsv(text: string): { columns: string[]; rows: Row[] } {
-  const lines = text.split(/\r?\n/).filter((l) => l.trim().length > 0);
-  if (lines.length === 0) return { columns: [], rows: [] };
-  const header = lines[0].split(",").map((h) => h.trim());
-  const rows: Row[] = [];
-  for (let i = 1; i < lines.length; i++) {
-    const cells = lines[i].split(",");
+// Combine staging cap: at most 2 staged datasets on top of the active one —
+// the user-facing "combine no more than 3 datasets" rule. Mirrors the note on
+// sceloContext's `stagedDatasets`.
+const MAX_STAGED_DATASETS = 2;
+
+// ── parsing + synthesis ──────────────────────────────────────────────────────
+//
+// The actual CSV state machine lives in lib/csvStream (streaming, RFC-4180,
+// row-capped). This section owns only what happens to each cell after it
+// comes back as a raw string: missing-token nulling and strict numeric
+// coercion.
+
+// Missing-value tokens nulled at parse time so `missing` counts are honest
+// from the first profile — leaving literal "NULL" strings in place reported
+// missing=0 on columns that were 14% empty. Deliberately a small,
+// unambiguous set; cleaning.ts's missing-markers op handles the long tail
+// ("?", "TBD", …) as an explicit user action. Do not import that set here —
+// the two evolve independently.
+const MISSING_CELL_TOKENS = new Set(["null", "na", "n/a", "nan", "none", "-"]);
+// Strict numeric shape — plain int / decimal / scientific only. Number()'s
+// looser coercions ("0x1f", "Infinity", whitespace) are exactly what we're
+// avoiding.
+const NUMERIC_STRING_RE = /^[+-]?(\d+(\.\d*)?|\.\d+)([eE][+-]?\d+)?$/;
+const PLAIN_INTEGER_RE = /^[+-]?\d+$/;
+
+/** Coerce one raw CSV cell into our CellValue shape. Exported for tests. */
+export function coerceCsvCell(raw: string): CellValue {
+  const s = raw.trim();
+  if (s === "") return null;
+  // Length guard skips the toLowerCase allocation on the vast majority of
+  // cells (longest token is 4 chars).
+  if (s.length <= 4 && MISSING_CELL_TOKENS.has(s.toLowerCase())) return null;
+  if (!NUMERIC_STRING_RE.test(s)) return s;
+  // Id-like guards: leading-zero integers ("007") and integers that don't
+  // survive the float round-trip (> 2^53) stay strings.
+  if (PLAIN_INTEGER_RE.test(s)) {
+    if (/^[+-]?0\d/.test(s)) return s;
+    const n = Number(s);
+    return Number.isSafeInteger(n) ? n : s;
+  }
+  const n = Number(s);
+  return Number.isFinite(n) ? n : s;
+}
+
+// Materialise streamed string cells into Row objects. Kept separate from
+// streamParseCsv, which stays type-agnostic by design.
+function rowsFromCsvCells(header: string[], cells: string[][]): Row[] {
+  const out: Row[] = new Array(cells.length);
+  for (let r = 0; r < cells.length; r++) {
+    const src = cells[r];
     const row: Row = {};
     for (let c = 0; c < header.length; c++) {
-      const raw = (cells[c] ?? "").trim();
-      if (raw === "") {
-        row[header[c]] = null;
-        continue;
-      }
-      const asNum = Number(raw);
-      row[header[c]] = Number.isFinite(asNum) && raw !== "" ? asNum : raw;
+      row[header[c]] = coerceCsvCell(src[c] ?? "");
     }
-    rows.push(row);
+    out[r] = row;
   }
-  return { columns: header, rows };
+  return out;
+}
+
+// First-KB sniff for files that reach the CSV path without a trustworthy
+// extension (.txt, or empty MIME with no extension): the bytes must look
+// like printable text and at least one candidate delimiter must appear on
+// every sampled line. Returns the winning delimiter, or null for binary /
+// non-delimited content. Exported for tests.
+export async function sniffDelimitedText(file: Blob): Promise<string | null> {
+  const head = new Uint8Array(await file.slice(0, 1024).arrayBuffer());
+  if (head.length === 0) return null;
+  let control = 0;
+  for (const b of head) {
+    if (b === 0) return null; // NUL byte — certainly binary
+    if (b < 32 && b !== 9 && b !== 10 && b !== 13) control++;
+  }
+  if (control / head.length > 0.02) return null;
+  const text = new TextDecoder("utf-8").decode(head);
+  // Drop the last (possibly slice-truncated) line so its delimiter count
+  // doesn't skew consistency; keep the whole head for one-line files.
+  let lines = text.split(/\r?\n/);
+  if (lines.length > 1) lines = lines.slice(0, -1);
+  lines = lines.filter((l) => l.trim().length > 0).slice(0, 20);
+  if (lines.length === 0) return null;
+  let best: { delim: string; minCount: number } | null = null;
+  for (const delim of [",", "\t", ";"]) {
+    let minCount = Number.POSITIVE_INFINITY;
+    for (const line of lines) {
+      let n = 0;
+      for (let i = 0; i < line.length; i++) if (line[i] === delim) n++;
+      if (n < minCount) minCount = n;
+    }
+    if (minCount >= 1 && (best === null || minCount > best.minCount)) {
+      best = { delim, minCount };
+    }
+  }
+  return best?.delim ?? null;
 }
 
 // Coerce a single parquet cell into our flat CellValue shape. Parquet types
@@ -160,7 +273,13 @@ function coerceParquetValue(v: unknown): CellValue {
   }
 }
 
-async function parseParquet(file: File): Promise<{ columns: string[]; rows: Row[] }> {
+async function parseParquet(file: File): Promise<{
+  columns: string[];
+  rows: Row[];
+  sampled: boolean;
+  sourceTotalRows: number;
+  sampleKind?: "uniform" | "first";
+}> {
   const buf = await file.arrayBuffer();
   // Schema gives us the canonical column order; data-key order from
   // parquetReadObjects can differ when projections happen.
@@ -171,7 +290,19 @@ async function parseParquet(file: File): Promise<{ columns: string[]; rows: Row[
     .filter((s) => s.type !== undefined)
     .map((s) => s.name);
 
-  const objects = await parquetReadObjects({ file: buf });
+  // Parquet metadata carries the exact row count (as a bigint). Cap what we
+  // materialise at the import row cap — rowStart/rowEnd stop hyparquet from
+  // decoding past the cap, so a 10M-row file no longer allocates 10M row
+  // objects. Unlike the CSV path this keeps the FIRST N rows in file order,
+  // not a uniform sample; the sampling banner says so.
+  const sourceTotalRows = Number(meta.num_rows);
+  const capped = sourceTotalRows > DEFAULT_IMPORT_ROW_CAP;
+  const objects = await parquetReadObjects({
+    file: buf,
+    metadata: meta,
+    rowStart: 0,
+    rowEnd: capped ? DEFAULT_IMPORT_ROW_CAP : undefined,
+  });
   const rows: Row[] = objects.map((obj) => {
     const row: Row = {};
     for (const c of columns) {
@@ -179,7 +310,13 @@ async function parseParquet(file: File): Promise<{ columns: string[]; rows: Row[
     }
     return row;
   });
-  return { columns, rows };
+  return {
+    columns,
+    rows,
+    sampled: capped,
+    sourceTotalRows,
+    sampleKind: capped ? "first" : undefined,
+  };
 }
 
 // Tiny seeded LCG so the synthetic dataset is stable across reloads.
@@ -315,18 +452,162 @@ const SAMPLE_OPTIONS: Array<{
 function syntheticWmtrScenarios(): Dataset {
   const rows: Row[] = [
     // domain · αM · αT · αR · wF · wRel · wS · pProd · pFam · pRel · init_family · init_religion · shock · horizon
-    { entity: "rural village", alpha_m: 0.30, alpha_t: 0.30, alpha_r: 0.40, w_f: 0.50, w_rel: 0.30, w_s: 0.20, init_family: 0.80, init_religion: 0.70, shock: "severe", horizon: 30 },
-    { entity: "urban district", alpha_m: 0.50, alpha_t: 0.30, alpha_r: 0.20, w_f: 0.30, w_rel: 0.20, w_s: 0.50, init_family: 0.50, init_religion: 0.40, shock: "moderate", horizon: 30 },
-    { entity: "coastal town", alpha_m: 0.40, alpha_t: 0.30, alpha_r: 0.30, w_f: 0.40, w_rel: 0.30, w_s: 0.30, init_family: 0.65, init_religion: 0.55, shock: "severe", horizon: 30 },
-    { entity: "term life book", alpha_m: 0.55, alpha_t: 0.20, alpha_r: 0.25, w_f: 0.30, w_rel: 0.20, w_s: 0.50, init_family: 0.55, init_religion: 0.45, shock: "moderate", horizon: 20 },
-    { entity: "annuity book",   alpha_m: 0.45, alpha_t: 0.25, alpha_r: 0.30, w_f: 0.35, w_rel: 0.25, w_s: 0.40, init_family: 0.60, init_religion: 0.50, shock: "moderate", horizon: 40 },
-    { entity: "DB pension scheme", alpha_m: 0.35, alpha_t: 0.25, alpha_r: 0.40, w_f: 0.45, w_rel: 0.25, w_s: 0.30, init_family: 0.70, init_religion: 0.50, shock: "moderate", horizon: 30 },
-    { entity: "GI reserves · long-tail", alpha_m: 0.60, alpha_t: 0.30, alpha_r: 0.10, w_f: 0.20, w_rel: 0.10, w_s: 0.70, init_family: 0.40, init_religion: 0.30, shock: "moderate", horizon: 15 },
-    { entity: "GI reserves · short-tail", alpha_m: 0.65, alpha_t: 0.25, alpha_r: 0.10, w_f: 0.20, w_rel: 0.10, w_s: 0.70, init_family: 0.45, init_religion: 0.30, shock: "mild", horizon: 5 },
-    { entity: "health LTH book", alpha_m: 0.50, alpha_t: 0.30, alpha_r: 0.20, w_f: 0.30, w_rel: 0.30, w_s: 0.40, init_family: 0.55, init_religion: 0.45, shock: "severe", horizon: 20 },
-    { entity: "agrarian community · drought", alpha_m: 0.25, alpha_t: 0.30, alpha_r: 0.45, w_f: 0.55, w_rel: 0.30, w_s: 0.15, init_family: 0.85, init_religion: 0.75, shock: "severe", horizon: 30 },
-    { entity: "post-conflict town", alpha_m: 0.30, alpha_t: 0.30, alpha_r: 0.40, w_f: 0.45, w_rel: 0.25, w_s: 0.30, init_family: 0.55, init_religion: 0.45, shock: "severe", horizon: 30 },
-    { entity: "stable urban hub", alpha_m: 0.50, alpha_t: 0.30, alpha_r: 0.20, w_f: 0.25, w_rel: 0.15, w_s: 0.60, init_family: 0.60, init_religion: 0.45, shock: "mild", horizon: 30 },
+    {
+      entity: "rural village",
+      alpha_m: 0.3,
+      alpha_t: 0.3,
+      alpha_r: 0.4,
+      w_f: 0.5,
+      w_rel: 0.3,
+      w_s: 0.2,
+      init_family: 0.8,
+      init_religion: 0.7,
+      shock: "severe",
+      horizon: 30,
+    },
+    {
+      entity: "urban district",
+      alpha_m: 0.5,
+      alpha_t: 0.3,
+      alpha_r: 0.2,
+      w_f: 0.3,
+      w_rel: 0.2,
+      w_s: 0.5,
+      init_family: 0.5,
+      init_religion: 0.4,
+      shock: "moderate",
+      horizon: 30,
+    },
+    {
+      entity: "coastal town",
+      alpha_m: 0.4,
+      alpha_t: 0.3,
+      alpha_r: 0.3,
+      w_f: 0.4,
+      w_rel: 0.3,
+      w_s: 0.3,
+      init_family: 0.65,
+      init_religion: 0.55,
+      shock: "severe",
+      horizon: 30,
+    },
+    {
+      entity: "term life book",
+      alpha_m: 0.55,
+      alpha_t: 0.2,
+      alpha_r: 0.25,
+      w_f: 0.3,
+      w_rel: 0.2,
+      w_s: 0.5,
+      init_family: 0.55,
+      init_religion: 0.45,
+      shock: "moderate",
+      horizon: 20,
+    },
+    {
+      entity: "annuity book",
+      alpha_m: 0.45,
+      alpha_t: 0.25,
+      alpha_r: 0.3,
+      w_f: 0.35,
+      w_rel: 0.25,
+      w_s: 0.4,
+      init_family: 0.6,
+      init_religion: 0.5,
+      shock: "moderate",
+      horizon: 40,
+    },
+    {
+      entity: "DB pension scheme",
+      alpha_m: 0.35,
+      alpha_t: 0.25,
+      alpha_r: 0.4,
+      w_f: 0.45,
+      w_rel: 0.25,
+      w_s: 0.3,
+      init_family: 0.7,
+      init_religion: 0.5,
+      shock: "moderate",
+      horizon: 30,
+    },
+    {
+      entity: "GI reserves · long-tail",
+      alpha_m: 0.6,
+      alpha_t: 0.3,
+      alpha_r: 0.1,
+      w_f: 0.2,
+      w_rel: 0.1,
+      w_s: 0.7,
+      init_family: 0.4,
+      init_religion: 0.3,
+      shock: "moderate",
+      horizon: 15,
+    },
+    {
+      entity: "GI reserves · short-tail",
+      alpha_m: 0.65,
+      alpha_t: 0.25,
+      alpha_r: 0.1,
+      w_f: 0.2,
+      w_rel: 0.1,
+      w_s: 0.7,
+      init_family: 0.45,
+      init_religion: 0.3,
+      shock: "mild",
+      horizon: 5,
+    },
+    {
+      entity: "health LTH book",
+      alpha_m: 0.5,
+      alpha_t: 0.3,
+      alpha_r: 0.2,
+      w_f: 0.3,
+      w_rel: 0.3,
+      w_s: 0.4,
+      init_family: 0.55,
+      init_religion: 0.45,
+      shock: "severe",
+      horizon: 20,
+    },
+    {
+      entity: "agrarian community · drought",
+      alpha_m: 0.25,
+      alpha_t: 0.3,
+      alpha_r: 0.45,
+      w_f: 0.55,
+      w_rel: 0.3,
+      w_s: 0.15,
+      init_family: 0.85,
+      init_religion: 0.75,
+      shock: "severe",
+      horizon: 30,
+    },
+    {
+      entity: "post-conflict town",
+      alpha_m: 0.3,
+      alpha_t: 0.3,
+      alpha_r: 0.4,
+      w_f: 0.45,
+      w_rel: 0.25,
+      w_s: 0.3,
+      init_family: 0.55,
+      init_religion: 0.45,
+      shock: "severe",
+      horizon: 30,
+    },
+    {
+      entity: "stable urban hub",
+      alpha_m: 0.5,
+      alpha_t: 0.3,
+      alpha_r: 0.2,
+      w_f: 0.25,
+      w_rel: 0.15,
+      w_s: 0.6,
+      init_family: 0.6,
+      init_religion: 0.45,
+      shock: "mild",
+      horizon: 30,
+    },
   ];
   return {
     name: "wmtr_scenarios (synthetic)",
@@ -363,12 +644,10 @@ function syntheticLifelibMP(): Dataset {
     const sa = Math.round((100_000 + rand() * 900_000) / 1000) * 1000;
     // ~1/3 of book already in force: duration up to half the term
     const inForce = rand() < 0.33;
-    const durationMth = inForce
-      ? Math.max(1, Math.floor(rand() * (term * 12) * 0.5))
-      : 0;
+    const durationMth = inForce ? Math.max(1, Math.floor(rand() * (term * 12) * 0.5)) : 0;
     // crude premium = SA * qx * loading / 12, with qx_male slightly higher
     const qx = 0.00022 + 2.7e-6 * Math.pow(1.124, age) * (sex === "M" ? 1.05 : 1.0);
-    const monthly = Math.round(sa * qx * 1.20 / 12 * 100) / 100;
+    const monthly = Math.round(((sa * qx * 1.2) / 12) * 100) / 100;
     rows.push({
       policy_id: `MP${(10000 + i).toString()}`,
       age_at_entry: age,
@@ -458,16 +737,49 @@ function syntheticClaims(): Dataset {
 
 // ── type detection + stats ───────────────────────────────────────────────────
 
-function detectType(values: CellValue[]): ColumnType {
-  let numeric = 0;
-  let nonNull = 0;
-  for (const v of values) {
-    if (v === null || v === "") continue;
-    nonNull++;
-    if (typeof v === "number" && Number.isFinite(v)) numeric++;
-  }
-  if (nonNull === 0) return "string";
-  return numeric / nonNull >= 0.8 ? "number" : "string";
+// Row-count threshold beyond which per-column ORDER statistics (quantiles,
+// histogram, top values) switch to a stride sample, and the target sample
+// size once they do. Mirrors analyseCleaning's sampling in cleaning.ts so
+// the profile and the plan agree on what "sampled" means. Exact scalars
+// (count / missing / unique / min / max / mean) still come from a full pass
+// — they're one comparison per cell.
+const SUMMARY_SAMPLE_THRESHOLD = 200_000;
+const SUMMARY_SAMPLE_TARGET = 100_000;
+
+// Outlier values retained on the meta for the scatter display. The true
+// count lives in `outlierCount`; retaining every value turned discrete
+// columns into hundreds of thousands of scatter dots.
+const OUTLIER_DISPLAY_CAP = 500;
+
+// Strict date shapes: ISO yyyy-MM-dd / yyyy/MM/dd, optionally followed by a
+// time part. Deliberately excludes DD/MM vs MM/DD forms — those are
+// ambiguous and stay with the cleaning banner's parse-dates op rather than
+// silent type detection.
+const DATE_SHAPE_RE = /^(\d{4})[-/](\d{2})[-/](\d{2})([T ]\S.*)?$/;
+// Minimum matching values before a column may re-type to date — keeps a
+// three-row toy column of coincidental matches from flipping type.
+const DATE_PROBE_MIN = 8;
+const DATE_PROBE_TARGET = 200;
+
+// Year of a strictly date-shaped string (with a month/day sanity check so
+// numeric codes like "2024-99-99" don't pass), or null when not a date.
+function dateShapeYear(s: string): number | null {
+  const m = DATE_SHAPE_RE.exec(s);
+  if (!m) return null;
+  const month = Number(m[2]);
+  const day = Number(m[3]);
+  if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+  return Number(m[1]);
+}
+
+// Uniform thin of the (sorted) outlier list down to the display cap so the
+// scatter keeps the tail's shape without drawing every point.
+function capOutliers(outliers: number[]): number[] {
+  if (outliers.length <= OUTLIER_DISPLAY_CAP) return outliers;
+  const step = outliers.length / OUTLIER_DISPLAY_CAP;
+  const kept: number[] = new Array(OUTLIER_DISPLAY_CAP);
+  for (let k = 0; k < OUTLIER_DISPLAY_CAP; k++) kept[k] = outliers[Math.floor(k * step)];
+  return kept;
 }
 
 export function summariseDataset(dataset: Dataset): ColumnMeta[] {
@@ -475,30 +787,60 @@ export function summariseDataset(dataset: Dataset): ColumnMeta[] {
 }
 
 function summarise(rows: Row[], name: string): ColumnMeta {
-  const values = rows.map((r) => r[name]);
-  const type = detectType(values);
-  const nonNull = values.filter((v): v is number | string => v !== null && v !== "");
-  const missing = rows.length - nonNull.length;
+  const total = rows.length;
+  const sampledStats = total > SUMMARY_SAMPLE_THRESHOLD;
+  const stride = sampledStats ? Math.ceil(total / SUMMARY_SAMPLE_TARGET) : 1;
+
+  // Exact pass — every row, constant work per cell: presence, uniqueness,
+  // numeric-vs-string tally, and exact numeric min / max / mean.
+  let missing = 0;
+  let numericCount = 0;
   const uniqueSet = new Set<string | number>();
-  for (const v of nonNull) uniqueSet.add(v);
+  let mn = Number.POSITIVE_INFINITY;
+  let mx = Number.NEGATIVE_INFINITY;
+  let sum = 0;
+  for (let i = 0; i < total; i++) {
+    const v = rows[i][name];
+    if (v === null || v === "") {
+      missing++;
+      continue;
+    }
+    uniqueSet.add(v);
+    if (typeof v === "number" && Number.isFinite(v)) {
+      numericCount++;
+      if (v < mn) mn = v;
+      if (v > mx) mx = v;
+      sum += v;
+    }
+  }
+  const nonNullCount = total - missing;
 
   const meta: ColumnMeta = {
     name,
-    type,
-    count: rows.length,
+    type: "string",
+    count: total,
     missing,
     unique: uniqueSet.size,
   };
+  if (sampledStats) meta.sampledStats = true;
 
-  if (type === "number") {
-    const nums = nonNull.filter((v): v is number => typeof v === "number");
-    if (nums.length > 0) {
-      const mm = minMax(nums);
-      if (mm) {
-        meta.min = mm.min;
-        meta.max = mm.max;
+  if (nonNullCount > 0 && numericCount / nonNullCount >= 0.8) {
+    meta.type = "number";
+    // Mixed cells: present but non-numeric in a number-typed column ("6+").
+    // They're excluded from every numeric stat below, so surface the count
+    // instead of letting them vanish (missing stays 0 for them).
+    const mixed = nonNullCount - numericCount;
+    if (mixed > 0) meta.mixedCount = mixed;
+    if (numericCount > 0) {
+      meta.min = mn;
+      meta.max = mx;
+      meta.mean = sum / numericCount;
+      // Order statistics from the stride sample.
+      const nums: number[] = [];
+      for (let i = 0; i < total; i += stride) {
+        const v = rows[i][name];
+        if (typeof v === "number" && Number.isFinite(v)) nums.push(v);
       }
-      meta.mean = nums.reduce((a, b) => a + b, 0) / nums.length;
       const stats = boxStats(nums);
       if (stats) {
         const [lo, q1, median, q3, hi] = stats.stats;
@@ -510,7 +852,9 @@ function summarise(rows: Row[], name: string): ColumnMeta {
         const iqr = q3 - q1;
         meta.loFence = q1 - 1.5 * iqr;
         meta.hiFence = q3 + 1.5 * iqr;
-        meta.outliers = stats.outliers;
+        // True (stride-scaled when sampled) count, then cap what we retain.
+        meta.outlierCount = stats.outliers.length * stride;
+        meta.outliers = capOutliers(stats.outliers);
       }
       // Coarse-binned histogram for the tooltip sparkline. 12 equal-width
       // bins between min and max — wide enough that the shape reads, narrow
@@ -528,17 +872,60 @@ function summarise(rows: Row[], name: string): ColumnMeta {
         meta.histogramBins = bins;
       }
     }
-  } else {
-    const counts = new Map<string, number>();
-    for (const v of nonNull) {
-      const k = String(v);
-      counts.set(k, (counts.get(k) ?? 0) + 1);
-    }
-    meta.topValues = Array.from(counts.entries())
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 8)
-      .map(([value, count]) => ({ value, count }));
+    return meta;
   }
+
+  // Date detection — conservative: probe up to DATE_PROBE_TARGET non-null
+  // string values; ≥80% must match a strict unambiguous date shape (and at
+  // least DATE_PROBE_MIN matches seen) before re-typing. Categorical codes
+  // ("LIM", "GP") and mixed-format date columns fall through to categorical.
+  let probed = 0;
+  let dateShaped = 0;
+  const probeStride = Math.max(1, Math.floor(total / DATE_PROBE_TARGET));
+  for (let i = 0; i < total && probed < DATE_PROBE_TARGET; i += probeStride) {
+    const v = rows[i][name];
+    if (typeof v !== "string" || v === "") continue;
+    probed++;
+    if (dateShapeYear(v) !== null) dateShaped++;
+  }
+  if (probed >= DATE_PROBE_MIN && dateShaped / probed >= 0.8) {
+    meta.type = "date";
+    // Range + per-year counts from the stride sample. ISO strings sort
+    // lexicographically, so string comparison IS date comparison.
+    let dMin: string | undefined;
+    let dMax: string | undefined;
+    const yearCounts = new Map<number, number>();
+    for (let i = 0; i < total; i += stride) {
+      const v = rows[i][name];
+      if (typeof v !== "string") continue;
+      const year = dateShapeYear(v);
+      if (year === null) continue;
+      if (dMin === undefined || v < dMin) dMin = v;
+      if (dMax === undefined || v > dMax) dMax = v;
+      yearCounts.set(year, (yearCounts.get(year) ?? 0) + 1);
+    }
+    meta.dateMin = dMin;
+    meta.dateMax = dMax;
+    meta.yearHistogram = [...yearCounts.entries()]
+      .sort((a, b) => a[0] - b[0])
+      .map(([year, count]) => ({ year, count: count * stride }));
+    return meta;
+  }
+
+  // Categorical top values from the stride sample; counts are scaled back
+  // to dataset scale so proportions against the exact non-null total stay
+  // honest in the stacked header bar.
+  const counts = new Map<string, number>();
+  for (let i = 0; i < total; i += stride) {
+    const v = rows[i][name];
+    if (v === null || v === "") continue;
+    const k = String(v);
+    counts.set(k, (counts.get(k) ?? 0) + 1);
+  }
+  meta.topValues = Array.from(counts.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 8)
+    .map(([value, count]) => ({ value, count: count * stride }));
   return meta;
 }
 
@@ -668,6 +1055,16 @@ function boxStats(values: number[]): {
   const median = quantile(sorted, 0.5);
   const q3 = quantile(sorted, 0.75);
   const iqr = q3 - q1;
+  // Degenerate spread (≥50% of values identical → IQR 0) collapses the
+  // Tukey fences onto the quartiles and flags every other value as an
+  // outlier — a discrete gears/airbags column would light up 25% of its
+  // rows. No spread, no outlier classification: whiskers span the range.
+  if (iqr === 0) {
+    return {
+      stats: [sorted[0], q1, median, q3, sorted[sorted.length - 1]],
+      outliers: [],
+    };
+  }
   const loFence = q1 - 1.5 * iqr;
   const hiFence = q3 + 1.5 * iqr;
   const inFence = sorted.filter((v) => v >= loFence && v <= hiFence);
@@ -889,10 +1286,16 @@ function useMiniChartOption(meta: ColumnMeta, activeFilter: Filter | null) {
             // → counts → click hint. The SVG is block-level (margin-top/
             // bottom built in) so we don't wrap it in a <br/>.
             const sparkline = miniHistogramSvg(meta.histogramBins ?? [], palette.primary);
+            const outlierTotal = meta.outlierCount ?? outliers.length;
+            const outlierNote =
+              outlierTotal > outliers.length
+                ? `outliers=${fmt(outlierTotal)} (showing ${outliers.length})`
+                : `outliers=${outliers.length}`;
+            const mixedNote = meta.mixedCount ? ` · mixed=${fmt(meta.mixedCount)}` : "";
             return [
               `<b>${meta.name}</b>${sparkline}`,
               `min ${fmt(lo)} · Q1 ${fmt(q1)} · med ${fmt(median)} · Q3 ${fmt(q3)} · max ${fmt(hi)}`,
-              `<span style="opacity:0.6">n=${nValues} · outliers=${outliers.length}</span>`,
+              `<span style="opacity:0.6">n=${nValues} · ${outlierNote}${mixedNote}</span>`,
               `<span style="opacity:0.6">click to filter to IQR</span>`,
             ].join("<br/>");
           },
@@ -917,6 +1320,39 @@ function useMiniChartOption(meta: ColumnMeta, activeFilter: Filter | null) {
             symbolSize: 5,
             itemStyle: { color: palette.accent2, opacity: outlierOpacity },
             emphasis: { itemStyle: { color: palette.accent2, opacity: 1 } },
+          },
+        ],
+      };
+    }
+
+    // ── date: compact per-year bar histogram ──
+    if (meta.type === "date" && meta.yearHistogram && meta.yearHistogram.length > 0) {
+      const years = meta.yearHistogram;
+      const nValues = meta.count - meta.missing;
+      return {
+        animation: false,
+        grid: { left: 6, right: 6, top: 4, bottom: 4, containLabel: false },
+        xAxis: { type: "category", show: false, data: years.map((y) => String(y.year)) },
+        yAxis: { type: "value", show: false },
+        tooltip: {
+          trigger: "item",
+          ...tooltipFrame(palette),
+          formatter: (params: { name?: string; value?: unknown }) => {
+            const count = Number(params.value);
+            const est = meta.sampledStats ? " (est.)" : "";
+            return [
+              `<b>${meta.name}</b>`,
+              `${params.name}: ${count.toLocaleString()} row${count === 1 ? "" : "s"}${est}`,
+              `<span style="opacity:0.6">${meta.dateMin ?? "?"} → ${meta.dateMax ?? "?"} · n=${nValues}</span>`,
+            ].join("<br/>");
+          },
+        },
+        series: [
+          {
+            type: "bar",
+            data: years.map((y) => y.count),
+            barCategoryGap: "25%",
+            itemStyle: { color: palette.primary, opacity: 0.85 },
           },
         ],
       };
@@ -1276,15 +1712,17 @@ function DataGrid({
                 // you're working on.
                 const chatActive = hoveredCol === c;
                 return (
+                  // biome-ignore lint/a11y/useKeyWithClickEvents: clicking anywhere in the header cell (mini chart, chips, padding) selects the column — the name button inside remains the keyboard-accessible path.
                   <th
                     key={c}
+                    onClick={() => onSelectColumn(c)}
                     onMouseEnter={(e) => {
                       cancelClose();
                       setHoveredCol(c);
                       setHoverAnchor(e.currentTarget.getBoundingClientRect());
                     }}
                     onMouseLeave={scheduleClose}
-                    className={`p-0 text-left align-bottom ${
+                    className={`cursor-pointer p-0 text-left align-bottom ${
                       chatActive
                         ? "border-x-2 border-t-2 border-primary bg-primary/10"
                         : `border-b border-l border-border ${
@@ -1335,6 +1773,16 @@ function DataGrid({
                               ƒ
                             </span>
                           )}
+                          {meta?.mixedCount ? (
+                            <span
+                              title={`${meta.mixedCount.toLocaleString()} non-numeric value${
+                                meta.mixedCount === 1 ? "" : "s"
+                              } in a numeric column (e.g. "6+") — the coerce-numeric cleaning op parses the numeric prefix and nulls the rest`}
+                              className="shrink-0 rounded border border-warn/50 bg-warn/10 px-1 font-mono text-[8px] uppercase tracking-wider text-warn"
+                            >
+                              mixed
+                            </span>
+                          ) : null}
                         </button>
                         {meta &&
                           (dateColSet.has(c) ? (
@@ -1363,9 +1811,11 @@ function DataGrid({
                   const v = row[c];
                   const chatActive = hoveredCol === c;
                   return (
+                    // biome-ignore lint/a11y/useKeyWithClickEvents: clicking a body cell selects its column for the summary panel — a convenience mirror of the header button, which remains the keyboard-accessible path.
                     <td
                       key={c}
-                      className={`px-2 py-1 ${
+                      onClick={() => onSelectColumn(c)}
+                      className={`cursor-pointer px-2 py-1 ${
                         chatActive
                           ? "border-b border-x-2 border-primary bg-primary/[0.06]"
                           : "border-b border-l border-border"
@@ -1455,6 +1905,8 @@ const SOFT_STAGE_FRAME = [
   "",
   "## SHARED VOCABULARY (these are TOOLS, not text, pick one and emit it)",
   "Banner ops (string match these exactly): trim whitespace · collapse internal whitespace · fix encoding artefacts · normalise missing markers · parse numeric strings · parse date strings · standardise booleans · replace sentinel numerics · merge case-only duplicates · rename to snake_case · drop near-empty columns · drop constant columns · drop duplicate rows.",
+  'Column ops (same family, scoped to ONE column — point the user at these by key): `coerce-numeric` (column) parses the numeric prefix of mixed cells in a number column ("6+" -> 6) and nulls what\'s left over — the fix for columns flagged with a `mixed` badge. `recode-value` (column, from, to) recodes one categorical label to another — the fix for typo categories like "Seperated" -> "Separated".',
+  "Combining datasets: up to 3 OFFLINE files can be loaded at once (the active dataset + 2 staged) and combined via the '+ combine data' toolbar button — smart append (schema-aligned row stacking, optional exact-duplicate drop) or key join (left / inner on a shared id-like column). When the user asks to merge / join / concatenate / stack / combine another file with this one, point them at that button; its review panel suggests a strategy and key per staged file with match evidence before applying.",
   "",
   "Derived columns: when the user asks for any per-row transformation (round, log, sqrt, abs, clip, cap, normalise, bin, extract, derive, compute, calculate, etc.), DO NOT describe the formula. EMIT a fenced `derive` block. The client compiles the formula and adds the new column to the dataset IMMEDIATELY, so the user sees the result without copy-pasting anything.",
   "",
@@ -1463,7 +1915,7 @@ const SOFT_STAGE_FRAME = [
   '{"name": "<new_column_name>", "formula": "<expression>"}',
   "```",
   "",
-  "Grammar inside the formula: bare arithmetic (+, -, *, /, %, **), bare function names log / log10 / log2 / exp / sqrt / abs / min / max / floor / ceil / round / pow / sign, plus if(cond, a, b) and coalesce(a, b, ...). Reference columns as bare identifiers (paid, incurred). DO NOT prefix functions with \"Math.\" and DO NOT wrap column names in backticks: the parser only accepts the bare form. The new name must be a fresh snake_case identifier.",
+  'Grammar inside the formula: bare arithmetic (+, -, *, /, %, **), bare function names log / log10 / log2 / exp / sqrt / abs / min / max / floor / ceil / round / pow / sign, plus if(cond, a, b) and coalesce(a, b, ...). Reference columns as bare identifiers (paid, incurred). DO NOT prefix functions with "Math." and DO NOT wrap column names in backticks: the parser only accepts the bare form. The new name must be a fresh snake_case identifier.',
   "After the block, write at most ONE short sentence of context.",
   "",
   "## EXAMPLES (match this shape exactly)",
@@ -1574,8 +2026,13 @@ function describeColumnForLLM(m: ColumnMeta): string {
     if (m.q1 !== undefined && m.q3 !== undefined) {
       parts.push(`IQR=[${fmt(m.q1)}, ${fmt(m.q3)}]`);
     }
-    if (m.outliers) parts.push(`outliers=${m.outliers.length}`);
+    if (m.outliers) parts.push(`outliers=${m.outlierCount ?? m.outliers.length}`);
+    if (m.mixedCount) parts.push(`mixed_non_numeric=${m.mixedCount}`);
     return `numeric · ${parts.join(", ")}`;
+  }
+  if (m.type === "date") {
+    const range = m.dateMin && m.dateMax ? ` · range ${m.dateMin} → ${m.dateMax}` : "";
+    return `date · ${m.unique} unique${range}`;
   }
   if (m.topValues && m.topValues.length > 0) {
     const top = m.topValues
@@ -1601,8 +2058,16 @@ function buildStageContext(args: {
     return lines.join("\n");
   }
 
+  // When the loaded rows are a sample of a bigger source (capped import /
+  // restored snapshot), say so — otherwise the model asserts row counts that
+  // don't match the user's file.
+  const sourceTotal = dataset.sourceTotalRows ?? dataset.rows.length;
+  const sampleNote =
+    sourceTotal > dataset.rows.length
+      ? ` (a sample of ${sourceTotal.toLocaleString()} source rows)`
+      : "";
   lines.push(
-    `DATASET: \`${dataset.name}\` — ${dataset.rows.length} rows, ${dataset.columns.length} columns.`,
+    `DATASET: \`${dataset.name}\` — ${dataset.rows.length} rows${sampleNote}, ${dataset.columns.length} columns.`,
   );
   lines.push(`COLUMNS: ${dataset.columns.join(", ")}.`);
 
@@ -1876,13 +2341,13 @@ function ImportFileModal({
             </span>
             <span className="font-mono text-sm text-fg-mute">or click to browse</span>
             <span className="mt-2 font-mono text-[10px] text-fg-dim">
-              .csv · .parquet — column types are detected automatically
+              .csv · .tsv · .parquet — column types are detected automatically
             </span>
           </button>
           <input
             ref={inputRef}
             type="file"
-            accept=".csv,text/csv,.parquet,application/parquet,application/x-parquet,application/octet-stream"
+            accept=".csv,.tsv,text/csv,text/tab-separated-values,.parquet,application/parquet,application/x-parquet,application/octet-stream"
             className="hidden"
             onChange={(e) => {
               const file = e.target.files?.[0];
@@ -1911,6 +2376,8 @@ export function SoftDataWorkstation() {
     derivedColumns,
     setDerivedColumns,
     setTransformLog,
+    stagedDatasets,
+    setStagedDatasets,
     logEvent,
     clearEvents,
   } = useScelo();
@@ -1919,9 +2386,14 @@ export function SoftDataWorkstation() {
   // old schema won't apply to the new columns and shouldn't appear in
   // the badge list; an in-place transform fingerprint from the old
   // dataset shouldn't suppress a fresh application on the new one.
+  // The ref guards against firing on first mount — the effect would
+  // otherwise wipe formulas + log just restored from the session snapshot.
   const datasetNameForReset = dataset?.name ?? "";
+  const lastResetNameRef = useRef(datasetNameForReset);
   // biome-ignore lint/correctness/useExhaustiveDependencies: only react to dataset identity changes.
   useEffect(() => {
+    if (lastResetNameRef.current === datasetNameForReset) return;
+    lastResetNameRef.current = datasetNameForReset;
     setDerivedColumns({});
     setTransformLog(new Set());
   }, [datasetNameForReset]);
@@ -1978,13 +2450,18 @@ export function SoftDataWorkstation() {
   // filters — not the column's own filter — so the filtering column still
   // shows the full distribution with the active selection highlighted, while
   // other columns reflect the drilled-down slice. (Tableau / Looker / Data
-  // Wrangler all do this.)
+  // Wrangler all do this.) Columns with no other-column filters resolve to
+  // the shared cache: one profiling pass per dataset version, shared with
+  // the cleaning plan below and every other pane profiling this dataset —
+  // profiling used to run twice here alone.
   const columnMetas = useMemo<ColumnMeta[]>(() => {
     if (!dataset) return [];
-    return dataset.columns.map((c) => {
+    const unfiltered = getColumnMetas(dataset);
+    if (filters.length === 0) return unfiltered;
+    return dataset.columns.map((c, i) => {
       const others = filters.filter((f) => f.column !== c);
-      const rowsForCol = others.length === 0 ? dataset.rows : applyFilters(dataset.rows, others);
-      return summarise(rowsForCol, c);
+      if (others.length === 0) return unfiltered[i];
+      return summarise(applyFilters(dataset.rows, others), c);
     });
   }, [dataset, filters]);
 
@@ -2003,13 +2480,10 @@ export function SoftDataWorkstation() {
 
   // ── cleaning ─────────────────────────────────────────────────────────────
   // Plan is re-derived from the *raw* (unfiltered) dataset, because cleaning
-  // is a dataset-wide operation, not a slice operation. We compute against
-  // raw metas, which we summarise separately so the plan doesn't shift when
-  // the user toggles a filter on/off.
-  const rawMetas = useMemo<ColumnMeta[]>(() => {
-    if (!dataset) return [];
-    return dataset.columns.map((c) => summarise(dataset.rows, c));
-  }, [dataset]);
+  // is a dataset-wide operation, not a slice operation. The shared cache
+  // keys on dataset object identity, so this resolves to the same pass as
+  // the unfiltered columnMetas above rather than a second full profile.
+  const rawMetas = useMemo<ColumnMeta[]>(() => (dataset ? getColumnMetas(dataset) : []), [dataset]);
   const cleaningPlan: CleaningPlan | null = useMemo(() => {
     if (!dataset) return null;
     return analyseCleaning(dataset, rawMetas);
@@ -2083,7 +2557,11 @@ export function SoftDataWorkstation() {
       if (cols.length === 0) {
         return "I couldn't find a date column to reformat — none of the columns look like dates. If a date column is stored oddly, tidy it first (try `clean my data`).";
       }
-      const { dataset: next, changed, columns: colStats } = reformatDateColumns(dataset, cols, style);
+      const {
+        dataset: next,
+        changed,
+        columns: colStats,
+      } = reformatDateColumns(dataset, cols, style);
       if (changed === 0) {
         return `${cols.length === 1 ? `\`${cols[0]}\` is` : "Those date columns are"} already in ${DATE_STYLE_LABEL[style]} format — nothing to change.`;
       }
@@ -2148,7 +2626,9 @@ export function SoftDataWorkstation() {
         dateColumns.includes(column) || detectDateColumns(dataset).includes(column);
 
       // ── remove / clear non-date values ───────────────────────────────────
-      const removeVerb = /\b(remove|clear|drop|delete|strip|null|blank|get rid of|discard)\b/.test(t);
+      const removeVerb = /\b(remove|clear|drop|delete|strip|null|blank|get rid of|discard)\b/.test(
+        t,
+      );
       const nonDateNoun = /\bnon[\s-]?dates?\b|\bnot? a? ?dates?\b|\binvalid dates?\b/.test(t);
       if (removeVerb && nonDateNoun) {
         if (!isDateCol()) {
@@ -2194,7 +2674,8 @@ export function SoftDataWorkstation() {
         const parts: string[] = [];
         const { dataset: tidiedDs, tidied, nulled } = cleanColumnCells(working, column);
         working = tidiedDs;
-        if (tidied > 0) parts.push(`tidied ${tidied.toLocaleString()} cell${tidied === 1 ? "" : "s"}`);
+        if (tidied > 0)
+          parts.push(`tidied ${tidied.toLocaleString()} cell${tidied === 1 ? "" : "s"}`);
         if (nulled > 0)
           parts.push(`nulled ${nulled.toLocaleString()} missing-marker${nulled === 1 ? "" : "s"}`);
         let clearedDates = 0;
@@ -2285,7 +2766,9 @@ export function SoftDataWorkstation() {
       const stylePicked = wantsUs || wantsEu || wantsIso;
       const formatVerb =
         /\b(format|reformat|convert|display|style|show|standardi[sz]e|change|make)\b/.test(t);
-      const dataNoun = /\b(date|dates|dataset|data|column|columns|values?|everything|all)\b/.test(t);
+      const dataNoun = /\b(date|dates|dataset|data|column|columns|values?|everything|all)\b/.test(
+        t,
+      );
       if ((stylePicked && (formatVerb || dataNoun)) || (mentionsDate && formatVerb)) {
         const style: DateStyle = wantsUs ? "us" : wantsEu ? "eu" : "iso";
         return reformatDatesInDataset(style);
@@ -2295,9 +2778,8 @@ export function SoftDataWorkstation() {
         /\b(clean|cleanse|cleaning|tidy|sanit[iy][sz]e|scrub|wrangle|preprocess|pre-process)\b/.test(
           t,
         );
-      const cleanPhrase = /\b(initial clean|do the cleaning|run (the )?cleaning|fix (the |my )?data)\b/.test(
-        t,
-      );
+      const cleanPhrase =
+        /\b(initial clean|do the cleaning|run (the )?cleaning|fix (the |my )?data)\b/.test(t);
       if (!mentionsClean && !cleanPhrase) return null;
 
       if (!dataset) return "Load a dataset first, then ask me to clean it.";
@@ -2421,54 +2903,148 @@ export function SoftDataWorkstation() {
     [clearEvents, setDataset, setFilters, logEvent],
   );
 
-  // Status banner for slow / failed uploads. Parquet parsing is async and
-  // can take a second or two on a real file; we want the user to see it's
-  // working and to surface decode errors cleanly instead of failing silent.
+  // Status banner for slow / failed uploads. CSV parsing streams and reports
+  // per-chunk progress (pct + rows seen); parquet is a single await. Either
+  // way the user sees it's working, and decode errors surface cleanly
+  // instead of failing silent.
   const [uploadState, setUploadState] = useState<
-    { kind: "idle" } | { kind: "loading"; name: string } | { kind: "error"; message: string }
+    | { kind: "idle" }
+    | { kind: "loading"; name: string; pct?: number; rowsSeen?: number }
+    | { kind: "error"; message: string }
   >({ kind: "idle" });
+  // Post-import advisory (malformed-row padding, combine summaries). Keyed to
+  // the dataset name so it disappears once another dataset replaces the
+  // import. `label` overrides the strip's default "import notice" tag.
+  const [importNotice, setImportNotice] = useState<{
+    dataset: string;
+    label?: string;
+    message: string;
+  } | null>(null);
+  // Sampling-banner dismissal is per dataset name — a new import gets a
+  // fresh banner.
+  const [sampleNoticeDismissed, setSampleNoticeDismissed] = useState<string | null>(null);
 
-  // Core parse + load path. Accepts a File directly so both `<input
-  // type="file" onChange>` and the import-modal drag/drop handler can
-  // share it without each having to re-implement the dispatch.
-  const onPickFileObject = useCallback(
-    async (file: File) => {
+  // Core parser — turns a CSV / TSV / TXT / Parquet File into a Dataset
+  // WITHOUT making it the active dataset. Shared by the normal import path
+  // (onPickFileObject) and the combine staging path (onStageFileObject).
+  // Streams CSV progress into the upload banner; throws on unsupported /
+  // binary / empty files.
+  const parseFileToDataset = useCallback(
+    async (file: File): Promise<{ dataset: Dataset; malformedRows: number }> => {
       const name = file.name;
       const lower = name.toLowerCase();
       const isParquet = lower.endsWith(".parquet") || file.type === "application/parquet";
-      const isCsv =
-        lower.endsWith(".csv") || file.type === "text/csv" || file.type === "application/csv";
-      setUploadState({ kind: "loading", name });
-      try {
-        let parsed: { columns: string[]; rows: Row[] };
-        if (isParquet) {
-          parsed = await parseParquet(file);
-        } else if (isCsv || file.type === "" /* empty MIME = trust the extension fallback */) {
-          const text = await file.text();
-          parsed = parseCsv(text);
+      const hasTextExt = /\.(csv|tsv|txt)$/.test(lower);
+      const hasCsvMime =
+        file.type === "text/csv" ||
+        file.type === "application/csv" ||
+        file.type === "text/tab-separated-values";
+      let parsed: {
+        columns: string[];
+        rows: Row[];
+        sampled?: boolean;
+        sourceTotalRows?: number;
+        sampleKind?: "uniform" | "first";
+      };
+      let malformedRows = 0;
+      if (isParquet) {
+        parsed = await parseParquet(file);
+      } else if (hasTextExt || hasCsvMime || file.type === "") {
+        // .csv / .tsv declare their delimiter; .txt and extension-less
+        // unknown-MIME files must pass the first-KB sniff (printable
+        // ratio + consistent delimiter) so a mislabelled binary never
+        // reaches the row parser.
+        let delimiter: string;
+        if (lower.endsWith(".csv") || lower.endsWith(".tsv") || hasCsvMime) {
+          delimiter = delimiterFor(lower);
         } else {
-          throw new Error(
-            `Unsupported file type: ${file.type || "unknown"} — try .csv or .parquet`,
-          );
+          const sniffed = await sniffDelimitedText(file);
+          if (sniffed === null) {
+            throw new Error(
+              "This file doesn't look like delimited text (binary content, or no consistent delimiter in the first KB) — try .csv, .tsv, or .parquet.",
+            );
+          }
+          delimiter = sniffed;
         }
-        if (parsed.columns.length === 0 || parsed.rows.length === 0) {
-          throw new Error("The file parsed cleanly but produced no rows or columns.");
-        }
+        // Progress paints ~10×/sec; an unthrottled per-chunk setState
+        // would re-render the workstation hundreds of times on a 300 MB
+        // file for no visible benefit.
+        let lastPaint = 0;
+        const result = await streamParseCsv(file, {
+          delimiter,
+          maxRows: DEFAULT_IMPORT_ROW_CAP,
+          onProgress: ({ bytesRead, totalBytes, rowsSeen }) => {
+            const now = Date.now();
+            if (now - lastPaint < 100) return;
+            lastPaint = now;
+            setUploadState({
+              kind: "loading",
+              name,
+              pct: totalBytes > 0 ? Math.min(100, (100 * bytesRead) / totalBytes) : undefined,
+              rowsSeen,
+            });
+          },
+        });
+        malformedRows = result.malformedRows;
+        parsed = {
+          columns: result.header,
+          rows: rowsFromCsvCells(result.header, result.rows),
+          sampled: result.sampled,
+          sourceTotalRows: result.sampled ? result.totalDataRows : undefined,
+          sampleKind: result.sampled ? "uniform" : undefined,
+        };
+      } else {
+        throw new Error(`Unsupported file type: ${file.type || "unknown"} — try .csv or .parquet`);
+      }
+      if (parsed.columns.length === 0 || parsed.rows.length === 0) {
+        throw new Error("The file parsed cleanly but produced no rows or columns.");
+      }
+      const ds: Dataset = { name, columns: parsed.columns, rows: parsed.rows };
+      if (parsed.sampled && parsed.sourceTotalRows !== undefined) {
+        ds.sampled = true;
+        ds.sourceTotalRows = parsed.sourceTotalRows;
+        ds.sampleKind = parsed.sampleKind;
+      }
+      return { dataset: ds, malformedRows };
+    },
+    [],
+  );
+
+  // Parse + load path. Accepts a File directly so both `<input type="file"
+  // onChange>` and the import-modal drag/drop handler can share it without
+  // each having to re-implement the dispatch.
+  const onPickFileObject = useCallback(
+    async (file: File) => {
+      setUploadState({ kind: "loading", name: file.name });
+      setImportNotice(null);
+      try {
+        const { dataset: ds, malformedRows } = await parseFileToDataset(file);
         clearEvents();
-        setDataset({ name, ...parsed });
-        setSelected(parsed.columns[0]);
+        setDataset(ds);
+        setSelected(ds.columns[0]);
         setFilters([]);
         setUploadState({ kind: "idle" });
         setImportModalOpen(false);
+        if (malformedRows > 0) {
+          setImportNotice({
+            dataset: ds.name,
+            message: `${malformedRows.toLocaleString()} malformed row${
+              malformedRows === 1 ? " was" : "s were"
+            } padded / truncated to the header's column count.`,
+          });
+        }
         logEvent({
           stage: "soft",
           kind: "dataset.load",
           payload: {
-            name,
-            rows: parsed.rows.length,
-            cols: parsed.columns.length,
-            columns: parsed.columns,
+            name: ds.name,
+            rows: ds.rows.length,
+            cols: ds.columns.length,
+            columns: ds.columns,
             source: "import",
+            ...(ds.sourceTotalRows !== undefined
+              ? { sampled: true, sourceTotalRows: ds.sourceTotalRows }
+              : {}),
           },
         });
       } catch (err) {
@@ -2478,7 +3054,7 @@ export function SoftDataWorkstation() {
         if (fileRef.current) fileRef.current.value = "";
       }
     },
-    [clearEvents, setDataset, setFilters, logEvent],
+    [parseFileToDataset, clearEvents, setDataset, setFilters, logEvent],
   );
 
   const onPickFile = async (e: ChangeEvent<HTMLInputElement>) => {
@@ -2487,6 +3063,181 @@ export function SoftDataWorkstation() {
   };
 
   const [importModalOpen, setImportModalOpen] = useState(false);
+
+  // ── multi-dataset combine ──────────────────────────────────────────────────
+  // Extra offline imports staged next to the active dataset live in the Scelo
+  // context (session-only); the per-staged step overrides + panel open state
+  // are local. `combineModalOpen` mirrors `importModalOpen` — the same
+  // ImportFileModal frame, routed at the staging handler instead.
+  const [combineModalOpen, setCombineModalOpen] = useState(false);
+  const [combineOpen, setCombineOpen] = useState(false);
+  const [combineSteps, setCombineSteps] = useState<CombineStep[]>([]);
+
+  // Smart per-pair suggestion for every staged dataset. NOTE: for the SECOND
+  // staged dataset the true base at execution time is the RESULT of the first
+  // step, but suggesting against the active dataset is acceptable — both
+  // strategies preserve every base column, so a key picked here stays valid
+  // in the intermediate result, and the evidence shown stays stable.
+  const combineSuggestions = useMemo<CombineSuggestion[]>(
+    () => (dataset ? stagedDatasets.map((s) => suggestCombine(dataset, s)) : []),
+    [dataset, stagedDatasets],
+  );
+
+  // Keep the step overrides aligned with the staged list and valid against
+  // the CURRENT active dataset: re-derive defaults on drift (remount with
+  // files still staged in context, active dataset swapped, or a cleaning op
+  // renamed the join key away).
+  useEffect(() => {
+    setCombineSteps((prev) => {
+      if (!dataset) return prev.length === 0 ? prev : [];
+      let changed = prev.length !== stagedDatasets.length;
+      const next = stagedDatasets.map((ds, i) => {
+        const fallback = combineSuggestions[i]?.step ?? { strategy: "append" as const };
+        const cur = prev[i];
+        if (!cur) {
+          changed = true;
+          return fallback;
+        }
+        if (cur.strategy !== "append") {
+          const keyOk =
+            cur.key !== undefined &&
+            dataset.columns.includes(cur.key) &&
+            (cur.rightKey === undefined || ds.columns.includes(cur.rightKey));
+          if (!keyOk) {
+            changed = true;
+            return fallback;
+          }
+        }
+        return cur;
+      });
+      return changed ? next : prev;
+    });
+  }, [dataset, stagedDatasets, combineSuggestions]);
+
+  // Stage an additional offline file for combining. Same parser as the
+  // normal import path, but the result joins the staging list instead of
+  // replacing the active dataset. Offline files only by construction —
+  // samples and simulations never route here.
+  const onStageFileObject = useCallback(
+    async (file: File) => {
+      if (!dataset) {
+        setUploadState({
+          kind: "error",
+          message: "Load a dataset first — staged files combine into the active dataset.",
+        });
+        return;
+      }
+      if (stagedDatasets.length >= MAX_STAGED_DATASETS) {
+        setUploadState({
+          kind: "error",
+          message: "3 datasets loaded — combine or remove one first.",
+        });
+        return;
+      }
+      setUploadState({ kind: "loading", name: file.name });
+      try {
+        const { dataset: staged, malformedRows } = await parseFileToDataset(file);
+        setStagedDatasets((prev) =>
+          prev.length >= MAX_STAGED_DATASETS ? prev : [...prev, staged],
+        );
+        setCombineSteps((prev) => [...prev, suggestCombine(dataset, staged).step]);
+        setCombineOpen(true);
+        setUploadState({ kind: "idle" });
+        setCombineModalOpen(false);
+        if (malformedRows > 0) {
+          setImportNotice({
+            dataset: dataset.name,
+            message: `${staged.name}: ${malformedRows.toLocaleString()} malformed row${
+              malformedRows === 1 ? " was" : "s were"
+            } padded / truncated to the header's column count.`,
+          });
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : "Unknown error parsing file.";
+        setUploadState({ kind: "error", message: msg });
+      }
+    },
+    [dataset, stagedDatasets, parseFileToDataset, setStagedDatasets],
+  );
+
+  const updateCombineStep = useCallback((index: number, step: CombineStep) => {
+    setCombineSteps((prev) => prev.map((s, i) => (i === index ? step : s)));
+  }, []);
+
+  const removeStagedDataset = useCallback(
+    (index: number) => {
+      setStagedDatasets((prev) => prev.filter((_, i) => i !== index));
+      setCombineSteps((prev) => prev.filter((_, i) => i !== index));
+    },
+    [setStagedDatasets],
+  );
+
+  const cancelStaging = useCallback(() => {
+    setStagedDatasets([]);
+    setCombineSteps([]);
+    setCombineOpen(false);
+  }, [setStagedDatasets]);
+
+  // Execute the staged combine plan. The result replaces the active dataset
+  // and flows through the normal pipeline via setDataset — profiling,
+  // cleaning analysis, and the picker's re-identify (name change) all fire
+  // without extra wiring.
+  const onCombineDatasets = useCallback(() => {
+    if (!dataset || stagedDatasets.length === 0) return;
+    const others = stagedDatasets.map((ds, i) => ({
+      dataset: ds,
+      step: combineSteps[i] ?? combineSuggestions[i]?.step ?? { strategy: "append" as const },
+    }));
+    try {
+      const result = combineAll(dataset, others, DEFAULT_IMPORT_ROW_CAP);
+      setDataset(result.dataset);
+      setFilters([]);
+      setStagedDatasets([]);
+      setCombineSteps([]);
+      setCombineOpen(false);
+      const stepLines = result.stats.map((s, i) => describeCombineStat(s, others[i].dataset.name));
+      const truncNote = result.truncated
+        ? ` Result truncated to the first ${DEFAULT_IMPORT_ROW_CAP.toLocaleString()} of ${result.totalRows.toLocaleString()} rows (import row cap).`
+        : "";
+      setImportNotice({
+        dataset: result.dataset.name,
+        label: "combined",
+        message: `${stepLines.join("; ")} — now ${result.dataset.rows.length.toLocaleString()} rows × ${result.dataset.columns.length} cols.${truncNote}`,
+      });
+      logEvent({
+        stage: "soft",
+        kind: "dataset.combine",
+        payload: {
+          name: result.dataset.name,
+          steps: result.stats.map((s, i) => ({
+            dataset: others[i].dataset.name,
+            strategy: s.strategy,
+            ...(s.key ? { key: s.key } : {}),
+            matched: s.matched,
+            unmatched: s.unmatched,
+            duplicateRightKeys: s.duplicateRightKeys,
+            outputRows: s.outputRows,
+            outputColumns: s.outputColumns,
+          })),
+          rows: result.dataset.rows.length,
+          cols: result.dataset.columns.length,
+          truncated: result.truncated,
+        },
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Unknown error combining datasets.";
+      setUploadState({ kind: "error", message: `combine failed — ${msg}` });
+    }
+  }, [
+    dataset,
+    stagedDatasets,
+    combineSteps,
+    combineSuggestions,
+    setDataset,
+    setFilters,
+    setStagedDatasets,
+    logEvent,
+  ]);
 
   return (
     <div className="flex h-full flex-col">
@@ -2525,6 +3276,24 @@ export function SoftDataWorkstation() {
           >
             {uploadState.kind === "loading" ? "parsing…" : "import csv / parquet"}
           </button>
+          {dataset && (
+            <button
+              type="button"
+              onClick={() => setCombineModalOpen(true)}
+              disabled={
+                uploadState.kind === "loading" || stagedDatasets.length >= MAX_STAGED_DATASETS
+              }
+              title={
+                stagedDatasets.length >= MAX_STAGED_DATASETS
+                  ? "3 datasets loaded — combine or remove one first"
+                  : "Stage another CSV / Parquet file to combine with the active dataset (max 3 total)"
+              }
+              className="rounded border border-border bg-bg-2 px-2 py-1 font-mono text-[11px] text-fg-mute hover:border-primary hover:text-primary disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              + combine data
+              {stagedDatasets.length > 0 ? ` (${stagedDatasets.length + 1}/3)` : ""}
+            </button>
+          )}
           <button
             type="button"
             onClick={() => setSamplePickerOpen(true)}
@@ -2569,7 +3338,7 @@ export function SoftDataWorkstation() {
           <input
             ref={fileRef}
             type="file"
-            accept=".csv,text/csv,.parquet,application/parquet,application/x-parquet,application/octet-stream"
+            accept=".csv,.tsv,text/csv,text/tab-separated-values,.parquet,application/parquet,application/x-parquet,application/octet-stream"
             className="hidden"
             onChange={onPickFile}
           />
@@ -2597,6 +3366,23 @@ export function SoftDataWorkstation() {
           <span>parsing</span>
           <span className="text-fg-dim">·</span>
           <span className="truncate">{uploadState.name}</span>
+          {uploadState.rowsSeen !== undefined && (
+            <>
+              <span className="text-fg-dim">·</span>
+              <span className="shrink-0">{uploadState.rowsSeen.toLocaleString()} rows</span>
+            </>
+          )}
+          {uploadState.pct !== undefined && (
+            <>
+              <span className="shrink-0 text-right">{Math.floor(uploadState.pct)}%</span>
+              <span className="relative h-1 w-24 shrink-0 overflow-hidden rounded bg-bg-2">
+                <span
+                  className="absolute inset-y-0 left-0 rounded bg-warn"
+                  style={{ width: `${Math.min(100, uploadState.pct)}%` }}
+                />
+              </span>
+            </>
+          )}
         </div>
       )}
       {uploadState.kind === "error" && (
@@ -2613,6 +3399,72 @@ export function SoftDataWorkstation() {
             ×
           </button>
         </div>
+      )}
+
+      {/* import advisory — malformed rows padded / truncated, or a combine
+          summary (label "combined") after staged datasets merged. */}
+      {importNotice && dataset?.name === importNotice.dataset && (
+        <div className="flex shrink-0 items-start gap-2 border-b border-warn/40 bg-warn/10 px-3 py-1.5 font-mono text-[10px] text-warn">
+          <span className="shrink-0">{importNotice.label ?? "import notice"}</span>
+          <span className="text-fg-dim">·</span>
+          <span className="flex-1 break-words text-warn/90">{importNotice.message}</span>
+          <button
+            type="button"
+            onClick={() => setImportNotice(null)}
+            className="shrink-0 px-1 text-fg-dim hover:text-warn"
+            aria-label="dismiss"
+          >
+            ×
+          </button>
+        </div>
+      )}
+
+      {/* sampling banner — the loaded rows are a subset of the source file
+          (capped import or a truncated session-snapshot restore). Persistent
+          per dataset until dismissed so the user can't mistake the sample
+          for the full book. */}
+      {dataset &&
+        (dataset.sourceTotalRows ?? dataset.rows.length) > dataset.rows.length &&
+        sampleNoticeDismissed !== dataset.name && (
+          <div className="flex shrink-0 items-start gap-2 border-b border-accent-2/40 bg-accent-2/10 px-3 py-1.5 font-mono text-[10px] text-accent-2">
+            <span className="shrink-0">sampled</span>
+            <span className="text-fg-dim">·</span>
+            <span className="flex-1 break-words">
+              {dataset.sampleKind === "first"
+                ? `Showing the first ${dataset.rows.length.toLocaleString()} rows of ${(
+                    dataset.sourceTotalRows ?? 0
+                  ).toLocaleString()} (parquet import keeps the leading rows, not a uniform sample) — re-import a trimmed file for full data.`
+                : `Showing a ${dataset.rows.length.toLocaleString()}-row sample of ${(
+                    dataset.sourceTotalRows ?? 0
+                  ).toLocaleString()} rows (uniform sample at import / restored snapshot) — re-import the file for full data.`}
+            </span>
+            <button
+              type="button"
+              onClick={() => setSampleNoticeDismissed(dataset.name)}
+              className="shrink-0 px-1 text-fg-dim hover:text-accent-2"
+              aria-label="dismiss"
+            >
+              ×
+            </button>
+          </div>
+        )}
+
+      {/* combine review — staged offline imports waiting to merge into the
+          active dataset. Hidden while a parse is in flight so the progress
+          banner isn't crowded. */}
+      {dataset && stagedDatasets.length > 0 && uploadState.kind !== "loading" && (
+        <CombineBanner
+          base={dataset}
+          staged={stagedDatasets}
+          suggestions={combineSuggestions}
+          steps={combineSteps}
+          open={combineOpen}
+          onOpenChange={setCombineOpen}
+          onUpdateStep={updateCombineStep}
+          onRemove={removeStagedDataset}
+          onCombine={onCombineDatasets}
+          onCancel={cancelStaging}
+        />
       )}
 
       {/* cleaning suggestion — only rendered when issues are detected and the
@@ -2743,6 +3595,13 @@ export function SoftDataWorkstation() {
         open={importModalOpen}
         onFile={onPickFileObject}
         onDismiss={() => setImportModalOpen(false)}
+      />
+      {/* same modal frame, routed to the staging handler — the picked file is
+          parsed and queued for combining instead of replacing the dataset. */}
+      <ImportFileModal
+        open={combineModalOpen}
+        onFile={onStageFileObject}
+        onDismiss={() => setCombineModalOpen(false)}
       />
       <SimulateScenarioModal
         open={simulateOpen}
@@ -2948,6 +3807,326 @@ function CleaningBanner({
             <div className="flex-1" />
             <span className="font-mono text-[10px] text-fg-dim">
               {enabled.size} of {plan.ops.length} step{plan.ops.length === 1 ? "" : "s"} selected
+            </span>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── multi-dataset combine UI ─────────────────────────────────────────────────
+
+type CombineKeyOption = { baseColumn: string; otherColumn: string; label: string };
+
+// Join-key options for one staged dataset: the detector's ranked candidates
+// first (with their match evidence), then every remaining case-insensitively
+// shared column as a manual override.
+function combineKeyOptions(
+  base: Dataset,
+  other: Dataset,
+  suggestion: CombineSuggestion,
+): CombineKeyOption[] {
+  const out: CombineKeyOption[] = suggestion.keyCandidates.map((k) => ({
+    baseColumn: k.baseColumn,
+    otherColumn: k.otherColumn,
+    label: `${k.baseColumn} ↔ ${k.otherColumn} · ${Math.round(k.overlap * 100)}% match`,
+  }));
+  const seen = new Set(out.map((o) => o.baseColumn.trim().toLowerCase()));
+  const otherByNorm = new Map(other.columns.map((c) => [c.trim().toLowerCase(), c]));
+  for (const c of base.columns) {
+    const norm = c.trim().toLowerCase();
+    if (seen.has(norm)) continue;
+    const hit = otherByNorm.get(norm);
+    if (!hit) continue;
+    seen.add(norm);
+    out.push({ baseColumn: c, otherColumn: hit, label: `${c} ↔ ${hit} · manual` });
+  }
+  return out;
+}
+
+// Confidence buckets for the suggestion chip — mirrors the spec's 0.7 / 0.4
+// thresholds.
+function combineConfidence(c: number): { label: string; cls: string } {
+  if (c >= 0.7) return { label: "high", cls: "text-primary" };
+  if (c >= 0.4) return { label: "medium", cls: "text-warn" };
+  return { label: "low", cls: "text-error" };
+}
+
+// One human line per executed combine step, for the post-combine notice.
+function describeCombineStat(s: CombineStats, otherName: string): string {
+  const n = (count: number, word: string) =>
+    `${count.toLocaleString()} ${word}${count === 1 ? "" : "s"}`;
+  if (s.strategy === "append") {
+    const dropped = s.unmatched > 0 ? ` (${n(s.unmatched, "exact duplicate")} dropped)` : "";
+    return `appended ${otherName} — ${n(s.matched, "row")} added${dropped}`;
+  }
+  const baseTotal = s.matched + s.unmatched;
+  const notes: string[] = [];
+  if (s.unmatched > 0) {
+    notes.push(
+      s.strategy === "join-left"
+        ? `${n(s.unmatched, "row")} without a match kept with nulls`
+        : `${n(s.unmatched, "unmatched row")} dropped`,
+    );
+  }
+  if (s.duplicateRightKeys > 0) {
+    notes.push(`${n(s.duplicateRightKeys, "duplicate key")} on the right side (first match wins)`);
+  }
+  if (s.renamedColumns.length > 0) {
+    notes.push(`${n(s.renamedColumns.length, "colliding column")} renamed with _2`);
+  }
+  const noteStr = notes.length > 0 ? ` (${notes.join("; ")})` : "";
+  const verb = s.strategy === "join-left" ? "left-joined" : "inner-joined";
+  return `${verb} ${otherName} on ${s.key ?? "key"} — ${s.matched.toLocaleString()} of ${baseTotal.toLocaleString()} rows matched${noteStr}`;
+}
+
+// Combine review — shown while offline imports are staged next to the active
+// dataset. Pattern-matches CleaningBanner: a one-line collapsed strip plus an
+// expanded panel listing each staged dataset with the engine's suggested
+// strategy (suggestCombine) and its evidence, overridable per step (strategy /
+// join key / exact-duplicate drop). Execution goes through combineAll in the
+// parent so the result replaces the active dataset.
+function CombineBanner({
+  base,
+  staged,
+  suggestions,
+  steps,
+  open,
+  onOpenChange,
+  onUpdateStep,
+  onRemove,
+  onCombine,
+  onCancel,
+}: {
+  base: Dataset;
+  staged: Dataset[];
+  suggestions: CombineSuggestion[];
+  steps: CombineStep[];
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onUpdateStep: (index: number, step: CombineStep) => void;
+  onRemove: (index: number) => void;
+  onCombine: () => void;
+  onCancel: () => void;
+}) {
+  // Key options per staged dataset — cheap to recompute at the engine's
+  // 5k-row sample sizes.
+  const keyOptions = useMemo(
+    () =>
+      staged.map((ds, i) => (suggestions[i] ? combineKeyOptions(base, ds, suggestions[i]) : [])),
+    [base, staged, suggestions],
+  );
+
+  // A join step with no usable key can't run — disable combine and say why.
+  const joinWithoutKey = steps.some(
+    (s, i) => s.strategy !== "append" && ((keyOptions[i]?.length ?? 0) === 0 || !s.key),
+  );
+
+  const selectCls =
+    "rounded border border-border bg-bg px-1.5 py-0.5 font-mono text-[10px] normal-case tracking-normal text-fg focus:border-primary focus:outline-none";
+
+  return (
+    <div className="flex shrink-0 flex-col border-b border-accent-2/40 bg-accent-2/5">
+      {/* collapsed strip — always visible while something is staged */}
+      <div className="flex items-center gap-2 px-3 py-1.5 font-mono text-[11px] text-fg">
+        <span
+          aria-hidden
+          className="inline-block h-1.5 w-1.5 rounded-full bg-accent-2"
+          title="combine datasets"
+        />
+        <span className="text-accent-2">combine data</span>
+        <span className="text-fg-dim">·</span>
+        <span className="min-w-0 truncate text-fg-mute">
+          {staged.length} dataset{staged.length === 1 ? "" : "s"} staged to combine with {base.name}
+        </span>
+        <div className="flex-1" />
+        <button
+          type="button"
+          onClick={() => onOpenChange(!open)}
+          className="rounded border border-accent-2/40 bg-accent-2/10 px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-accent-2 hover:border-accent-2"
+        >
+          {open ? "hide" : "review"}
+          <span aria-hidden className="ml-1">
+            {open ? "▴" : "▾"}
+          </span>
+        </button>
+        <button
+          type="button"
+          onClick={onCancel}
+          title="clear staged datasets without combining"
+          aria-label="clear staged datasets"
+          className="rounded border border-transparent px-1 text-fg-dim hover:border-border hover:text-fg-mute"
+        >
+          ×
+        </button>
+      </div>
+
+      {/* expanded panel — per-staged suggestion + overrides + combine button */}
+      {open && (
+        <div className="border-t border-accent-2/30 px-3 pb-2.5 pt-2">
+          <p className="mb-2 max-w-3xl font-mono text-[10px] text-fg-mute">
+            Each staged file gets a suggested strategy from its schema + key evidence — review or
+            override below, then click <span className="text-accent-2">combine datasets</span>.
+            Joins never multiply rows (first right-side match wins); appends align columns
+            case-insensitively and union the rest.
+          </p>
+          <ul className="flex flex-col gap-1">
+            {staged.map((ds, i) => {
+              const suggestion = suggestions[i];
+              const step = steps[i] ?? suggestion?.step ?? { strategy: "append" as const };
+              const options = keyOptions[i] ?? [];
+              const conf = combineConfidence(suggestion?.confidence ?? 0);
+              const isJoin = step.strategy !== "append";
+              const keyIdxRaw = options.findIndex(
+                (o) =>
+                  o.baseColumn === step.key &&
+                  (step.rightKey === undefined || o.otherColumn === step.rightKey),
+              );
+              const keyIdx = keyIdxRaw >= 0 ? keyIdxRaw : 0;
+              return (
+                <li
+                  key={`${ds.name}-${i}`}
+                  className="rounded border border-border bg-bg px-2 py-1.5"
+                >
+                  <div className="flex items-baseline gap-1.5">
+                    <span className="truncate font-mono text-[11px] text-fg">{ds.name}</span>
+                    <span className="shrink-0 font-mono text-[9px] text-fg-dim">
+                      {ds.rows.length.toLocaleString()} rows × {ds.columns.length} cols
+                    </span>
+                    <span
+                      className={`shrink-0 font-mono text-[9px] uppercase tracking-wider ${conf.cls}`}
+                      title={`suggestion confidence ${Math.round((suggestion?.confidence ?? 0) * 100)}%`}
+                    >
+                      {conf.label} confidence
+                    </span>
+                    <div className="flex-1" />
+                    <button
+                      type="button"
+                      onClick={() => onRemove(i)}
+                      title="remove this staged dataset"
+                      aria-label={`remove ${ds.name}`}
+                      className="shrink-0 font-mono text-[10px] text-fg-dim hover:text-error"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                  {suggestion && (
+                    <div className="mt-0.5 font-mono text-[10px] leading-snug text-fg-mute">
+                      {suggestion.rationale}
+                    </div>
+                  )}
+                  <div className="mt-1.5 flex flex-wrap items-center gap-2.5">
+                    <label className="flex items-center gap-1 font-mono text-[9px] uppercase tracking-wider text-fg-dim">
+                      strategy
+                      <select
+                        value={step.strategy}
+                        onChange={(e) => {
+                          const strategy = e.target.value as CombineStrategy;
+                          if (strategy === "append") {
+                            onUpdateStep(i, {
+                              strategy: "append",
+                              dedupeExact:
+                                step.dedupeExact ?? suggestion?.step.dedupeExact ?? false,
+                            });
+                            return;
+                          }
+                          const opt = options.find((o) => o.baseColumn === step.key) ?? options[0];
+                          onUpdateStep(
+                            i,
+                            opt
+                              ? { strategy, key: opt.baseColumn, rightKey: opt.otherColumn }
+                              : { strategy },
+                          );
+                        }}
+                        className={selectCls}
+                      >
+                        <option value="append">append rows</option>
+                        <option value="join-left" disabled={options.length === 0}>
+                          left join
+                        </option>
+                        <option value="join-inner" disabled={options.length === 0}>
+                          inner join
+                        </option>
+                      </select>
+                    </label>
+                    {isJoin && options.length > 0 && (
+                      <label className="flex items-center gap-1 font-mono text-[9px] uppercase tracking-wider text-fg-dim">
+                        key
+                        <select
+                          value={String(keyIdx)}
+                          onChange={(e) => {
+                            const opt = options[Number(e.target.value)];
+                            if (opt) {
+                              onUpdateStep(i, {
+                                ...step,
+                                key: opt.baseColumn,
+                                rightKey: opt.otherColumn,
+                              });
+                            }
+                          }}
+                          className={selectCls}
+                        >
+                          {options.map((o, oi) => (
+                            <option key={`${o.baseColumn}→${o.otherColumn}`} value={String(oi)}>
+                              {o.label}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    )}
+                    {isJoin && options.length === 0 && (
+                      <span className="font-mono text-[10px] text-error">
+                        no shared columns to join on — use append
+                      </span>
+                    )}
+                    {!isJoin && (
+                      <label className="flex cursor-pointer items-center gap-1 font-mono text-[9px] uppercase tracking-wider text-fg-dim">
+                        <input
+                          type="checkbox"
+                          checked={step.dedupeExact ?? false}
+                          onChange={(e) =>
+                            onUpdateStep(i, { ...step, dedupeExact: e.target.checked })
+                          }
+                          className="h-3 w-3 accent-primary"
+                        />
+                        drop exact duplicates
+                      </label>
+                    )}
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+          {staged.length > 1 && (
+            <p className="mt-1.5 font-mono text-[9px] leading-snug text-fg-dim">
+              steps run in order — the second staged file combines into the result of the first
+            </p>
+          )}
+          <div className="mt-2 flex items-center gap-2">
+            <button
+              type="button"
+              onClick={onCombine}
+              disabled={joinWithoutKey}
+              title={
+                joinWithoutKey
+                  ? "a join step has no usable key — switch it to append or pick a key"
+                  : undefined
+              }
+              className="rounded border border-primary/60 bg-primary/10 px-2 py-1 font-mono text-[11px] text-primary hover:border-primary hover:bg-primary/20 disabled:cursor-not-allowed disabled:border-border disabled:bg-bg-2 disabled:text-fg-dim"
+            >
+              combine datasets
+            </button>
+            <button
+              type="button"
+              onClick={onCancel}
+              className="rounded border border-border bg-bg-2 px-2 py-1 font-mono text-[11px] text-fg-mute hover:border-fg-dim"
+            >
+              cancel
+            </button>
+            <div className="flex-1" />
+            <span className="font-mono text-[10px] text-fg-dim">
+              {staged.length + 1} of 3 datasets loaded
             </span>
           </div>
         </div>

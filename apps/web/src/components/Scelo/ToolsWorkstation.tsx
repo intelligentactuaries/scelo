@@ -51,13 +51,9 @@ import { FlowControls } from "./FlowControls";
 import { RemovableEdge } from "./RemovableEdge";
 import { ResizablePanel } from "./ResizablePanel";
 import { SciText } from "./SciText";
-import {
-  type ColumnMeta,
-  type Dataset,
-  formatNumber,
-  summariseDataset,
-} from "./SoftDataWorkstation";
+import { type ColumnMeta, type Dataset, formatNumber } from "./SoftDataWorkstation";
 import { StageChatPanel } from "./StageChatPanel";
+import { getColumnMetas } from "./columnMetaCache";
 import {
   type CatalogModel,
   FAMILY_COLOR_DARK,
@@ -1209,6 +1205,8 @@ export function ToolsWorkstation() {
     setDomain,
     pickSummary,
     setPickSummary,
+    picksDatasetName,
+    setPicksDatasetName,
     logEvent,
   } = useScelo();
 
@@ -1218,12 +1216,15 @@ export function ToolsWorkstation() {
   const previousIdsRef = useRef<string[]>([]);
 
   // Column metas — used both for the LLM prompt and the heuristic. We
-  // summarise here against the raw dataset (not the filtered slice) because
-  // model selection is about the dataset's intrinsic shape, not the user's
-  // current filter view.
+  // profile the raw dataset (not the filtered slice) because model
+  // selection is about the dataset's intrinsic shape, not the user's
+  // current filter view. getColumnMetas is the shared WeakMap-cached
+  // profiling pass — mounting this workstation must not re-scan a
+  // dataset another pane already profiled (a full re-summarise freezes
+  // the main thread for seconds at import scale).
   const columnMetas = useMemo<ColumnMeta[]>(() => {
     if (!dataset) return [];
-    return summariseDataset(dataset);
+    return getColumnMetas(dataset);
   }, [dataset]);
 
   const signature: DataSignature | null = useMemo(
@@ -1254,6 +1255,7 @@ export function ToolsWorkstation() {
             rationale: s.rationale,
           }));
           setSelectedModels(picks);
+          setPicksDatasetName(dataset.name);
           previousIdsRef.current = picks.map((p) => p.id);
           setStatus("ready");
           logEvent({
@@ -1269,7 +1271,10 @@ export function ToolsWorkstation() {
         })
         .catch(() => {
           if (ac.signal.aborted || !signature) return;
-          const fallback = heuristicPick(signature);
+          // Pass the regenerate counter through so pressing regenerate
+          // while offline rotates deterministic same-family alternates
+          // instead of silently returning the identical list.
+          const fallback = heuristicPick(signature, variant);
           setDomain(fallback.domain);
           setPickSummary(fallback.summary);
           const picks: SelectedModel[] = fallback.selected.map((s) => ({
@@ -1279,6 +1284,7 @@ export function ToolsWorkstation() {
             rationale: s.rationale,
           }));
           setSelectedModels(picks);
+          setPicksDatasetName(dataset.name);
           previousIdsRef.current = picks.map((p) => p.id);
           setStatus("fallback");
           logEvent({
@@ -1294,17 +1300,33 @@ export function ToolsWorkstation() {
         });
       return ac;
     },
-    [dataset, columnMetas, signature, setDomain, setSelectedModels, setPickSummary, logEvent],
+    [
+      dataset,
+      columnMetas,
+      signature,
+      setDomain,
+      setSelectedModels,
+      setPickSummary,
+      setPicksDatasetName,
+      logEvent,
+    ],
   );
 
-  // Initial identification on mount (or when the dataset changes). Aborts
-  // on unmount / dataset swap so we don't race.
+  // Initial identification on mount, and re-identification whenever the
+  // dataset NAME changes from the one the current picks were computed for
+  // (tracked in context and persisted with the session, so the comparison
+  // survives full reloads). Keyed on name, not object identity: cleaning /
+  // derived-column transforms create new dataset objects with the SAME
+  // name and must not clobber a curated pick list, but a different file or
+  // sample is a new analysis subject and stale picks would silently
+  // mis-route it. Aborts on unmount / dataset swap so we don't race.
   // biome-ignore lint/correctness/useExhaustiveDependencies: regenSeed triggers re-identify; we don't want to refire on selectedModels edits.
   useEffect(() => {
-    if (!dataset || selectedModels.length > 0) return;
+    if (!dataset) return;
+    if (selectedModels.length > 0 && picksDatasetName === dataset.name) return;
     const ac = identify(0);
     return () => ac?.abort();
-  }, [dataset, identify]);
+  }, [dataset, picksDatasetName, identify]);
 
   // Manual regenerate — bumps the variant counter so the LLM gets the
   // "previous picks were X, pick a different mix" nudge.
@@ -1801,18 +1823,24 @@ export function ToolsWorkstation() {
           <span className="font-mono text-[10px] text-fg-dim">
             {dataset.rows.length} rows · {dataset.columns.length} cols
           </span>
+          {/* Fallback picks must be visibly labelled — the user needs to
+              know the mix came from the deterministic local heuristic,
+              not the AI picker (and that regenerate rotates alternates
+              locally rather than re-asking the model). */}
+          {status === "fallback" && (
+            <span className="ml-auto rounded border border-warn/40 bg-warn/10 px-1.5 py-0.5 font-mono text-[10px] text-warn">
+              AI picker unreachable — deterministic local pick shown
+            </span>
+          )}
           {domain && (
             <span
-              className="ml-auto rounded border bg-bg-2 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wider"
+              className={`${status === "fallback" ? "" : "ml-auto"} rounded border bg-bg-2 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wider`}
               style={{
                 color: palette[domain as ModelFamily],
                 borderColor: palette[domain as ModelFamily],
               }}
             >
               {domain}
-              {status === "fallback" && (
-                <span className="ml-1 normal-case text-fg-dim">(local fallback)</span>
-              )}
             </span>
           )}
         </div>

@@ -125,17 +125,55 @@ const WORLD_RAW = feature(WORLD_TOPO, WORLD_TOPO.objects.countries) as FeatureCo
   Geometry,
   { ct?: [number, number]; name?: string }
 >;
+// ISO 3166-1 alpha-3 → alpha-2 bridge. Intl.DisplayNames' region type only
+// accepts alpha-2 subtags, but Natural Earth feature ids are alpha-3 — fed
+// directly, every lookup threw and `properties.name` silently stayed a bare
+// code, so country-NAME data never matched a world feature. Compact pair
+// string keeps the table to a few lines; KOS is Natural Earth's non-ISO
+// Kosovo id (alpha-2 XK).
+const ISO3_TO_ISO2 = new Map<string, string>();
+for (const pair of (
+  "ABW:AW,AFG:AF,AGO:AO,AIA:AI,ALA:AX,ALB:AL,AND:AD,ARE:AE,ARG:AR,ARM:AM,ASM:AS,ATA:AQ," +
+  "ATF:TF,ATG:AG,AUS:AU,AUT:AT,AZE:AZ,BDI:BI,BEL:BE,BEN:BJ,BES:BQ,BFA:BF,BGD:BD,BGR:BG," +
+  "BHR:BH,BHS:BS,BIH:BA,BLM:BL,BLR:BY,BLZ:BZ,BMU:BM,BOL:BO,BRA:BR,BRB:BB,BRN:BN,BTN:BT," +
+  "BVT:BV,BWA:BW,CAF:CF,CAN:CA,CCK:CC,CHE:CH,CHL:CL,CHN:CN,CIV:CI,CMR:CM,COD:CD,COG:CG," +
+  "COK:CK,COL:CO,COM:KM,CPV:CV,CRI:CR,CUB:CU,CUW:CW,CXR:CX,CYM:KY,CYP:CY,CZE:CZ,DEU:DE," +
+  "DJI:DJ,DMA:DM,DNK:DK,DOM:DO,DZA:DZ,ECU:EC,EGY:EG,ERI:ER,ESH:EH,ESP:ES,EST:EE,ETH:ET," +
+  "FIN:FI,FJI:FJ,FLK:FK,FRA:FR,FRO:FO,FSM:FM,GAB:GA,GBR:GB,GEO:GE,GGY:GG,GHA:GH,GIB:GI," +
+  "GIN:GN,GLP:GP,GMB:GM,GNB:GW,GNQ:GQ,GRC:GR,GRD:GD,GRL:GL,GTM:GT,GUF:GF,GUM:GU,GUY:GY," +
+  "HKG:HK,HMD:HM,HND:HN,HRV:HR,HTI:HT,HUN:HU,IDN:ID,IMN:IM,IND:IN,IOT:IO,IRL:IE,IRN:IR," +
+  "IRQ:IQ,ISL:IS,ISR:IL,ITA:IT,JAM:JM,JEY:JE,JOR:JO,JPN:JP,KAZ:KZ,KEN:KE,KGZ:KG,KHM:KH," +
+  "KIR:KI,KNA:KN,KOR:KR,KWT:KW,LAO:LA,LBN:LB,LBR:LR,LBY:LY,LCA:LC,LIE:LI,LKA:LK,LSO:LS," +
+  "LTU:LT,LUX:LU,LVA:LV,MAC:MO,MAF:MF,MAR:MA,MCO:MC,MDA:MD,MDG:MG,MDV:MV,MEX:MX,MHL:MH," +
+  "MKD:MK,MLI:ML,MLT:MT,MMR:MM,MNE:ME,MNG:MN,MNP:MP,MOZ:MZ,MRT:MR,MSR:MS,MTQ:MQ,MUS:MU," +
+  "MWI:MW,MYS:MY,MYT:YT,NAM:NA,NCL:NC,NER:NE,NFK:NF,NGA:NG,NIC:NI,NIU:NU,NLD:NL,NOR:NO," +
+  "NPL:NP,NRU:NR,NZL:NZ,OMN:OM,PAK:PK,PAN:PA,PCN:PN,PER:PE,PHL:PH,PLW:PW,PNG:PG,POL:PL," +
+  "PRI:PR,PRK:KP,PRT:PT,PRY:PY,PSE:PS,PYF:PF,QAT:QA,REU:RE,ROU:RO,RUS:RU,RWA:RW,SAU:SA," +
+  "SDN:SD,SEN:SN,SGP:SG,SGS:GS,SHN:SH,SJM:SJ,SLB:SB,SLE:SL,SLV:SV,SMR:SM,SOM:SO,SPM:PM," +
+  "SRB:RS,SSD:SS,STP:ST,SUR:SR,SVK:SK,SVN:SI,SWE:SE,SWZ:SZ,SXM:SX,SYC:SC,SYR:SY,TCA:TC," +
+  "TCD:TD,TGO:TG,THA:TH,TJK:TJ,TKL:TK,TKM:TM,TLS:TL,TON:TO,TTO:TT,TUN:TN,TUR:TR,TUV:TV," +
+  "TWN:TW,TZA:TZ,UGA:UG,UKR:UA,UMI:UM,URY:UY,USA:US,UZB:UZ,VAT:VA,VCT:VC,VEN:VE,VGB:VG," +
+  "VIR:VI,VNM:VN,VUT:VU,WLF:WF,WSM:WS,YEM:YE,ZAF:ZA,ZMB:ZM,ZWE:ZW,KOS:XK"
+).split(",")) {
+  const [a3, a2] = pair.split(":");
+  ISO3_TO_ISO2.set(a3, a2);
+}
+
+function countryNameForId(id: string): string {
+  const a2 = ISO3_TO_ISO2.get(id.toUpperCase());
+  return a2 ? displayName(a2) : id;
+}
+
 // Walk each feature once at module load: populate `properties.name` from
-// `feature.id` (an ISO 3166-1 alpha-3 code) using Intl.DisplayNames. Some
-// codes Intl doesn't recognise (e.g. "ATA" Antarctica is fine; "ESH"
-// Western Sahara may resolve as "Western Sahara"). Either way we end up
-// with a non-empty name string.
+// `feature.id` (an ISO 3166-1 alpha-3 code) via the alpha-2 bridge +
+// Intl.DisplayNames. Ids without an alpha-2 mapping (disputed territories)
+// keep the raw code as their name so they still resolve by code.
 const WORLD_GEO: FeatureCollection<Geometry, { name: string }> = {
   type: "FeatureCollection",
   features: WORLD_RAW.features.map((f) => ({
     ...f,
     properties: {
-      name: typeof f.id === "string" ? displayName(f.id) : "Unknown",
+      name: typeof f.id === "string" ? countryNameForId(f.id) : "Unknown",
     },
   })),
 };
@@ -183,12 +221,17 @@ export function resolveCountryName(raw: string): string | null {
   if (aliased) return aliased;
   const upper = trimmed.toUpperCase();
   if (upper.length === 2 || upper.length === 3) {
-    // ISO alpha-2 / alpha-3 — route through Intl, then canonicalise.
-    const displayed = displayName(upper);
-    if (displayed && displayed !== upper) {
-      const dl = displayed.toLowerCase();
-      if (WORLD_NAME_BY_LOWER.has(dl)) return WORLD_NAME_BY_LOWER.get(dl) ?? null;
-      if (WORLD_ALIASES[dl]) return WORLD_ALIASES[dl];
+    // ISO alpha-2 / alpha-3 — alpha-3 goes through the bridge first since
+    // Intl's region type only understands alpha-2; then canonicalise the
+    // display name against the map's feature names.
+    const a2 = upper.length === 3 ? ISO3_TO_ISO2.get(upper) : upper;
+    if (a2) {
+      const displayed = displayName(a2);
+      if (displayed && displayed !== a2) {
+        const dl = displayed.toLowerCase();
+        if (WORLD_NAME_BY_LOWER.has(dl)) return WORLD_NAME_BY_LOWER.get(dl) ?? null;
+        if (WORLD_ALIASES[dl]) return WORLD_ALIASES[dl];
+      }
     }
   }
   return null;
@@ -240,12 +283,19 @@ for (const f of ZA_GEO.features) {
   ZA_NAME_BY_LOWER.set(f.properties.code.toLowerCase(), name);
 }
 // Common-usage SA province codes that differ from Natural Earth's postal
-// field, mapped to the canonical feature name.
+// field, mapped to the canonical feature name. Includes the StatsSA-style
+// 3-letter codes (GAU/LIM/MPU) that insurance / census extracts often use.
 const ZA_COMMON_ALIASES: Record<string, string> = {
   gp: "Gauteng", // Natural Earth uses GT
+  gau: "Gauteng",
   lp: "Limpopo", // Natural Earth uses NP
+  lim: "Limpopo",
   kzn: "KwaZulu-Natal", // Natural Earth uses NL
   "kwazulu natal": "KwaZulu-Natal", // with space instead of hyphen
+  mpu: "Mpumalanga",
+  "north-west": "North West", // hyphenated form
+  "nw province": "North West",
+  "north west province": "North West",
 };
 function resolveZaProvince(raw: string): string | null {
   const trimmed = raw.trim();

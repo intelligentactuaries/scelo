@@ -20,7 +20,10 @@ import { useNavigate } from "react-router-dom";
 import type { PaletteCommand } from "../components/workspace/CommandPalette";
 import type { OutlineNode } from "../components/workspace/OutlinePanel";
 import { emitAiPrompt, subscribeOpenAiPanel } from "./aiPanelBus";
-// swarmBus is no longer consumed here : /swarm is a dedicated route.
+// swarmBus events are no longer consumed here (/swarm is a dedicated
+// route); urlFor is only used to advertise the swarm address in the
+// palette so the shown port can't drift from the one SwarmPanel probes.
+import { urlFor } from "./swarmBus";
 import { resetDiagnostics } from "./diagnosticsBus";
 import { getEditorSelection } from "./editorSelectionBus";
 import { emitToggleViewer } from "./editorViewerBus";
@@ -31,14 +34,7 @@ import { enqueueTerminalCommand, shellQuote } from "./terminalBus";
 import { emitToast } from "./toastBus";
 import { isDesktopIDE } from "./sceloIDE";
 
-export type SidebarTab =
-  | "files"
-  | "search"
-  | "outline"
-  | "git"
-  | "problems"
-  | "tests"
-  | "swarm";
+export type SidebarTab = "files" | "search" | "outline" | "git" | "problems" | "tests" | "swarm";
 
 export const SIDEBAR_WIDTH_DEFAULT = 260;
 export const SIDEBAR_WIDTH_MIN = 180;
@@ -52,6 +48,11 @@ export interface PendingJump {
   path: string;
   line: number;
 }
+
+// Host:port the swarm UI actually runs on, as shown in the palette's
+// "Open Swarm" entry. Derived from swarmBus's canonical URL rather
+// than hardcoded so the advertised port can't drift from the real one.
+const SWARM_UI_HOST = urlFor({}).replace(/^https?:\/\//, "");
 
 export interface WorkspaceShell {
   /** Open tabs + active tab + their mutators. */
@@ -132,10 +133,7 @@ export function useWorkspaceShell(): WorkspaceShell {
   // aiPanelBus.emitOpenAiPanel (from Cmd-Shift-A, Cmd-L, the palette,
   // and "Send selection") always SHOWS the panel; explicit toggle goes
   // through the palette / shortcut instead.
-  useEffect(
-    () => subscribeOpenAiPanel(() => setAiPanelVisible(true)),
-    [],
-  );
+  useEffect(() => subscribeOpenAiPanel(() => setAiPanelVisible(true)), []);
   // The swarm is no longer a sidebar tab — it's a full-window /swarm
   // route. The workspace shell doesn't react to openInSwarm anymore;
   // HardDataWorkstation navigates straight to /swarm and the route
@@ -297,10 +295,9 @@ export function useWorkspaceShell(): WorkspaceShell {
     const t = window.setTimeout(async () => {
       try {
         const uri = `scelo://workspace/${activeTab.replace(/^\/+/, "")}`;
-        const result = await getLspClient(lang).request(
-          "textDocument/documentSymbol",
-          { textDocument: { uri } },
-        );
+        const result = await getLspClient(lang).request("textDocument/documentSymbol", {
+          textDocument: { uri },
+        });
         setOutline(parseSymbolsForWorkspace(result));
         lastFetchedRef.current = { key, at: Date.now() };
       } catch {
@@ -458,7 +455,7 @@ export function useWorkspaceShell(): WorkspaceShell {
       {
         id: "view.swarm",
         label: "Navigate: Open Swarm",
-        detail: "Full-window council surface (localhost:5180)",
+        detail: `Full-window council surface (${SWARM_UI_HOST})`,
         run: () => navigate("/swarm"),
       },
       {
@@ -663,7 +660,10 @@ function parseSymbolsForWorkspace(result: unknown): OutlineNode[] {
     kind: number;
     detail?: string;
     range: { start: { line: number; character: number }; end: { line: number; character: number } };
-    selectionRange?: { start: { line: number; character: number }; end: { line: number; character: number } };
+    selectionRange?: {
+      start: { line: number; character: number };
+      end: { line: number; character: number };
+    };
     children?: Wire[];
   };
   const walk = (d: Wire): OutlineNode => ({

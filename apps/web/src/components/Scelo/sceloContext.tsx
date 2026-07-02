@@ -14,7 +14,7 @@ import {
   useState,
 } from "react";
 import type { Dataset, Filter } from "./SoftDataWorkstation";
-import { type ActivityEvent, isDuplicateOfLast } from "./activityLog";
+import { type ActivityEvent, isDuplicateOfLast, trimEventsPreservingAnchors } from "./activityLog";
 import type { ModelFamily } from "./modelCatalog";
 import type { RunResult } from "./modelRunner";
 
@@ -46,7 +46,16 @@ const PROJECT_STORAGE_KEY = "scelo:project-state";
 // capped) so we don't blow the localStorage 5 MB ceiling.
 const SESSION_STORAGE_KEY = "scelo:session-snapshot.v1";
 const SESSION_MAX_ROWS = 5000;
+// When even the 5k-row snapshot overflows the quota, retry with this much
+// smaller slice before dropping rows entirely — a 1k sample still lets the
+// workstations render something real after a reload.
+const SESSION_FALLBACK_ROWS = 1000;
 const SESSION_MAX_EVENTS = 200;
+// In-memory ceiling for the activity log — logEvent trims past this so a
+// marathon session can't grow the array (and every downstream memo that
+// walks it) without bound. Well above SESSION_MAX_EVENTS so persistence,
+// not memory, remains the tighter constraint.
+const MEMORY_MAX_EVENTS = 1000;
 
 type StoredProjectState = {
   mode: SceloMode;
@@ -59,6 +68,11 @@ interface StoredSessionSnapshot {
   selectedModels: SelectedModel[];
   domain: ModelFamily | null;
   pickSummary: string | null;
+  /** Which dataset (by name) the current model picks were computed for.
+   *  Lets the Tools node tell "picks curated for THIS data" apart from
+   *  stale picks left over from a previous dataset — including across a
+   *  reload, where a mount-time guess can't. */
+  picksDatasetName: string | null;
   runs: Record<string, RunResult>;
   derivedColumns: Record<string, string>;
   /** Serialised as array since JSON doesn't carry Set. */
@@ -72,6 +86,7 @@ const EMPTY_SESSION: StoredSessionSnapshot = {
   selectedModels: [],
   domain: null,
   pickSummary: null,
+  picksDatasetName: null,
   runs: {},
   derivedColumns: {},
   transformLog: [],
@@ -116,6 +131,8 @@ function loadStoredSession(): StoredSessionSnapshot {
         : [],
       domain: (parsed.domain as ModelFamily | null) ?? null,
       pickSummary: typeof parsed.pickSummary === "string" ? parsed.pickSummary : null,
+      picksDatasetName:
+        typeof parsed.picksDatasetName === "string" ? parsed.picksDatasetName : null,
       runs:
         parsed.runs && typeof parsed.runs === "object"
           ? (parsed.runs as Record<string, RunResult>)
@@ -124,9 +141,7 @@ function loadStoredSession(): StoredSessionSnapshot {
         parsed.derivedColumns && typeof parsed.derivedColumns === "object"
           ? (parsed.derivedColumns as Record<string, string>)
           : {},
-      transformLog: Array.isArray(parsed.transformLog)
-        ? (parsed.transformLog as string[])
-        : [],
+      transformLog: Array.isArray(parsed.transformLog) ? (parsed.transformLog as string[]) : [],
       events: Array.isArray(parsed.events) ? (parsed.events as ActivityEvent[]) : [],
     };
   } catch {
@@ -134,37 +149,69 @@ function loadStoredSession(): StoredSessionSnapshot {
   }
 }
 
+// Dataset provenance fields the import pipeline stamps on sampled loads.
+// Widened locally so the persistence path can read/write them regardless
+// of whether the base Dataset type declares them yet.
+type PersistedDataset = Dataset & { sampled?: boolean; sourceTotalRows?: number };
+
+// Cap a dataset's rows for persistence. Whenever rows are actually dropped
+// the snapshot is stamped with `sampled: true` and `sourceTotalRows` (the
+// full in-memory row count at save time) so the rehydrated dataset
+// self-describes its truncation — the Soft Data workstation banners on
+// sourceTotalRows > rows.length. An import-sampled dataset already carries
+// the source file's true total; never overwrite it with the smaller
+// in-memory count.
+export function sliceDatasetForPersist(
+  dataset: PersistedDataset,
+  maxRows: number,
+): PersistedDataset {
+  if (dataset.rows.length <= maxRows) return dataset;
+  return {
+    ...dataset,
+    rows: dataset.rows.slice(0, maxRows),
+    sampled: true,
+    sourceTotalRows: dataset.sourceTotalRows ?? dataset.rows.length,
+  };
+}
+
 function saveStoredSession(snap: StoredSessionSnapshot): void {
   if (typeof localStorage === "undefined") return;
   // Cap dataset rows + events before serialising so we don't blow the
   // quota on big uploads. The cap is generous (5k rows is plenty for
-  // workstation interaction; full computes happen in the bridges).
-  const dataset = snap.dataset
-    ? {
-        ...snap.dataset,
-        rows: snap.dataset.rows.slice(0, SESSION_MAX_ROWS),
-      }
-    : null;
+  // workstation interaction; full computes happen in the bridges). The
+  // event trim pins the most recent dataset.load / models.aiPick so the
+  // script exporters never lose their read_csv step after a reload.
+  const dataset = snap.dataset ? sliceDatasetForPersist(snap.dataset, SESSION_MAX_ROWS) : null;
   const trimmed: StoredSessionSnapshot = {
     ...snap,
     dataset,
-    events: snap.events.slice(-SESSION_MAX_EVENTS),
+    events: trimEventsPreservingAnchors(snap.events, SESSION_MAX_EVENTS),
   };
   try {
     localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(trimmed));
   } catch {
     // QuotaExceededError most likely : the dataset crossed the 5 MB
-    // localStorage ceiling even after row-capping. Drop the rows
-    // entirely and keep the rest of the session metadata so model
-    // picks + derived-column formulas still survive a reload.
-    try {
-      localStorage.setItem(
-        SESSION_STORAGE_KEY,
-        JSON.stringify({ ...trimmed, dataset: dataset ? { ...dataset, rows: [] } : null }),
-      );
-    } catch {
-      // Last-resort silent drop.
+    // localStorage ceiling even after row-capping. Retry with a much
+    // smaller slice, then with no rows at all — every attempt keeps the
+    // rest of the session (model picks, derived-column formulas) and the
+    // honest sampled/sourceTotalRows stamp so a reload can still tell the
+    // user what was dropped.
+    const totalRows = snap.dataset?.rows.length ?? 0;
+    for (const cap of [SESSION_FALLBACK_ROWS, 0]) {
+      try {
+        const smaller = snap.dataset ? sliceDatasetForPersist(snap.dataset, cap) : null;
+        localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify({ ...trimmed, dataset: smaller }));
+        console.warn(
+          `Scelo session snapshot exceeded the localStorage quota — kept ${cap.toLocaleString()} of ${totalRows.toLocaleString()} dataset rows.`,
+        );
+        return;
+      } catch {
+        // Still too big — fall through to the next, smaller cap.
+      }
     }
+    console.warn(
+      "Scelo session snapshot exceeded the localStorage quota — the session could not be persisted and will not survive a reload.",
+    );
   }
 }
 
@@ -188,6 +235,18 @@ type SceloState = {
   setDomain: (d: ModelFamily | null) => void;
   pickSummary: string | null;
   setPickSummary: (s: string | null) => void;
+  // Which dataset (by name) the current picks were computed for — set by
+  // the Tools node when a pick lands, compared on mount / dataset swap so
+  // stale picks from a previous dataset trigger re-identification even
+  // across a full reload.
+  picksDatasetName: string | null;
+  setPicksDatasetName: (n: string | null) => void;
+  // Additional offline imports staged for combining with the active dataset
+  // (at most 2 staged + 1 active = 3). Session-only — deliberately NOT
+  // persisted: staged files can be big, and a combine is expected to happen
+  // in the same sitting it was staged in.
+  stagedDatasets: Dataset[];
+  setStagedDatasets: (d: Dataset[] | ((prev: Dataset[]) => Dataset[])) => void;
   // Results from the (mock) model runner — keyed by model id. Cleared
   // automatically when the dataset changes upstream so stale outputs
   // never leak between Soft Data swaps.
@@ -241,9 +300,11 @@ export function SceloProvider({ children }: { children: ReactNode }) {
     storedSession.selectedModels,
   );
   const [domain, setDomain] = useState<ModelFamily | null>(storedSession.domain);
-  const [pickSummary, setPickSummary] = useState<string | null>(
-    storedSession.pickSummary,
+  const [pickSummary, setPickSummary] = useState<string | null>(storedSession.pickSummary);
+  const [picksDatasetName, setPicksDatasetName] = useState<string | null>(
+    storedSession.picksDatasetName,
   );
+  const [stagedDatasets, setStagedDatasets] = useState<Dataset[]>([]);
   const [runs, setRuns] = useState<Record<string, RunResult>>(storedSession.runs);
   const [derivedColumns, setDerivedColumns] = useState<Record<string, string>>(
     storedSession.derivedColumns,
@@ -265,6 +326,7 @@ export function SceloProvider({ children }: { children: ReactNode }) {
         selectedModels,
         domain,
         pickSummary,
+        picksDatasetName,
         runs,
         derivedColumns,
         transformLog: Array.from(transformLog),
@@ -278,6 +340,7 @@ export function SceloProvider({ children }: { children: ReactNode }) {
     selectedModels,
     domain,
     pickSummary,
+    picksDatasetName,
     runs,
     derivedColumns,
     transformLog,
@@ -288,7 +351,10 @@ export function SceloProvider({ children }: { children: ReactNode }) {
     setEvents((prev) => {
       const stamped = { ...next, ts: Date.now() } as ActivityEvent;
       if (isDuplicateOfLast(prev, stamped)) return prev;
-      return [...prev, stamped];
+      // Cap the in-memory log so it can't grow unbounded across a long
+      // session; the anchor-pinning trim keeps dataset.load / models.aiPick
+      // reachable for the exporters even past the cap.
+      return trimEventsPreservingAnchors([...prev, stamped], MEMORY_MAX_EVENTS);
     });
   }, []);
   const clearEvents = useCallback(() => setEvents([]), []);
@@ -333,6 +399,10 @@ export function SceloProvider({ children }: { children: ReactNode }) {
       setDomain,
       pickSummary,
       setPickSummary,
+      picksDatasetName,
+      setPicksDatasetName,
+      stagedDatasets,
+      setStagedDatasets,
       runs,
       setRuns,
       derivedColumns,
@@ -354,6 +424,8 @@ export function SceloProvider({ children }: { children: ReactNode }) {
       selectedModels,
       domain,
       pickSummary,
+      picksDatasetName,
+      stagedDatasets,
       runs,
       derivedColumns,
       transformLog,

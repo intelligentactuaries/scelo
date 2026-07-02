@@ -10,10 +10,10 @@ import { useNavigate } from "react-router-dom";
 import { Handle, type NodeProps, Position } from "reactflow";
 import { ChatInputPill } from "./ChatInputPill";
 import { SceloChatMarkdown } from "./SceloChatMarkdown";
+import { getColumnMetas } from "./columnMetaCache";
 import { FAMILY_COLOR_DARK, MODEL_BY_ID } from "./modelCatalog";
 import { type RunResult } from "./modelRunner";
 import { useScelo } from "./sceloContext";
-import { summariseDataset } from "./SoftDataWorkstation";
 import { useNodeChat } from "./useNodeChat";
 
 export type SceloStage = "soft" | "tools" | "hard";
@@ -87,7 +87,9 @@ function useStageSummary(stage: SceloStage): StageSummary {
   if (stage === "soft") {
     return useMemo<StageSummary>(() => {
       if (!dataset) return { primary: "—" };
-      const metas = summariseDataset(dataset);
+      // Shared WeakMap-cached profiling — one summariseDataset pass per
+      // dataset object across every mounted pane, not one per node card.
+      const metas = getColumnMetas(dataset);
       const totalCells = Math.max(1, dataset.rows.length * dataset.columns.length);
       const missing = metas.reduce((s, m) => s + m.missing, 0);
       const missingPct = (missing / totalCells) * 100;
@@ -118,12 +120,9 @@ function useStageSummary(stage: SceloStage): StageSummary {
       const live = selectedModels.filter((m) => m.enabled);
       if (live.length === 0) return { primary: "—" };
       // Two truncated names as the detail; family dots in the bar.
-      const names = live
-        .map((m) => MODEL_BY_ID.get(m.id)?.name ?? m.id)
-        .slice(0, 2);
+      const names = live.map((m) => MODEL_BY_ID.get(m.id)?.name ?? m.id).slice(0, 2);
       const moreCount = live.length - names.length;
-      const detail =
-        moreCount > 0 ? `${names.join(", ")} · +${moreCount}` : names.join(", ");
+      const detail = moreCount > 0 ? `${names.join(", ")} · +${moreCount}` : names.join(", ");
       // Use the actual catalog family for each picked model so the dot
       // row always reflects what's on the canvas — not just the dominant
       // domain (which can lag when the user is mid-swap).
@@ -157,29 +156,31 @@ function useStageSummary(stage: SceloStage): StageSummary {
       .sort((a, b) => Math.abs(b.headline.value) - Math.abs(a.headline.value))[0];
     const secondary: string[] = [];
     if (done.length > 0) secondary.push(`${done.length} complete`);
-    if (errored.length > 0) secondary.push(`${errored.length} error${errored.length === 1 ? "" : "s"}`);
+    if (errored.length > 0)
+      secondary.push(`${errored.length} error${errored.length === 1 ? "" : "s"}`);
     return {
       primary: `${all.length} run${all.length === 1 ? "" : "s"}`,
       secondary,
       detail: dominant
         ? `${dominant.headline.label} · ${formatCompact(dominant.headline.value)}`
         : undefined,
-      bar: done.length > 0
-        ? {
-            segments: [
-              {
-                label: "complete",
-                value: done.length,
-                color: "rgb(var(--rgb-primary))",
-              },
-              {
-                label: "error",
-                value: errored.length,
-                color: "rgb(var(--rgb-error))",
-              },
-            ].filter((s) => s.value > 0),
-          }
-        : undefined,
+      bar:
+        done.length > 0
+          ? {
+              segments: [
+                {
+                  label: "complete",
+                  value: done.length,
+                  color: "rgb(var(--rgb-primary))",
+                },
+                {
+                  label: "error",
+                  value: errored.length,
+                  color: "rgb(var(--rgb-error))",
+                },
+              ].filter((s) => s.value > 0),
+            }
+          : undefined,
     };
   }, [runs]);
 }
@@ -369,7 +370,9 @@ export function SceloNode({ data }: NodeProps<SceloNodeData>) {
             {summary.secondary && summary.secondary.length > 0 && (
               <>
                 {summary.secondary.map((s) => (
-                  <span key={s} className="ml-2 text-fg-dim/80">· {s}</span>
+                  <span key={s} className="ml-2 text-fg-dim/80">
+                    · {s}
+                  </span>
                 ))}
               </>
             )}
