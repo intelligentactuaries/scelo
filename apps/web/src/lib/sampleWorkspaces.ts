@@ -65,4 +65,16 @@ export const SAMPLE_WORKSPACES: SampleWorkspaceSpec[] = [
     ],
     needsDatasets: [],
   },
+  {
+    id: "soa-exams",
+    title: "SOA exams — solve & self-check",
+    blurb:
+      "Sit the SOA multiple-choice exams with the Claude Code chat and tie every answer out to the official examiner solution.",
+    highlights: [
+      "Tested actuarial toolkit (FM: annuities, bonds, loans, IRR, duration)",
+      "Fetch + parse the SOA public sample banks (no content committed)",
+      "Score the Claude Code provider against the official answer key",
+    ],
+    needsDatasets: [],
+  },
 ];

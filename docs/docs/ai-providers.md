@@ -10,6 +10,21 @@ By default Scelo talks to **Ollama** running on your machine: **no key, no
 spend, no network**. Your data never leaves the device. The default model is
 `qwen2.5:7b-instruct`.
 
+## Claude Code (your Claude login — no key)
+
+If you already use [Claude Code](https://claude.com/claude-code) (the CLI), Scelo
+can borrow that login: select **Claude Code** in Settings → AI providers and
+Scelo answers by shelling out to the `claude` CLI already installed and
+signed in on your machine. **No API key, no extra spend beyond your Claude
+plan** — you get Claude-grade reasoning without pasting a key anywhere.
+
+- **Desktop app only.** It needs the `claude` executable on your `PATH`
+  (install Claude Code and run `claude` once to sign in). In a plain browser
+  tab there's no CLI to call.
+- **Model.** Leave the model blank to inherit whatever your Claude Code uses
+  by default, or set an alias (`opus` / `sonnet` / `haiku`) to pin one.
+- **Test connection** works here too, even though there's no key to enter.
+
 ## Hosted providers
 
 ![Settings → AI providers — the local default plus hosted, bring-your-own-key providers](assets/img/settings-ai.png){ .shadow }

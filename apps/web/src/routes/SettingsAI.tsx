@@ -569,9 +569,23 @@ function ProviderCard({
           </>
         )}
         {!desc.needsKey && (
-          <span className="text-xs text-fg-mute">
-            Default provider. Edit IA_AGENT_PROVIDER in the API env to remap globally.
-          </span>
+          <>
+            {desc.testable && (
+              <button
+                type="button"
+                onClick={onTest}
+                disabled={test === "testing"}
+                className="ia-btn ia-btn-md ia-btn-secondary"
+              >
+                {test === "testing" ? "testing…" : "test connection"}
+              </button>
+            )}
+            <span className="text-xs text-fg-mute">
+              {desc.id === "claude_code"
+                ? "No key needed — reuses your Claude Code login. Requires the `claude` CLI installed and signed in on this machine (desktop app only)."
+                : "Default provider. Edit IA_AGENT_PROVIDER in the API env to remap globally."}
+            </span>
+          </>
         )}
       </div>
 
