@@ -151,59 +151,57 @@ const MOJIBAKE_PAIRS: Array<[string, string]> = [
 // we surface it as a labelled op rather than doing it silently on import.
 const ENCODING_NOISE_RE = /\uFEFF|\u00A0|\u200B|\u200C|\u200D|\u2060|\u00AD/;
 
-// Date-shaped strings the parser will accept. The regex pre-filter keeps
-// us from feeding garbage into `new Date()` (which is famously lax — it
-// happily turns "5" into 2001-01-05 in some engines). Anything that
-// matches must ALSO produce a real Date when parsed; ambiguous DD/MM vs
-// MM/DD formats are noted in the chat prompt but not auto-disambiguated
-// here (we'd rather the user pick a locale than guess wrong silently).
-const DATE_PATTERNS: RegExp[] = [
-  // ISO 8601 (the canonical target)
-  /^\d{4}-\d{1,2}-\d{1,2}(?:[T ]\d{1,2}:\d{2}(?::\d{2})?(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?)?$/,
-  // slashed dates: 2024/01/05, 05/01/2024, 5/1/24
-  /^\d{4}\/\d{1,2}\/\d{1,2}$/,
-  /^\d{1,2}\/\d{1,2}\/\d{2,4}$/,
-  // dashed dates non-ISO: 05-01-2024, 5-1-24
-  /^\d{1,2}-\d{1,2}-\d{2,4}$/,
-  // dotted: 05.01.2024
-  /^\d{1,2}\.\d{1,2}\.\d{2,4}$/,
-  // month-name forms: "Jan 5, 2024", "5 Jan 2024", "January 5 2024"
-  /^[A-Za-z]{3,9}\s+\d{1,2},?\s+\d{2,4}$/,
-  /^\d{1,2}\s+[A-Za-z]{3,9}\s+\d{2,4}$/,
-];
+// Date-shaped strings are canonicalised from PARSED COMPONENTS, never via a
+// `new Date(string)` → getUTC* round-trip. The native parser reads naive
+// dates as LOCAL midnight, so re-emitting through UTC getters shifts every
+// slashed date one day earlier on UTC+ zones (Johannesburg included).
+// `parseDatePartsFlexible` further down does the component parsing; the only
+// place `new Date` is still allowed is a timestamp carrying an EXPLICIT zone
+// offset, where the instant is unambiguous regardless of the machine's TZ.
+const ISO_TIMESTAMP_RE =
+  /^(\d{4})-(\d{1,2})-(\d{1,2})[T ](\d{1,2}):(\d{2})(?::(\d{2}))?(?:\.(\d+))?(Z|[+-]\d{2}:?\d{2})?$/;
 
-function parseFlexibleDate(raw: string): Date | null {
+// Canonicalise one date-shaped string to ISO 8601, or null when it isn't a
+// recognisable date. Date-only inputs stay date-only (YYYY-MM-DD) so we don't
+// manufacture spurious midnight timestamps on calendar data. Timestamps keep
+// their time part: zoned ones round-trip through toISOString (deterministic
+// once the offset is explicit), naive ones are normalised textually without
+// asserting a zone the source never stated. `dayFirst` disambiguates
+// purely-numeric slashed forms, same convention as `formatDateStyled`.
+export function canonicaliseDateCell(raw: string, dayFirst = false): string | null {
   const s = raw.trim();
   if (s.length < 6 || s.length > 35) return null;
-  let matched = false;
-  for (const re of DATE_PATTERNS) {
-    if (re.test(s)) {
-      matched = true;
-      break;
+  const ts = s.match(ISO_TIMESTAMP_RE);
+  if (ts) {
+    const parts = validParts({ y: +ts[1], m: +ts[2], d: +ts[3] });
+    if (parts === null) return null;
+    const hh = +ts[4];
+    const mi = +ts[5];
+    const ss = ts[6] === undefined ? 0 : +ts[6];
+    if (hh > 23 || mi > 59 || ss > 59) return null;
+    if (ts[8]) {
+      const d = new Date(s.replace(" ", "T"));
+      return Number.isNaN(d.getTime()) ? null : d.toISOString();
     }
+    const frac = ts[7] ? `.${ts[7]}` : "";
+    const hms = [hh, mi, ss].map((n) => String(n).padStart(2, "0")).join(":");
+    return `${partsToStyle(parts, "iso")}T${hms}${frac}`;
   }
-  if (!matched) return null;
-  const d = new Date(s);
-  if (Number.isNaN(d.getTime())) return null;
-  // Sanity range — guards against `new Date("0001")` returning year 1
-  // and similar engine quirks.
-  const year = d.getUTCFullYear();
-  if (year < 1700 || year > 2200) return null;
-  return d;
+  const p = parseDatePartsFlexible(s, dayFirst);
+  if (p === null) return null;
+  return partsToStyle(p, "iso");
 }
 
-// Convert a parsed Date to the canonical ISO string form. Date-only
-// inputs stay date-only (YYYY-MM-DD) so we don't manufacture spurious
-// midnight-UTC timestamps on what was originally calendar data.
-function toCanonicalIsoDate(raw: string, d: Date): string {
-  // If the source string carried no time component, emit date-only.
-  if (!/[T ]\d/.test(raw)) {
-    const y = d.getUTCFullYear();
-    const m = String(d.getUTCMonth() + 1).padStart(2, "0");
-    const day = String(d.getUTCDate()).padStart(2, "0");
-    return `${y}-${m}-${day}`;
+// Boolean-only variant for the analyser's per-cell hot loop — same accept
+// set as `canonicaliseDateCell` but with no output string allocation.
+function isDateShaped(s: string): boolean {
+  if (s.length < 6 || s.length > 35) return false;
+  const ts = s.match(ISO_TIMESTAMP_RE);
+  if (ts) {
+    if (validParts({ y: +ts[1], m: +ts[2], d: +ts[3] }) === null) return false;
+    return +ts[4] <= 23 && +ts[5] <= 59 && (ts[6] === undefined || +ts[6] <= 59);
   }
-  return d.toISOString();
+  return parseDatePartsFlexible(s, false) !== null;
 }
 
 // Internal whitespace collapse — matches two or more whitespace chars in
@@ -253,9 +251,12 @@ export type CleaningOpKey =
   | "fix-encoding"
   | "missing-tokens"
   | "parse-numeric"
+  | "coerce-numeric"
   | "parse-dates"
   | "standardise-booleans"
   | "replace-numeric-sentinels"
+  | "recode-value"
+  | "null-future-years"
   | "drop-duplicates"
   | "drop-empty-cols"
   | "drop-constant-cols"
@@ -268,7 +269,20 @@ export type CleaningOp =
   | { key: "fix-encoding"; cells: number; samples: string[]; safe: true }
   | { key: "missing-tokens"; cells: number; tokens: string[]; safe: true }
   | { key: "parse-numeric"; columns: string[]; cells: number; safe: true }
+  | {
+      key: "coerce-numeric";
+      columns: Array<{ name: string; converted: number; nulled: number }>;
+      cells: number;
+      safe: true;
+    }
   | { key: "parse-dates"; columns: string[]; cells: number; safe: true }
+  | { key: "recode-value"; column: string; from: string; to: string; cells: number; safe: false }
+  | {
+      key: "null-future-years";
+      columns: Array<{ name: string; maxYear: number; count: number }>;
+      cells: number;
+      safe: false;
+    }
   | {
       key: "standardise-booleans";
       columns: Array<{ name: string; trueLabel: string; falseLabel: string }>;
@@ -349,6 +363,23 @@ export function describeOp(op: CleaningOp, sampled = false): { title: string; de
         title: "parse numeric strings",
         detail: `${op.columns.length} column${op.columns.length === 1 ? "" : "s"} read as text but are ≥80% numeric — strip commas, currency, parens, % and coerce ${formatCount(op.cells, sampled)} cells.`,
       };
+    case "coerce-numeric": {
+      const sample = op.columns
+        .slice(0, 3)
+        .map((c) => `\`${c.name}\``)
+        .join(", ");
+      const more = op.columns.length > 3 ? ` +${op.columns.length - 3} more` : "";
+      let converted = 0;
+      let nulled = 0;
+      for (const c of op.columns) {
+        converted += c.converted;
+        nulled += c.nulled;
+      }
+      return {
+        title: "coerce mixed numeric text",
+        detail: `${op.columns.length} numeric column${op.columns.length === 1 ? "" : "s"} still carrying text cells (${sample}${more}) — keep the numeric prefix ("6+" → 6) for ${formatCount(converted, sampled)} cells and null the ${formatCount(nulled, sampled)} with no leading digits.`,
+      };
+    }
     case "parse-dates":
       return {
         title: "parse date strings",
@@ -374,6 +405,23 @@ export function describeOp(op: CleaningOp, sampled = false): { title: string; de
       return {
         title: "standardise booleans",
         detail: `${op.columns.length} column${op.columns.length === 1 ? "" : "s"} use yes/no or true/false in mixed forms — normalise to "true"/"false": ${sample}${more}.`,
+      };
+    }
+    case "recode-value":
+      return {
+        title: "recode near-duplicate label",
+        detail: `\`${op.column}\` mixes "${op.from}" with "${op.to}" — one edit apart and both frequent, almost certainly a misspelling. Rewrite ${formatCount(op.cells, sampled)} cells to "${op.to}".`,
+      };
+    case "null-future-years": {
+      const sample = op.columns
+        .slice(0, 3)
+        .map((c) => `\`${c.name}\``)
+        .join(", ");
+      const more = op.columns.length > 3 ? ` +${op.columns.length - 3} more` : "";
+      const cutoff = op.columns[0]?.maxYear ?? new Date().getFullYear();
+      return {
+        title: "null future years",
+        detail: `${op.columns.length} year-like column${op.columns.length === 1 ? "" : "s"} (${sample}${more}) with values beyond ${cutoff} — usually an "unknown" sentinel, but review before nulling ${formatCount(op.cells, sampled)} cells.`,
       };
     }
     case "drop-duplicates":
@@ -467,6 +515,104 @@ function parseFlexibleNumber(raw: string): number | null {
   return negate ? -n : n;
 }
 
+// Numeric coercion for number-TYPED columns that still carry string residue.
+// Full flexible parse first ("1,234" → 1234), then a bare numeric-prefix
+// strip so ordinal-capped codes keep their magnitude ("6+" → 6, "10 or
+// more" → 10). Anything with no leading digits is unusable residue — the
+// caller nulls it. Exported for the chat handler and tests.
+export function coerceNumericValue(raw: string): number | null {
+  const s = raw.trim();
+  if (s === "") return null;
+  const full = parseFlexibleNumber(s);
+  if (full !== null) return full;
+  const m = s.match(/^[+-]?\d+(?:\.\d+)?/);
+  if (m === null) return null;
+  const n = Number(m[0]);
+  return Number.isFinite(n) ? n : null;
+}
+
+// Capped Levenshtein — returns the edit distance when it's ≤ `max`, else
+// null. Two-row DP with an early bail so the top-values pairwise scan in
+// `findNearDuplicateLabel` stays trivially cheap.
+function levenshteinAtMost(a: string, b: string, max: number): number | null {
+  if (a === b) return 0;
+  if (Math.abs(a.length - b.length) > max) return null;
+  let prev: number[] = [];
+  for (let j = 0; j <= b.length; j++) prev.push(j);
+  for (let i = 1; i <= a.length; i++) {
+    const cur: number[] = [i];
+    let rowMin = i;
+    for (let j = 1; j <= b.length; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      const v = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + cost);
+      cur.push(v);
+      if (v < rowMin) rowMin = v;
+    }
+    if (rowMin > max) return null;
+    prev = cur;
+  }
+  return prev[b.length] <= max ? prev[b.length] : null;
+}
+
+// Near-duplicate categorical label detection — the classic in-data typo
+// ("Seperated" alongside "Separated"). Scans a column's top values pairwise
+// with a capped edit distance. Deliberately strict so real categories never
+// merge: case-only pairs are lowercase-categoricals' job, short codes are
+// skipped entirely (WEST/EAST sit at distance 2 but are genuinely
+// different), and both spellings must be well-populated. Returns the pair
+// affecting the most cells, recoding the rarer spelling into the more
+// common one. Exported so the column chat can ground its recode example in
+// a real pair.
+// Labels that differ only in a short standalone token ("Sector B" vs
+// "Sector D", "Zone 1" vs "Zone 2") are enumerated categories sharing a
+// prefix, not misspellings — a one-letter code swap is a different category,
+// so recode must never suggest merging them.
+function differsOnlyInCodeToken(a: string, b: string): boolean {
+  const at = a.split(/\s+/);
+  const bt = b.split(/\s+/);
+  if (at.length !== bt.length) return false;
+  let diff = -1;
+  for (let i = 0; i < at.length; i++) {
+    if (at[i] !== bt[i]) {
+      if (diff !== -1) return false; // several differing tokens → not a code swap
+      diff = i;
+    }
+  }
+  return diff !== -1 && at[diff].length <= 2 && bt[diff].length <= 2;
+}
+
+export function findNearDuplicateLabel(
+  topValues: Array<{ value: string; count: number }>,
+  nonMissing: number,
+): { from: string; to: string; count: number } | null {
+  const top = topValues.slice(0, 12);
+  const minCount = Math.max(4, Math.round(nonMissing * 0.002));
+  let best: { from: string; to: string; count: number } | null = null;
+  for (let i = 0; i < top.length; i++) {
+    for (let j = i + 1; j < top.length; j++) {
+      const a = top[i];
+      const b = top[j];
+      if (a.count < minCount || b.count < minCount) continue;
+      if (a.count === b.count) continue; // no way to pick a canonical side
+      const al = a.value.toLowerCase();
+      const bl = b.value.toLowerCase();
+      if (al === bl) continue; // case-only → lowercase-categoricals
+      const minLen = Math.min(al.length, bl.length);
+      if (minLen < 4) continue;
+      // Distance budget scales with length: 1 edit for short words, 2 from
+      // 8 chars — "Seperated"→"Separated" is 1; WEST→EAST (2) is skipped.
+      const maxDist = minLen >= 8 ? 2 : 1;
+      if (levenshteinAtMost(al, bl, maxDist) === null) continue;
+      if (differsOnlyInCodeToken(al, bl)) continue;
+      const [from, to] = a.count < b.count ? [a, b] : [b, a];
+      if (best === null || from.count > best.count) {
+        best = { from: from.value, to: to.value, count: from.count };
+      }
+    }
+  }
+  return best;
+}
+
 // Cheap row-key for duplicate detection — far faster than JSON.stringify for
 // wide rows and avoids the `123` vs `"123"` collision risk.
 function rowKey(row: Row, columns: string[]): string {
@@ -502,6 +648,7 @@ export function analyseCleaning(dataset: Dataset, metas: ColumnMeta[]): Cleaning
   type ColAcc = {
     candidates: number; // non-null, non-missing-token cells (string only)
     numericFromString: number;
+    coercibleFromString: number; // numeric after prefix-stripping ("6+" → 6)
     dateFromString: number;
     trueCount: number;
     falseCount: number;
@@ -512,12 +659,16 @@ export function analyseCleaning(dataset: Dataset, metas: ColumnMeta[]): Cleaning
     // the column meta says it's numeric so we can bypass the string fast
     // path. Kept on the ColAcc so the per-column rollup stays consistent.
     sentinelCounts: Map<number, number>;
+    // numeric-only: integer values beyond the current calendar year, tallied
+    // only for the year-named columns selected below.
+    futureYears: number;
   };
   const colAcc = new Map<string, ColAcc>();
   for (const c of cols) {
     colAcc.set(c, {
       candidates: 0,
       numericFromString: 0,
+      coercibleFromString: 0,
       dateFromString: 0,
       trueCount: 0,
       falseCount: 0,
@@ -525,7 +676,23 @@ export function analyseCleaning(dataset: Dataset, metas: ColumnMeta[]): Cleaning
       firstTrueLabel: null,
       firstFalseLabel: null,
       sentinelCounts: new Map<number, number>(),
+      futureYears: 0,
     });
+  }
+
+  // Year-sentinel candidates: number-typed columns named like a year whose
+  // observed range sits inside plausible calendar years and reaches past
+  // today's (car_year with a 2099 "unknown" spike, etc). Only these pay the
+  // future-year tally in the pass below.
+  const currentYear = new Date().getFullYear();
+  const yearCols = new Set<string>();
+  for (const meta of metas) {
+    if (meta.type !== "number") continue;
+    if (!/year|yr/i.test(meta.name)) continue;
+    if (meta.min === undefined || meta.max === undefined) continue;
+    if (meta.min < 1900 || meta.max > 2100) continue;
+    if (meta.max <= currentYear) continue;
+    yearCols.add(meta.name);
   }
 
   // Single pass over (sampled) rows.
@@ -542,6 +709,9 @@ export function analyseCleaning(dataset: Dataset, metas: ColumnMeta[]): Cleaning
         // occurrences guarding happens later, here we just tally.
         if (acc && NUMERIC_SENTINELS.has(v)) {
           acc.sentinelCounts.set(v, (acc.sentinelCounts.get(v) ?? 0) + 1);
+        }
+        if (acc && yearCols.has(c) && Number.isInteger(v) && v > currentYear) {
+          acc.futureYears++;
         }
         continue;
       }
@@ -583,9 +753,13 @@ export function analyseCleaning(dataset: Dataset, metas: ColumnMeta[]): Cleaning
 
       if (parseFlexibleNumber(trimmed) !== null) {
         acc.numericFromString++;
+        acc.coercibleFromString++;
+      } else if (coerceNumericValue(trimmed) !== null) {
+        // Not fully numeric but salvageable via prefix-strip ("6+").
+        acc.coercibleFromString++;
       }
 
-      if (parseFlexibleDate(trimmed) !== null) {
+      if (isDateShaped(trimmed)) {
         acc.dateFromString++;
       }
 
@@ -738,6 +912,83 @@ export function analyseCleaning(dataset: Dataset, metas: ColumnMeta[]): Cleaning
       columns: sentinelCols,
       cells: sentinelCellsRaw * scale,
       safe: true,
+    });
+  }
+
+  // Number-typed columns still carrying string residue ("6+" airbag codes,
+  // stray text in an otherwise-numeric column). parse-numeric only handles
+  // string-TYPED columns, so this is its mirror image: keep the numeric
+  // prefix where one exists, null the rest. The residue share comes straight
+  // from this pass (candidates only counts non-missing STRING cells).
+  const coerceCols: Array<{ name: string; converted: number; nulled: number }> = [];
+  let coerceCellsRaw = 0;
+  for (const meta of metas) {
+    if (meta.type !== "number") continue;
+    const acc = colAcc.get(meta.name);
+    if (!acc || acc.candidates === 0) continue;
+    const converted = acc.coercibleFromString;
+    coerceCols.push({
+      name: meta.name,
+      converted: converted * scale,
+      nulled: (acc.candidates - converted) * scale,
+    });
+    coerceCellsRaw += acc.candidates;
+  }
+  if (coerceCols.length > 0) {
+    ops.push({
+      key: "coerce-numeric",
+      columns: coerceCols,
+      cells: coerceCellsRaw * scale,
+      safe: true,
+    });
+  }
+
+  // Near-duplicate categorical labels — recode the rarer spelling into the
+  // more common one. One suggestion per plan (the banner toggles ops by
+  // key, so the keenest pair wins); further pairs go through the column
+  // chat's recode path.
+  let bestRecode: { column: string; from: string; to: string; count: number } | null = null;
+  for (const meta of metas) {
+    if (meta.type !== "string") continue;
+    if (!meta.topValues || meta.topValues.length < 2) continue;
+    const pair = findNearDuplicateLabel(meta.topValues, meta.count - meta.missing);
+    if (pair === null) continue;
+    if (bestRecode === null || pair.count > bestRecode.count) {
+      bestRecode = { column: meta.name, ...pair };
+    }
+  }
+  if (bestRecode !== null) {
+    ops.push({
+      key: "recode-value",
+      column: bestRecode.column,
+      from: bestRecode.from,
+      to: bestRecode.to,
+      cells: bestRecode.count,
+      safe: false,
+    });
+  }
+
+  // Year sentinels: values beyond the current calendar year in year-named
+  // integer columns (tallied above). Review-only — a model year or policy
+  // inception can legitimately sit one year ahead, so never auto-null.
+  const futureYearCols: Array<{ name: string; maxYear: number; count: number }> = [];
+  let futureYearCellsRaw = 0;
+  for (const meta of metas) {
+    const acc = colAcc.get(meta.name);
+    if (!acc || acc.futureYears === 0) continue;
+    futureYearCols.push({
+      name: meta.name,
+      maxYear: currentYear,
+      count: acc.futureYears * scale,
+    });
+    futureYearCellsRaw += acc.futureYears;
+  }
+  if (futureYearCols.length > 0) {
+    ops.push({
+      key: "null-future-years",
+      columns: futureYearCols,
+      cells: futureYearCellsRaw * scale,
+      safe: false,
     });
   }
 
@@ -1141,7 +1392,9 @@ export function cleanColumnCells(
   const rows = dataset.rows.map((r) => {
     const v = r[column];
     if (typeof v !== "string") return r;
-    const cleaned = fixEncoding(v).trim().replace(/\s{2,}/g, " ");
+    const cleaned = fixEncoding(v)
+      .trim()
+      .replace(/\s{2,}/g, " ");
     const next: string | null = MISSING_TOKENS.has(cleaned.toLowerCase()) ? null : cleaned;
     if (next === v) return r;
     if (next === null) nulled++;
@@ -1150,6 +1403,27 @@ export function cleanColumnCells(
   });
   if (tidied === 0 && nulled === 0) return { dataset, tidied: 0, nulled: 0 };
   return { dataset: { name: dataset.name, columns: dataset.columns, rows }, tidied, nulled };
+}
+
+// Rewrite every exact occurrence of `from` in `column` to `to`. Powers the
+// recode-value op's chat path ("fix the Seperated typo") without going
+// through a full plan/apply cycle. Exact match on purpose — whitespace and
+// case variants are the trim / lowercase ops' job.
+export function applyRecodeValue(
+  dataset: Dataset,
+  column: string,
+  from: string,
+  to: string,
+): { dataset: Dataset; changed: number } {
+  if (!dataset.columns.includes(column) || from === to) return { dataset, changed: 0 };
+  let changed = 0;
+  const rows = dataset.rows.map((r) => {
+    if (r[column] !== from) return r;
+    changed++;
+    return { ...r, [column]: to };
+  });
+  if (changed === 0) return { dataset, changed: 0 };
+  return { dataset: { name: dataset.name, columns: dataset.columns, rows }, changed };
 }
 
 // ─── Data augmentation ────────────────────────────────────────────────────
@@ -1266,19 +1540,28 @@ export function applyCleaning(
   const doEncoding = enabled.has("fix-encoding");
   const doMissing = enabled.has("missing-tokens");
   const doParse = enabled.has("parse-numeric");
+  const doCoerce = enabled.has("coerce-numeric");
   const doDates = enabled.has("parse-dates");
   const doBool = enabled.has("standardise-booleans");
   const doSentinels = enabled.has("replace-numeric-sentinels");
+  const doRecode = enabled.has("recode-value");
+  const doFutureYears = enabled.has("null-future-years");
   const doLower = enabled.has("lowercase-categoricals");
 
   const parseTargets = new Set<string>();
+  const coerceTargets = new Set<string>();
   const dateTargets = new Set<string>();
   const boolTargets = new Set<string>();
   const lowerTargets = new Set<string>();
   // sentinel value lookup keyed by column → set of numbers to null out.
   const sentinelTargets = new Map<string, Set<number>>();
+  // recode lookup keyed column → (from → to); several recode ops can stack.
+  const recodeTargets = new Map<string, Map<string, string>>();
+  // year cutoff per column for null-future-years.
+  const futureYearCut = new Map<string, number>();
   for (const op of plan.ops) {
     if (op.key === "parse-numeric") for (const c of op.columns) parseTargets.add(c);
+    if (op.key === "coerce-numeric") for (const c of op.columns) coerceTargets.add(c.name);
     if (op.key === "parse-dates") for (const c of op.columns) dateTargets.add(c);
     if (op.key === "standardise-booleans") for (const c of op.columns) boolTargets.add(c.name);
     if (op.key === "lowercase-categoricals") for (const c of op.columns) lowerTargets.add(c.name);
@@ -1289,6 +1572,23 @@ export function applyCleaning(
         sentinelTargets.set(c.name, set);
       }
     }
+    if (op.key === "recode-value") {
+      const m = recodeTargets.get(op.column) ?? new Map<string, string>();
+      m.set(op.from, op.to);
+      recodeTargets.set(op.column, m);
+    }
+    if (op.key === "null-future-years") {
+      for (const c of op.columns) futureYearCut.set(c.name, c.maxYear);
+    }
+  }
+
+  // parse-dates disambiguates DD/MM vs MM/DD per target column from the
+  // data itself (any part >12 is hard evidence). The native-parser path
+  // this replaces silently assumed US month-first AND read the result back
+  // through the local timezone — both fixed by pure component parsing.
+  const dateDayFirst = new Map<string, boolean>();
+  if (doDates) {
+    for (const c of dateTargets) dateDayFirst.set(c, inferDayFirst(sampleStringValues(dataset, c)));
   }
 
   let columns: string[] = dataset.columns;
@@ -1305,16 +1605,25 @@ export function applyCleaning(
     doDates ||
     doBool ||
     doLower ||
-    (doSentinels && sentinelTargets.size > 0);
+    (doSentinels && sentinelTargets.size > 0) ||
+    (doRecode && recodeTargets.size > 0) ||
+    (doCoerce && coerceTargets.size > 0) ||
+    (doFutureYears && futureYearCut.size > 0);
   if (cellPassActive) {
     rows = rows.map((r) => {
       const out: Row = {};
       for (const c of columns) {
         let v = r[c];
-        // Numeric branch — only sentinel replacement applies here.
-        if (typeof v === "number" && doSentinels) {
-          const set = sentinelTargets.get(c);
-          if (set?.has(v)) v = null;
+        // Numeric branch — sentinel replacement and year-sentinel nulling.
+        if (typeof v === "number") {
+          if (doSentinels) {
+            const set = sentinelTargets.get(c);
+            if (set?.has(v)) v = null;
+          }
+          if (typeof v === "number" && doFutureYears) {
+            const cut = futureYearCut.get(c);
+            if (cut !== undefined && Number.isInteger(v) && v > cut) v = null;
+          }
         }
         if (typeof v === "string") {
           if (doEncoding) v = fixEncoding(v);
@@ -1324,18 +1633,26 @@ export function applyCleaning(
             const lower = v.trim().toLowerCase();
             if (MISSING_TOKENS.has(lower)) v = null;
           }
+          if (typeof v === "string" && doRecode) {
+            const to = recodeTargets.get(c)?.get(v);
+            if (to !== undefined) v = to;
+          }
           if (typeof v === "string" && doBool && boolTargets.has(c)) {
             const lower = v.trim().toLowerCase();
             if (TRUE_TOKENS.has(lower)) v = "true";
             else if (FALSE_TOKENS.has(lower)) v = "false";
           }
           if (typeof v === "string" && doDates && dateTargets.has(c)) {
-            const d = parseFlexibleDate(v);
-            if (d !== null) v = toCanonicalIsoDate(v, d);
+            const iso = canonicaliseDateCell(v, dateDayFirst.get(c) ?? false);
+            if (iso !== null) v = iso;
           }
           if (typeof v === "string" && doParse && parseTargets.has(c)) {
             const n = parseFlexibleNumber(v);
             if (n !== null) v = n;
+          }
+          if (typeof v === "string" && doCoerce && coerceTargets.has(c)) {
+            // Number-typed column residue: numeric prefix or null.
+            v = coerceNumericValue(v);
           }
           if (typeof v === "string" && doLower && lowerTargets.has(c)) {
             v = v.toLowerCase();

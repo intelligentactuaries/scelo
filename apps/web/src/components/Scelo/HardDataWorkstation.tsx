@@ -1,6 +1,7 @@
 // Hard Data drill-in — the third stage of the Scelo pipeline. Closes the
 // soft → tools → hard loop: takes the models the user picked in Tools,
-// runs the (deterministic, client-side, mock) computation for each, and
+// runs each one (through the Scelo IDE's bundled Python/R bridge when one
+// exists, otherwise the deterministic in-browser approximation), and
 // renders the results as a hub-and-spoke React Flow graph that flows
 // inward into a "Board Pack" hub at the centre.
 //
@@ -54,7 +55,7 @@ import {
   MODEL_BY_ID,
   type ModelFamily,
 } from "./modelCatalog";
-import { type RunResult, runModel } from "./modelRunner";
+import { BRIDGED_MODEL_IDS, type RunResult, runModel, runModelAsync } from "./modelRunner";
 import { modelTheoryFor } from "./modelTheory";
 import {
   buildLifelibNotebook,
@@ -65,7 +66,8 @@ import { forecastConfigFor } from "./forecast/derive";
 import { runForecast } from "./forecast/runner";
 import { hasForecastDomain } from "./forecast/domainLabels";
 import { type ForecastResult } from "./forecast/runner";
-import { conveneCouncil, type CouncilSynthesis } from "./forecast/councilClient";
+import { conveneCouncil, type CouncilSynthesis, swarmApiUrl } from "./forecast/councilClient";
+import { SWARM_DOCS_URL, swarmStartCommand } from "../workspace/SwarmPanel";
 import { type SelectedModel, useScelo } from "./sceloContext";
 import { useNodeChat } from "./useNodeChat";
 
@@ -349,8 +351,29 @@ function ResultNode({ data }: NodeProps<ResultNodeData>) {
           <StatusPip status={run.status} />
         </div>
       </div>
-      <div className="mt-0.5 text-xs text-fg">
-        {MODEL_BY_ID.get(run.modelId)?.name ?? run.modelId}
+      <div className="mt-0.5 flex items-baseline justify-between gap-1">
+        <span className="truncate text-xs text-fg">
+          {MODEL_BY_ID.get(run.modelId)?.name ?? run.modelId}
+        </span>
+        {/* Provenance badge: bundled Python/R bridge (canonical library) vs
+            the in-browser TS approximation. Absent on legacy persisted
+            runs — no badge is better than a guessed one. */}
+        {run.source && (
+          <span
+            className={`shrink-0 rounded border px-1 font-mono text-[8px] uppercase tracking-wider ${
+              run.source === "python-bridge"
+                ? "border-primary text-primary"
+                : "border-border text-fg-dim"
+            }`}
+            title={
+              run.source === "python-bridge"
+                ? "computed by the Scelo IDE's bundled Python/R runtime (canonical implementation)"
+                : "computed by the in-browser approximation"
+            }
+          >
+            {run.source === "python-bridge" ? "python" : "in-browser"}
+          </span>
+        )}
       </div>
       <div className="mt-1 flex items-baseline gap-1.5">
         <span className="font-mono text-lg text-fg">{formatHeadline(run.headline)}</span>
@@ -363,6 +386,16 @@ function ResultNode({ data }: NodeProps<ResultNodeData>) {
       ) : run.tableSpec ? (
         <MicroTable spec={run.tableSpec} color={color} />
       ) : null}
+      {/* A bridge that failed must say WHY — these numbers are the fallback
+          approximation, not the canonical run the user may be expecting. */}
+      {run.bridgeError && (
+        <div
+          className="mt-1 truncate text-[9px] text-error"
+          title={`python bridge failed: ${run.bridgeError}`}
+        >
+          bridge failed: {run.bridgeError}
+        </div>
+      )}
       {run.status === "done" && <CIStrip run={run} color={color} />}
     </div>
   );
@@ -457,7 +490,10 @@ function HubNode({ data }: NodeProps<HubNodeData>) {
         // five lines. ScrollFade adds the hover-only bar + a fade on the top/
         // bottom edge as it's scrolled. `nowheel`/`nodrag` keep the scroll
         // from panning the canvas.
-        <ScrollFade axis="y" className="nowheel nodrag mt-2 max-h-36 overflow-auto pr-1 text-fg-mute">
+        <ScrollFade
+          axis="y"
+          className="nowheel nodrag mt-2 max-h-36 overflow-auto pr-1 text-fg-mute"
+        >
           {/* Markdown so inline code (`moderate`) and emphasis render properly
               instead of showing literal backticks. */}
           <SceloChatMarkdown dataset={null} size="xs">
@@ -1628,13 +1664,45 @@ function ForecastInline({ forecast }: { forecast: ForecastResult }) {
 // :3010) and renders the synthesis inline. Subset defaults to 12 to keep
 // per-result clicks cheap; user can dial up to 192 for deep council.
 
+// Swarm API liveness for the council CTA. Mirrors SwarmPanel's probe (no-cors
+// fetch: connection-refused throws, any HTTP response resolves) but targets
+// the :3010 API base the council actually calls — including the ?swarmUrl=
+// override — so the status dot can never disagree with the button's fate.
+function useSwarmApiProbe(): "probing" | "up" | "down" {
+  const [probe, setProbe] = useState<"probing" | "up" | "down">("probing");
+  useEffect(() => {
+    let cancelled = false;
+    const base = swarmApiUrl();
+    const ping = async () => {
+      try {
+        const ctrl = new AbortController();
+        const t = setTimeout(() => ctrl.abort(), 800);
+        await fetch(base, { mode: "no-cors", signal: ctrl.signal });
+        clearTimeout(t);
+        if (!cancelled) setProbe("up");
+      } catch {
+        if (!cancelled) setProbe("down");
+      }
+    };
+    void ping();
+    const id = window.setInterval(ping, 5_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, []);
+  return probe;
+}
+
 function CouncilAttachCta({ focused }: { focused: RunResult }) {
   const { dataset } = useScelo();
+  const navigate = useNavigate();
   const [synth, setSynth] = useState<CouncilSynthesis | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [progressId, setProgressId] = useState<string | null>(null);
   const [subset, setSubset] = useState<12 | 24 | 48 | 96 | 192>(12);
+  const probe = useSwarmApiProbe();
   // Society pulse defaults ON so the swarm app's Society tab is populated
   // when the user clicks "open in swarm ↗". Adds ~30s of Ollama time on a
   // local run; the user can opt out via the "skip society" toggle for a
@@ -1662,13 +1730,50 @@ function CouncilAttachCta({ focused }: { focused: RunResult }) {
 
   return (
     <div className="rounded border border-border bg-bg-1 p-2.5">
-      <div className="font-mono text-[9px] uppercase tracking-wider text-fg-dim">
-        convene council · swarm @ :3010
+      <div className="flex items-baseline justify-between font-mono text-[9px] uppercase tracking-wider text-fg-dim">
+        <span>convene council · swarm @ :3010</span>
+        <span
+          className={probe === "up" ? "text-primary" : probe === "down" ? "text-error" : ""}
+          title={probe === "up" ? "swarm API reachable" : "swarm API not reachable"}
+        >
+          {probe === "up" && "● live"}
+          {probe === "probing" && "○ probing…"}
+          {probe === "down" && "● offline"}
+        </span>
       </div>
       <p className="mt-1 text-[11px] text-fg-mute">
         N stratified personas interrogate this result. Trust / distrust + a proposed parameter shift
         come back.
       </p>
+      {probe === "down" && !synth && (
+        <div className="mt-2 rounded border border-border bg-bg-2 p-2 text-[10px] text-fg-mute">
+          The swarm is a separate app (not bundled with Scelo) and nothing is listening on :3010.
+          Start it from your swarms checkout:
+          <code className="mt-1 block select-all rounded bg-bg-1 px-1.5 py-1 font-mono text-fg">
+            {swarmStartCommand()}
+          </code>
+          <span className="mt-1 block text-fg-dim">
+            Its default port is 3000 — the PORT=3010 override is required. This panel re-probes
+            every 5 seconds.{" "}
+            <a
+              href={SWARM_DOCS_URL}
+              target="_blank"
+              rel="noreferrer"
+              className="underline hover:text-fg"
+            >
+              docs: swarm/running
+            </a>
+          </span>
+          <button
+            type="button"
+            onClick={() => navigate("/swarm")}
+            className="ia-btn ia-btn-sm ia-btn-secondary mt-2 w-full justify-center"
+            title="Open the full swarm screen — it live-probes the server and shows the embedded swarm UI once it's up"
+          >
+            open the swarm screen →
+          </button>
+        </div>
+      )}
       {!synth && (
         <div className="mt-3 flex flex-col gap-2">
           <div className="flex flex-wrap items-center gap-2">
@@ -1726,18 +1831,18 @@ function CouncilAttachCta({ focused }: { focused: RunResult }) {
           <button
             type="button"
             onClick={convene}
-            disabled={busy}
+            disabled={busy || probe === "down"}
             className="ia-btn ia-btn-md ia-btn-secondary group w-full justify-between"
-            title="Run a council on this result"
+            title={
+              probe === "down"
+                ? "Swarm server offline — start it on :3010 first"
+                : "Run a council on this result"
+            }
           >
             <span className="flex items-center gap-2">
               <ConveneIcon className="h-4 w-4 text-fg-mute group-hover:text-fg" />
               <span className="font-medium">
-                {busy
-                  ? progressId
-                    ? "Deliberating…"
-                    : "Starting…"
-                  : "Convene council"}
+                {busy ? (progressId ? "Deliberating…" : "Starting…") : "Convene council"}
               </span>
             </span>
             <span className="font-mono text-[10px] text-fg-dim group-hover:text-fg-mute">
@@ -1749,11 +1854,13 @@ function CouncilAttachCta({ focused }: { focused: RunResult }) {
       )}
       {error && (
         <div className="mt-1.5 text-[10px] text-error">
-          {error}
+          {/failed to fetch/i.test(error) ? "swarm server unreachable at :3010" : error}
           <div className="text-[9px] text-fg-dim mt-0.5">
             {/timed out/i.test(error)
               ? "A large council (192 agents + society) on a local model can take a long time. Try a smaller agent count, enable “Skip society pulse”, or point the swarm at a faster provider — the run may still be finishing server-side."
-              : "Swarm server unreachable at :3010 → start it with `PORT=3010 bun run dev` in swarms/ (its default port is 3000, so the `PORT=3010` is required)."}
+              : /failed to fetch/i.test(error)
+                ? `The swarm runs from a separate checkout — start it there with \`${swarmStartCommand()}\` (its default port is 3000, so the PORT=3010 override is required).`
+                : "The swarm server responded but the run failed — check the swarm app's own logs for the run error."}
           </div>
         </div>
       )}
@@ -1914,6 +2021,21 @@ function Stat({
 
 // ── main ────────────────────────────────────────────────────────────────────
 
+// Run-staleness key for the dataset. Every transform (clean / derive /
+// augment) creates a NEW dataset object but usually keeps the same `name`,
+// so object identity — not the name — is the correct invalidation signal.
+// WeakMap so superseded dataset versions stay collectable.
+const datasetVersionByRef = new WeakMap<Dataset, number>();
+let nextDatasetVersion = 1;
+function datasetVersion(dataset: Dataset): number {
+  let v = datasetVersionByRef.get(dataset);
+  if (v === undefined) {
+    v = nextDatasetVersion++;
+    datasetVersionByRef.set(dataset, v);
+  }
+  return v;
+}
+
 export function HardDataWorkstation() {
   const navigate = useNavigate();
   const { resolved } = useTheme();
@@ -1937,29 +2059,80 @@ export function HardDataWorkstation() {
 
   const enabled = useMemo(() => selectedModels.filter((m) => m.enabled), [selectedModels]);
   const enabledKey = useMemo(() => enabled.map((m) => m.id).join("|"), [enabled]);
-  const datasetKey = dataset?.name ?? "";
+  // Identity-derived version so cleaning / derive / augment (new dataset
+  // object, same name) correctly invalidate the runs.
+  const datasetKey = dataset ? datasetVersion(dataset) : -1;
+
+  // Monotonic token so a run batch that was superseded mid-flight (dataset
+  // swap, model toggle, unmount) stops writing results.
+  const runEpoch = useRef(0);
+
+  // Execute all enabled models. Models with a Python/R bridge go through
+  // runModelAsync (the desktop IDE's bundled runtime — canonical numbers);
+  // everything else uses the sync in-browser runner. Every model is staged
+  // as "running" first so the status pips pulse while bridges execute, and
+  // results land one by one as they finish.
+  const executeRuns = useCallback(
+    async (models: SelectedModel[], ds: Dataset) => {
+      const epoch = ++runEpoch.current;
+      const staged: Record<string, RunResult> = {};
+      for (const m of models) {
+        staged[m.id] = {
+          modelId: m.id,
+          family: MODEL_BY_ID.get(m.id)?.family ?? "general",
+          status: "running",
+          startedAt: Date.now(),
+          headline: { label: "—", value: 0 },
+          secondary: [],
+          blurb: `${m.id} is running…`,
+        };
+      }
+      setRuns(staged);
+      for (const m of models) {
+        let result: RunResult;
+        try {
+          result = BRIDGED_MODEL_IDS.has(m.id) ? await runModelAsync(m.id, ds) : runModel(m.id, ds);
+        } catch (e) {
+          // Both runners catch internally; this guard keeps one unexpected
+          // rejection from killing the rest of the batch.
+          const msg = e instanceof Error ? e.message : String(e);
+          result = {
+            modelId: m.id,
+            family: MODEL_BY_ID.get(m.id)?.family ?? "general",
+            status: "error",
+            startedAt: Date.now(),
+            finishedAt: Date.now(),
+            headline: { label: "—", value: 0 },
+            secondary: [{ label: "reason", value: msg }],
+            blurb: `${m.id} failed: ${msg}`,
+            error: msg,
+            source: "browser",
+          };
+        }
+        if (runEpoch.current !== epoch) return; // superseded mid-flight
+        setRuns((prev) => ({ ...prev, [m.id]: result }));
+      }
+      logEvent({
+        stage: "hard",
+        kind: "runs.execute",
+        payload: { models: models.map((m) => m.id) },
+      });
+    },
+    [setRuns, logEvent],
+  );
 
   // Run all enabled models whenever the (dataset, enabled set) changes.
-  // The runner is deterministic and synchronous so we can do this inline;
-  // we still stage a "running" state for the UI's status pips.
   // biome-ignore lint/correctness/useExhaustiveDependencies: react to dataset + enabled set identity only.
   useEffect(() => {
     if (!dataset || enabled.length === 0) {
       setRuns({});
       return;
     }
-    const next: Record<string, RunResult> = {};
-    for (const m of enabled) {
-      next[m.id] = {
-        ...runModel(m.id, dataset),
-      };
-    }
-    setRuns(next);
-    logEvent({
-      stage: "hard",
-      kind: "runs.execute",
-      payload: { models: enabled.map((m) => m.id) },
-    });
+    void executeRuns(enabled, dataset);
+    return () => {
+      // Invalidate the in-flight batch when the deps change / unmount.
+      runEpoch.current++;
+    };
   }, [datasetKey, enabledKey]);
 
   // Narrative: pulled from the orchestrator with a heuristic fallback. Refires
@@ -1977,6 +2150,9 @@ export function HardDataWorkstation() {
       setNarrativeStatus("idle");
       return;
     }
+    // Bridged models resolve asynchronously — hold the narrative until the
+    // whole batch has settled so it never describes a half-finished board.
+    if (runsList.some((r) => r.status === "running")) return;
     const ac = new AbortController();
     setNarrativeStatus("loading");
     fetchNarrative({
@@ -2002,16 +2178,9 @@ export function HardDataWorkstation() {
   // Manual rerun — recompute runs AND nudge the narrative variant counter.
   const rerun = useCallback(() => {
     if (!dataset) return;
-    const next: Record<string, RunResult> = {};
-    for (const m of enabled) next[m.id] = runModel(m.id, dataset);
-    setRuns(next);
+    void executeRuns(enabled, dataset);
     setRegenSeed((s) => s + 1);
-    logEvent({
-      stage: "hard",
-      kind: "runs.execute",
-      payload: { models: enabled.map((m) => m.id) },
-    });
-  }, [dataset, enabled, setRuns, logEvent]);
+  }, [dataset, enabled, executeRuns]);
 
   // React Flow nodes + edges ─────────────────────────────────────────────────
   // Derived "desired" shape — the real React Flow state lives below and

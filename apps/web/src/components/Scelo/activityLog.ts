@@ -39,6 +39,27 @@ export type ActivityEvent =
   | {
       ts: number;
       stage: "soft";
+      kind: "dataset.combine";
+      payload: {
+        name: string;
+        rows: number;
+        cols: number;
+        truncated: boolean;
+        steps: Array<{
+          dataset: string;
+          strategy: string;
+          key?: string;
+          matched: number;
+          unmatched: number;
+          duplicateRightKeys?: number;
+          outputRows?: number;
+          outputColumns?: number;
+        }>;
+      };
+    }
+  | {
+      ts: number;
+      stage: "soft";
       kind: "filter.add";
       payload: { description: string; column: string; spec: Filter };
     }
@@ -139,6 +160,35 @@ export function isDuplicateOfLast(events: ActivityEvent[], next: ActivityEvent):
   } catch {
     return false;
   }
+}
+
+// Event kinds the script exporters cannot reconstruct from anything else:
+// `dataset.load` carries the read_csv step and `models.aiPick` carries the
+// model list. A blind tail-slice of a long session would drop them and the
+// exported script would have no data-load step at all.
+const ANCHOR_KINDS = ["dataset.load", "models.aiPick"] as const;
+
+// Trim the log to at most `max` events, keeping the most recent entries but
+// PINNING the most recent event of each anchor kind even when it falls
+// outside the tail. Pinned events displace the oldest tail entries so the
+// result never exceeds `max`, and chronological order is preserved (anchors
+// pulled from before the tail are, by construction, older than it).
+export function trimEventsPreservingAnchors(events: ActivityEvent[], max: number): ActivityEvent[] {
+  if (events.length <= max) return events;
+  const tail = events.slice(-max);
+  const pinned: ActivityEvent[] = [];
+  for (const kind of ANCHOR_KINDS) {
+    if (tail.some((e) => e.kind === kind)) continue;
+    for (let i = events.length - max - 1; i >= 0; i--) {
+      if (events[i].kind === kind) {
+        pinned.push(events[i]);
+        break;
+      }
+    }
+  }
+  if (pinned.length === 0) return tail;
+  pinned.sort((a, b) => a.ts - b.ts);
+  return [...pinned, ...tail.slice(pinned.length)];
 }
 
 // Filter the log to events from `stage` AND all stages preceding it in the

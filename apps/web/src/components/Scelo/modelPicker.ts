@@ -4,7 +4,7 @@
 
 import { streamOrchestrator } from "@/lib/api";
 import type { ColumnMeta, Dataset } from "./SoftDataWorkstation";
-import { MODEL_BY_ID, MODEL_CATALOG, type ModelFamily } from "./modelCatalog";
+import { type CatalogModel, MODEL_BY_ID, MODEL_CATALOG, type ModelFamily } from "./modelCatalog";
 
 export type PickResult = {
   domain: ModelFamily;
@@ -26,6 +26,19 @@ export type DataSignature = {
   hasExposure: boolean;
   hasGeographic: boolean;
   hasClaims: boolean;
+  // Policy/quote-level pricing signals. Real-world rating headers rarely
+  // say `paid` or `claims` verbatim: `hasClaimsCount` is the loose count
+  // match (past_claims, claim_count, no_claims…) while `hasClaimsAmount`
+  // is the monetary flavour (claim_amt, loss_cost, paid/incurred) — a
+  // severity model is only sensible when a monetary column exists, a bare
+  // claims COUNT can't feed it. `hasSumInsured` matches the `sum_insur*`
+  // prefix so the common `sum_insurd` misspelling still hits; sum_assured
+  // stays a life signal and is deliberately excluded here.
+  hasClaimsCount: boolean;
+  hasClaimsAmount: boolean;
+  hasSumInsured: boolean;
+  hasExcess: boolean;
+  hasPremium: boolean;
   // Climate / weather / reanalysis signals. `hasReanalysis` is the strongest
   // — columns named like `t2m_era5`, `tp_merra2`, `wind_jra3q` are almost
   // certainly from one of the canonical reanalyses and the user is doing
@@ -82,6 +95,13 @@ export function dataSignature(dataset: Dataset, metas: ColumnMeta[]): DataSignat
     hasExposure: nameMatches(lower, /^(exposure|e_?x|lives|policy_years)$/),
     hasGeographic: nameMatches(lower, /^(state|province|country|region|county|city)$/),
     hasClaims: nameMatches(lower, /^(claim|claims|claim_amt|claim_count|frequency|severity)$/),
+    hasClaimsCount: nameMatches(lower, /(^|_)claims?(_count|_cnt)?(_|$)/),
+    hasClaimsAmount:
+      nameMatches(lower, /(^|_)(claims?|loss)_?(amt|amount|paid|cost|incurred)(_|$)/) ||
+      nameMatches(lower, /^severity$/),
+    hasSumInsured: nameMatches(lower, /^sum_insur|^tiv$/),
+    hasExcess: nameMatches(lower, /^(excess|deductible)$/),
+    hasPremium: nameMatches(lower, /(^|_)premium/),
     // Weather variables — partial match anywhere in the column name so
     // `t2m_era5`, `mean_t2m`, `tas_max` all hit.
     hasTemperature: nameMatches(lower, /(^|_)(t2m|temp|temperature|tas|tmax|tmin|tavg)(_|$)/),
@@ -93,8 +113,11 @@ export function dataSignature(dataset: Dataset, metas: ColumnMeta[]): DataSignat
     // Reanalysis suffixes (era5 / era5_land / merra2 / merra-2 / jra3q / jra-3q
     // / ncep / cfsr / nora). Strongest single climate signal.
     hasReanalysis: nameMatches(lower, /(era5|merra[-_]?2|jra[-_]?3?q?|ncep|cfsr|nora)/),
+    // Real headers are usually suffixed (policy_start_date, dob, lic_date)
+    // rather than a bare `date`, so match on the suffix — plus whatever
+    // summarise already typed as a date column.
     hasDateColumn:
-      nameMatches(lower, /^(date|day|time|datetime|timestamp|valid_time)$/) ||
+      nameMatches(lower, /(^|_)(date|day|time|datetime|timestamp|dob)$/) ||
       metas.some((m) => m.type === "date"),
     // Lifelib MP signals.
     hasAgeAtEntry: nameMatches(lower, /^(age_at_entry|ageatentry|issue_age)$/),
@@ -113,7 +136,7 @@ export function dataSignature(dataset: Dataset, metas: ColumnMeta[]): DataSignat
       nameMatches(lower, /^(w_f|wf)$/) ||
       nameMatches(lower, /^(w_rel|wrel)$/) ||
       nameMatches(lower, /^(w_s|ws)$/),
-    hasSimulationOutcomes: lower.some((c) => c.startsWith('sim_')),
+    hasSimulationOutcomes: lower.some((c) => c.startsWith("sim_")),
     numNumeric: metas.filter((m) => m.type === "number").length,
     numCategorical: metas.filter((m) => m.type === "string").length,
     rowCount: dataset.rows.length,
@@ -122,7 +145,16 @@ export function dataSignature(dataset: Dataset, metas: ColumnMeta[]): DataSignat
 
 // ── heuristic fallback ──────────────────────────────────────────────────────
 
-export function heuristicPick(sig: DataSignature): PickResult {
+// `variant` is the regenerate counter: 0 returns the canonical pick,
+// higher values rotate deterministic same-family alternates in (see
+// rotateAlternates) so an offline regenerate isn't a silent no-op loop
+// returning the identical list forever.
+export function heuristicPick(sig: DataSignature, variant = 0): PickResult {
+  const base = basePick(sig);
+  return variant > 0 ? rotateAlternates(base, variant) : base;
+}
+
+function basePick(sig: DataSignature): PickResult {
   // Swarm-simulation output → general / descriptive. The row IS the
   // simulation result; trying to fit a reserving / pricing / mortality
   // model to it would be a category error (and trigger the "triangle
@@ -253,24 +285,40 @@ export function heuristicPick(sig: DataSignature): PickResult {
         "Mortality data with age and deaths/exposure: Lee-Carter + CBD for projection, life contingencies for downstream pricing.",
     };
   }
-  // Claims-level pricing shape → pricing family.
-  if (sig.hasPaid && sig.numCategorical >= 2 && !sig.hasDevPeriod) {
+  // Claims / policy-level pricing shape → pricing family. Two routes in:
+  // a claims signal (paid amounts or a past-claims count) with a couple of
+  // categorical rating factors, or a rating-factor-heavy schema (sum
+  // insured / excess / premium + 3 or more categoricals) even before any
+  // claims column. Both must be non-triangle. glm-severity only joins
+  // when a monetary claims column exists — a count like past_claims can't
+  // feed a severity model.
+  const hasClaimsSignal = (sig.hasClaimsCount || sig.hasPaid) && sig.numCategorical >= 2;
+  const hasRatingFactors =
+    (sig.hasSumInsured || sig.hasExcess || sig.hasPremium) && sig.numCategorical >= 3;
+  if ((hasClaimsSignal || hasRatingFactors) && !sig.hasDevPeriod) {
+    const hasMonetaryClaims = sig.hasPaid || sig.hasIncurred || sig.hasClaimsAmount;
     return {
       domain: "pricing",
       selected: [
         {
           id: "glm-frequency",
-          rationale: "Categorical covariates + claim counts → Poisson GLM frequency.",
+          rationale: "Categorical rating factors + claims signal → Poisson GLM frequency.",
         },
-        {
-          id: "glm-severity",
-          rationale: "Severity model alongside frequency for a full pure premium.",
-        },
+        ...(hasMonetaryClaims
+          ? [
+              {
+                id: "glm-severity",
+                rationale:
+                  "Monetary claims column present — severity alongside frequency for a full pure premium.",
+              },
+            ]
+          : []),
         { id: "gbm", rationale: "Nonlinear interactions — GBM picks them up where GLM struggles." },
         { id: "shap", rationale: "Explainability for the GBM in pricing meetings." },
       ],
-      summary:
-        "Claims-level pricing data with covariates: frequency × severity GLMs plus a GBM for nonlinearities, explained via SHAP.",
+      summary: hasMonetaryClaims
+        ? "Claims-level pricing data with covariates: frequency × severity GLMs plus a GBM for nonlinearities, explained via SHAP."
+        : "Policy-level rating data (claim counts, no monetary claims column): frequency GLM plus a GBM for nonlinearities, explained via SHAP.",
     };
   }
   // Weather / climate-reanalysis shape → climate / cat. Strongest signal is
@@ -311,8 +359,13 @@ export function heuristicPick(sig: DataSignature): PickResult {
   }
   // Geographic-only shape (province / city codes, no weather variables) →
   // also climate-family but framed as exposure / cat work rather than the
-  // reanalysis-driven workflow.
-  if (sig.hasGeographic && sig.rowCount > 0) {
+  // reanalysis-driven workflow. Only when the schema actually looks
+  // hazard/exposure-shaped: a geo column among FEW other covariates, or an
+  // explicit exposure column. A geo code buried in a wide table of policy
+  // rating factors (province on a motor book) is a pricing covariate, not
+  // a climate signal — fall through to the general fallback instead.
+  const geoHazardShaped = sig.columnNames.length <= 6 || weatherSignals >= 1 || sig.hasExposure;
+  if (sig.hasGeographic && geoHazardShaped && sig.rowCount > 0) {
     return {
       domain: "climate",
       selected: [
@@ -338,6 +391,32 @@ export function heuristicPick(sig: DataSignature): PickResult {
     summary:
       "No strong domain signal detected — descriptive stats plus generic GLM/GBM candidates.",
   };
+}
+
+// Deterministic same-family rotation for regenerate. Each variant swaps
+// exactly ONE pick for a catalog model from the same family that isn't
+// already selected, cycling through every (slot × alternate) pair so
+// successive regenerates keep producing a different — but reproducible —
+// mix. Families with no unpicked alternates (e.g. all four reserving
+// models already on a triangle pick) leave the pick unchanged.
+function rotateAlternates(base: PickResult, variant: number): PickResult {
+  const picked = new Set(base.selected.map((s) => s.id));
+  const swaps: Array<{ slot: number; alt: CatalogModel }> = [];
+  base.selected.forEach((s, slot) => {
+    const family = MODEL_BY_ID.get(s.id)?.family;
+    if (!family) return;
+    for (const m of MODEL_CATALOG) {
+      if (m.family === family && !picked.has(m.id)) swaps.push({ slot, alt: m });
+    }
+  });
+  if (swaps.length === 0) return base;
+  const { slot, alt } = swaps[(variant - 1) % swaps.length];
+  const selected = base.selected.map((s, i) =>
+    i === slot
+      ? { id: alt.id, rationale: `Regenerated alternate (${alt.family}): ${alt.description}` }
+      : s,
+  );
+  return { ...base, selected };
 }
 
 // ── LLM picker ──────────────────────────────────────────────────────────────
@@ -402,9 +481,10 @@ FAMILY ROUTING (use as a strong prior — override only with explicit data evide
 - Triangle shape (origin_year + dev_period + paid/incurred) → \`reserving\`: chain-ladder, mack, bornhuetter-ferguson, bootstrap-ibnr.
 - Age × time with deaths or exposure (no sum_assured / policy_term) → \`mortality\`: lee-carter, cbd, lifecontingencies.
 - Claims-level with covariates (no triangle) → \`pricing\`: glm-frequency, glm-severity, gbm, shap.
+- POLICY / QUOTE-LEVEL RATING DATA — one row per policy or quote: a unique id, vehicle / driver / property rating factors (make, gears, marital status, gender, licence / policy dates), sum-insured or excess / deductible, past_claims or prior-insurance flags → \`pricing\`: glm-frequency, gbm, shap. Add glm-severity ONLY when a monetary claim-amount column exists — a past-claims COUNT alone cannot feed a severity model. A province / region column here is a rating factor, NOT a climate signal.
 - WEATHER / CLIMATE columns — names containing t2m, temp, temperature, tas, tp, precip, precipitation, rain, wind, u10, v10 — or REANALYSIS suffixes (era5, era5_land, merra2, merra-2, jra3q, jra-3q, ncep) → \`climate\`: climada, parametric-design, descriptive. THIS IS A STRONG SIGNAL; the user is doing climate-actuarial work and the right family is climate even if no geographic column exists.
 - Date-indexed numeric time-series with no claims/triangle signal but multiple correlated numeric series → still consider \`climate\` if the column names look weather-flavoured.
-- Geographic codes (state, province, country, region) but no weather columns → \`climate\` framed as exposure / cat work.
+- Geographic codes (state, province, country, region) but no weather columns → \`climate\` framed as exposure / cat work ONLY when geo + hazard / exposure columns dominate the schema and there are no policy-level covariates. If the geo code sits among policy rating factors, route to \`pricing\` instead.
 - Yield-curve / rates columns or zero/forward curve data with no MP file → \`life\`: smithwilson-curve, economic-curves.
 - Otherwise → \`general\`: descriptive plus a couple of generic candidates.${variantNudge}
 
@@ -493,19 +573,18 @@ function coercePickResult(raw: unknown): PickResult | null {
 //
 // Returns the heuristic pick when the signature has a strong match, or
 // null when the shape is ambiguous and the LLM should be consulted.
-function strongSignalPick(sig: DataSignature): PickResult | null {
+// `variant` (the regenerate counter) flows through to heuristicPick so an
+// explicit regenerate on a short-circuited shape still rotates same-family
+// alternates instead of silently returning the identical list.
+function strongSignalPick(sig: DataSignature, variant: number): PickResult | null {
   const isSimulationOutput = sig.hasSimulationOutcomes;
   const isWmtrParams = sig.hasAlphaTriplet;
-  const isLifelibMp =
-    sig.hasAgeAtEntry && sig.hasSumAssured && sig.hasPolicyTerm;
+  const isLifelibMp = sig.hasAgeAtEntry && sig.hasSumAssured && sig.hasPolicyTerm;
   const isClaimsTriangle =
     sig.hasOriginYear && sig.hasDevPeriod && (sig.hasPaid || sig.hasIncurred);
   const weatherSignals =
-    (sig.hasTemperature ? 1 : 0) +
-    (sig.hasPrecipitation ? 1 : 0) +
-    (sig.hasWind ? 1 : 0);
-  const isWeatherReanalysis =
-    sig.hasReanalysis || weatherSignals >= 2;
+    (sig.hasTemperature ? 1 : 0) + (sig.hasPrecipitation ? 1 : 0) + (sig.hasWind ? 1 : 0);
+  const isWeatherReanalysis = sig.hasReanalysis || weatherSignals >= 2;
   if (
     isSimulationOutput ||
     isWmtrParams ||
@@ -513,7 +592,7 @@ function strongSignalPick(sig: DataSignature): PickResult | null {
     isClaimsTriangle ||
     isWeatherReanalysis
   ) {
-    return heuristicPick(sig);
+    return heuristicPick(sig, variant);
   }
   return null;
 }
@@ -528,7 +607,7 @@ export async function fetchModelPicks(args: {
   // Short-circuit on strong signatures so the routing is deterministic and
   // the LLM never has the chance to ignore the family-routing prompt.
   const sig = dataSignature(args.dataset, args.metas);
-  const strong = strongSignalPick(sig);
+  const strong = strongSignalPick(sig, args.variant);
   if (strong) return strong;
 
   const prompt = buildPickerPrompt(args);

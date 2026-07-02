@@ -17,12 +17,13 @@
 
 import { isDesktopIDE, runPython, getRuntimeStatus } from "../../../lib/sceloIDE";
 import type { Dataset } from "../SoftDataWorkstation";
+import { findExposureColumn } from "../modelRunner";
 
 export interface ClimadaPythonOutput {
   aal: number;
-  rp10: number;       // 10-year return-period loss
-  rp100: number;      // 100-year
-  rp250: number;      // 250-year
+  rp10: number; // 10-year return-period loss
+  rp100: number; // 100-year
+  rp250: number; // 250-year
   countryAlpha3?: string;
   exposureValue: number;
   source: "climada-python" | "climada-python+ibtracs";
@@ -94,30 +95,34 @@ except Exception as e:
     sys.exit(1)
 `;
 
-export async function runClimadaPython(
-  dataset: Dataset,
-): Promise<ClimadaPythonOutput | null> {
+export async function runClimadaPython(dataset: Dataset): Promise<ClimadaPythonOutput | null> {
+  // Error contract mirrors glmPython: null ONLY when the bridge is
+  // unavailable (browser / no Python); everything else throws with the
+  // reason so the caller can surface it on the result card.
   if (!isDesktopIDE()) return null;
   const status = await getRuntimeStatus();
   if (!status.python) return null;
-  // Approximate total exposure = sum of any "paid" / "exposure" / "tiv" column.
-  const cols = dataset.columns.map((c) => c.toLowerCase());
-  const expIdx = ["exposure", "tiv", "sum_insured", "paid"].map((k) =>
-    cols.indexOf(k),
-  ).find((i) => i >= 0);
-  let total = 0;
-  if (expIdx !== undefined && expIdx >= 0) {
-    const col = dataset.columns[expIdx];
-    for (const r of dataset.rows) {
-      const v = r[col];
-      if (typeof v === "number") total += v;
-    }
+  // Total exposure from the dataset's exposure-like column. Fuzzy match
+  // (sum_insur* / tiv / exposure / paid) because real headers truncate —
+  // the motor benchmark file spells it "sum_insurd". No column or a zero
+  // sum is a hard error: quietly substituting a default exposure would
+  // return confident losses anchored to nothing in the data.
+  const expCol = findExposureColumn(dataset);
+  if (!expCol) {
+    throw new Error("no exposure-like column found (sum_insur*, tiv, exposure, paid)");
   }
+  let total = 0;
+  for (const r of dataset.rows) {
+    const v = r[expCol];
+    if (typeof v === "number" && Number.isFinite(v)) total += v;
+  }
+  if (total <= 0) {
+    throw new Error(`exposure column \`${expCol}\` sums to zero — cannot scale losses`);
+  }
+  const cols = dataset.columns.map((c) => c.toLowerCase());
   // Country alpha-3 guess from a country / iso column.
   let country: string | undefined;
-  const countryIdx = ["country", "iso3", "iso_a3"].map((k) =>
-    cols.indexOf(k),
-  ).find((i) => i >= 0);
+  const countryIdx = ["country", "iso3", "iso_a3"].map((k) => cols.indexOf(k)).find((i) => i >= 0);
   if (countryIdx !== undefined && countryIdx >= 0) {
     const col = dataset.columns[countryIdx];
     const first = dataset.rows.find((r) => typeof r[col] === "string");
@@ -135,17 +140,22 @@ export async function runClimadaPython(
     // data IPC unavailable — stay on synthetic.
   }
   const stdin = JSON.stringify({
-    totalExposure: total || 1_000_000,
+    totalExposure: total,
     country,
     ibtracsPath,
   });
   const res = await runPython(SCRIPT, { stdin });
-  if (!res.ok) return null;
-  try {
-    const parsed = JSON.parse(res.stdout.trim());
-    if (parsed && "error" in parsed) return null;
-    return parsed as ClimadaPythonOutput;
-  } catch {
-    return null;
+  if (!res.ok) {
+    throw new Error(res.stderr.trim().slice(-400) || `python exited with code ${res.exitCode}`);
   }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(res.stdout.trim());
+  } catch {
+    throw new Error("climada bridge returned non-JSON output");
+  }
+  if (parsed && typeof parsed === "object" && "error" in parsed) {
+    throw new Error(String((parsed as { error: unknown }).error));
+  }
+  return parsed as ClimadaPythonOutput;
 }

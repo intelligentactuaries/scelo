@@ -30,7 +30,9 @@ export type CouncilSynthesis = {
 
 const DEFAULT_SWARM_URL = "http://localhost:3010";
 
-function swarmUrl(): string {
+// Exported so the council CTA can probe the SAME base URL the calls will
+// hit — including the ?swarmUrl= override — instead of hardcoding its own.
+export function swarmApiUrl(): string {
   if (typeof window === "undefined") return DEFAULT_SWARM_URL;
   // Allow the user to override at runtime via a URL param for staging /
   // demo flows. e.g. `?swarmUrl=https://swarms.intelligentactuaries.com`.
@@ -54,7 +56,7 @@ export interface ConveneOpts {
 }
 
 export async function conveneCouncil(opts: ConveneOpts): Promise<CouncilSynthesis> {
-  const base = swarmUrl();
+  const base = swarmApiUrl();
   const start = await fetch(`${base}/api/run`, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -80,7 +82,7 @@ export async function conveneCouncil(opts: ConveneOpts): Promise<CouncilSynthesi
   // eventually surfaces an error.
   const POLL_MS = 2000;
   const perAgentMs = 10_000;
-  const societyMs = (opts.skipSociety ? 0 : 12 * 60 * 1000);
+  const societyMs = opts.skipSociety ? 0 : 12 * 60 * 1000;
   const TIMEOUT_MS = Math.min(
     45 * 60 * 1000,
     Math.max(5 * 60 * 1000, (opts.subset ?? 12) * perAgentMs + societyMs),

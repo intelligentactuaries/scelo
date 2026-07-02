@@ -8,6 +8,7 @@
 // is to make the soft→tools→hard story end-to-end visible without round-
 // tripping every cell to the backend.
 
+import { isDesktopIDE } from "../../lib/sceloIDE";
 import type { Dataset, Row } from "./SoftDataWorkstation";
 import type { ModelFamily } from "./modelCatalog";
 import { runBasicTermProjection, parseModelPoints } from "./lifelibBasicTerm";
@@ -44,6 +45,15 @@ export type RunResult = {
   // raw computed object — debug / chatbar context
   detail?: Record<string, unknown>;
   error?: string;
+  // Provenance of the numbers: the desktop IDE's bundled Python/R bridge
+  // (canonical library implementation) or the in-browser TS approximation.
+  // Optional because persisted runs predate the field — treat absent as
+  // "browser".
+  source?: "python-bridge" | "browser";
+  // Set when a bridge was attempted but failed. The in-browser fallback
+  // still runs, but the result card must say WHY the canonical path
+  // didn't — a bridge failure must never be a silent mock substitution.
+  bridgeError?: string;
 };
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -64,6 +74,160 @@ function fmt(n: number, max = 2): string {
 
 function pct(n: number, digits = 1): string {
   return `${(100 * n).toFixed(digits)}%`;
+}
+
+// ── dataset shape detection ──────────────────────────────────────────────────
+//
+// The pricing/climate runners must not assume a fixed schema (`paid`,
+// `line`, `state`…) — real uploads use arbitrary column names. These
+// helpers detect the roles generically. Detection scans a bounded slice
+// of the rows so a 250k-row import stays cheap; the import layer already
+// reservoir-samples large files, so the slice is representative.
+
+const DETECT_SCAN_CAP = 50_000;
+
+// Row identifiers pretending to be covariates: `id`, `policy_id`, `uuid`…
+const ID_LIKE_NAME = /^(id|.*_id|uuid|.*key)$/i;
+
+// Count-like frequency targets: past_claims, claims, claim_count, n_claims…
+const CLAIM_COUNT_RE = /(^|_)(past_)?claims?(_count)?(_|$)/i;
+
+// Monetary severity columns.
+const MONETARY_RE = /(^|_)(paid|claim_amt|claim_amount|severity|loss|incurred)(_|$)/i;
+
+// String-typed columns with a small number of levels — the rating factors a
+// GLM can actually use. Excludes id-like columns both by name and by shape
+// (unique ≈ row count means it's an identifier, not a factor).
+export function detectCategoricalCovariates(dataset: Dataset, maxLevels = 20): string[] {
+  const rows = dataset.rows;
+  const scan = Math.min(rows.length, DETECT_SCAN_CAP);
+  if (scan === 0) return [];
+  const found: string[] = [];
+  for (const col of dataset.columns) {
+    if (ID_LIKE_NAME.test(col)) continue;
+    const seen = new Set<string>();
+    let nonNull = 0;
+    let strings = 0;
+    let tooMany = false;
+    for (let i = 0; i < scan; i++) {
+      const v = rows[i][col];
+      if (v === null || v === undefined || v === "") continue;
+      nonNull++;
+      if (typeof v === "string") strings++;
+      seen.add(String(v));
+      if (seen.size > maxLevels) {
+        tooMany = true;
+        break;
+      }
+    }
+    if (tooMany || nonNull === 0) continue;
+    if (seen.size < 2) continue;
+    if (strings < nonNull * 0.9) continue; // string-typed columns only
+    if (seen.size >= nonNull * 0.8) continue; // id-like: unique ≈ rows
+    found.push(col);
+  }
+  return found;
+}
+
+// Frequency target: a count-like column name whose values are small
+// non-negative integers (past_claims, claim_count, …).
+export function detectFrequencyTarget(dataset: Dataset): string | null {
+  const rows = dataset.rows;
+  const scan = Math.min(rows.length, DETECT_SCAN_CAP);
+  for (const col of dataset.columns) {
+    if (!CLAIM_COUNT_RE.test(col)) continue;
+    let numeric = 0;
+    let smallInts = 0;
+    for (let i = 0; i < scan; i++) {
+      const v = rows[i][col];
+      if (typeof v !== "number" || !Number.isFinite(v)) continue;
+      numeric++;
+      if (Number.isInteger(v) && v >= 0 && v <= 50) smallInts++;
+    }
+    if (numeric > 0 && smallInts >= numeric * 0.95) return col;
+  }
+  return null;
+}
+
+// Monetary severity column: paid / claim_amt / severity / loss / incurred
+// with at least one positive numeric value.
+export function detectMonetaryColumn(dataset: Dataset): string | null {
+  const rows = dataset.rows;
+  const scan = Math.min(rows.length, DETECT_SCAN_CAP);
+  for (const col of dataset.columns) {
+    if (!MONETARY_RE.test(col)) continue;
+    for (let i = 0; i < scan; i++) {
+      const v = rows[i][col];
+      if (typeof v === "number" && Number.isFinite(v) && v > 0) return col;
+    }
+  }
+  return null;
+}
+
+// Exposure-like column for the climate runners. Fuzzy on purpose:
+// real-world headers truncate ("sum_insurd") or vary ("tiv", "TIV_usd").
+// `paid` is last-resort — a loss column is a poor exposure proxy but beats
+// nothing on claims-level data.
+const EXPOSURE_PATTERNS = [/^sum_insur/i, /(^|_)tiv(_|$)/i, /(^|_)exposure(s)?(_|$)/i, /^paid$/i];
+
+export function findExposureColumn(dataset: Dataset): string | null {
+  for (const re of EXPOSURE_PATTERNS) {
+    const col = dataset.columns.find((c) => re.test(c));
+    if (col) return col;
+  }
+  return null;
+}
+
+// Even-stride sample so capped fits still span the whole file (the rows are
+// in file order — first-N would bias toward whatever sorted first).
+export function sampleRowsCapped(rows: Row[], cap: number): { rows: Row[]; sampled: boolean } {
+  if (rows.length <= cap) return { rows, sampled: false };
+  const stride = rows.length / cap;
+  const out: Row[] = new Array(cap);
+  for (let i = 0; i < cap; i++) out[i] = rows[Math.floor(i * stride)];
+  return { rows: out, sampled: true };
+}
+
+// Full numeric profile of every numeric-bearing column, used by the
+// descriptive runner and its card table. Sorted by variance descending so
+// callers can take "the interesting handful" off the top.
+export type NumericColumnProfile = {
+  name: string;
+  count: number;
+  mean: number;
+  sd: number;
+  min: number;
+  q1: number;
+  median: number;
+  q3: number;
+  max: number;
+};
+
+export function profileNumericColumns(dataset: Dataset): NumericColumnProfile[] {
+  const profiles: NumericColumnProfile[] = [];
+  for (const col of dataset.columns) {
+    const values = numericCol(dataset.rows, col);
+    if (values.length === 0) continue;
+    values.sort((a, b) => a - b);
+    const n = values.length;
+    const mean = values.reduce((a, b) => a + b, 0) / n;
+    const varSum = values.reduce((a, b) => a + (b - mean) * (b - mean), 0);
+    const sd = n > 1 ? Math.sqrt(varSum / (n - 1)) : 0;
+    const q = (p: number) => values[Math.min(n - 1, Math.floor(p * n))];
+    profiles.push({
+      name: col,
+      count: n,
+      mean,
+      sd,
+      min: values[0],
+      q1: q(0.25),
+      median: q(0.5),
+      q3: q(0.75),
+      max: values[n - 1],
+    });
+  }
+  profiles.sort((a, b) => b.sd * b.sd - a.sd * a.sd);
+  return profiles;
 }
 
 // Try to coerce the claims-level dataset into a triangle indexed by origin
@@ -120,10 +284,7 @@ function buildTriangle(dataset: Dataset): {
   // stay NaN instead of accreting zero into chain-ladder's lastC.
   const cells = new Map<string, number>();
   const cumByRow = new Map<number, number[]>();
-  const latestCalPeriod = pairs.reduce(
-    (m, p) => Math.max(m, p.o + p.d),
-    -Infinity,
-  );
+  const latestCalPeriod = pairs.reduce((m, p) => Math.max(m, p.o + p.d), -Infinity);
   for (const o of origins) {
     const row: number[] = [];
     let acc = 0;
@@ -453,88 +614,158 @@ function runLifeContingencies({ dataset }: Args): RunResult {
   };
 }
 
+// In-browser GLM fits work on a capped sample: the grouped-mean pass is
+// O(rows) but 2M rows on the main thread is still a visible stall, and the
+// approximation gains nothing past ~100k rows.
+const GLM_FIT_ROW_CAP = 100_000;
+
 function runGLMFrequency({ dataset }: Args): RunResult {
-  // Frequency = mean claims per row in each categorical group; use `line`
-  // if present, else `state`, else top categorical column.
-  const cat = ["line", "state", "sex", "settled"].find((c) => dataset.columns.includes(c));
-  if (!cat) return makeUnsupported("glm-frequency", "pricing", "No categorical covariate found.");
-  const groups = new Map<string, number>();
-  for (const r of dataset.rows) {
+  // Covariates come from the dataset itself (string columns with 2-20
+  // levels), never a hardcoded schema; the frequency target must be a
+  // count-like column (past_claims, claim_count, …).
+  const covariates = detectCategoricalCovariates(dataset);
+  if (covariates.length === 0)
+    return makeUnsupported(
+      "glm-frequency",
+      "pricing",
+      "No categorical covariate found (need a string column with 2-20 levels).",
+    );
+  const target = detectFrequencyTarget(dataset);
+  if (!target)
+    return makeUnsupported(
+      "glm-frequency",
+      "pricing",
+      "No count-like frequency target found (e.g. past_claims / claim_count with small integer values).",
+    );
+  const { rows, sampled } = sampleRowsCapped(dataset.rows, GLM_FIT_ROW_CAP);
+  const cat = covariates[0];
+  const groups = new Map<string, { sum: number; n: number }>();
+  let total = 0;
+  let totalSum = 0;
+  for (const r of rows) {
+    const v = r[target];
+    if (typeof v !== "number" || !Number.isFinite(v)) continue;
     const k = String(r[cat] ?? "—");
-    groups.set(k, (groups.get(k) ?? 0) + 1);
+    const g = groups.get(k) ?? { sum: 0, n: 0 };
+    g.sum += v;
+    g.n += 1;
+    groups.set(k, g);
+    total += 1;
+    totalSum += v;
   }
-  const total = dataset.rows.length;
+  if (total === 0)
+    return makeUnsupported("glm-frequency", "pricing", `No numeric values in \`${target}\`.`);
   const xs: string[] = [];
   const ys: number[] = [];
-  for (const [k, n] of groups) {
+  for (const [k, g] of groups) {
     xs.push(k);
-    ys.push(n / total);
+    ys.push(g.sum / g.n);
   }
-  const mean = ys.reduce((a, b) => a + b, 0) / Math.max(1, ys.length);
+  const mean = totalSum / total;
+  const sampleNote = sampled
+    ? ` (fitted on a ${GLM_FIT_ROW_CAP.toLocaleString()}-row sample of ${dataset.rows.length.toLocaleString()})`
+    : "";
   return {
     modelId: "glm-frequency",
     family: "pricing",
     status: "done",
     startedAt: Date.now(),
     finishedAt: Date.now(),
-    headline: { label: `freq | ${cat}`, value: mean, precision: 3 },
+    headline: {
+      label: `${target} | ${cat} (in-browser approximation)`,
+      value: mean,
+      precision: 3,
+    },
     secondary: [
       { label: "groups", value: String(groups.size) },
-      { label: "deviance (mock)", value: fmt(total * 0.02, 1) },
+      { label: "covariates found", value: covariates.slice(0, 4).join(", ") },
+      { label: "rows fitted", value: total.toLocaleString() },
     ],
     series: { kind: "bar", x: xs, y: ys },
-    blurb: `Poisson GLM (mock) on ${cat}: mean group frequency ${(mean * 100).toFixed(1)}%.`,
-    detail: { groups: Object.fromEntries(groups), total },
+    blurb:
+      `Poisson-style grouped mean of \`${target}\` by ${cat}: ${fmt(mean, 3)} ` +
+      `overall across ${groups.size} levels${sampleNote}.`,
+    detail: {
+      target,
+      covariates,
+      groups: Object.fromEntries([...groups].map(([k, g]) => [k, g.sum / g.n])),
+      rowsFitted: total,
+      sampled,
+    },
   };
 }
 
 function runGLMSeverity({ dataset }: Args): RunResult {
-  const cat = ["line", "state", "sex", "settled"].find((c) => dataset.columns.includes(c));
-  const paid = numericCol(dataset.rows, "paid");
-  if (!cat || paid.length === 0)
+  const covariates = detectCategoricalCovariates(dataset);
+  const money = detectMonetaryColumn(dataset);
+  if (!money)
     return makeUnsupported(
       "glm-severity",
       "pricing",
-      "Need a categorical covariate and a `paid` column.",
+      "No monetary severity column found (paid / claim_amt / severity / loss).",
     );
+  if (covariates.length === 0)
+    return makeUnsupported(
+      "glm-severity",
+      "pricing",
+      "No categorical covariate found (need a string column with 2-20 levels).",
+    );
+  const { rows, sampled } = sampleRowsCapped(dataset.rows, GLM_FIT_ROW_CAP);
+  const cat = covariates[0];
   const groups = new Map<string, { sum: number; n: number }>();
-  for (const r of dataset.rows) {
+  let total = 0;
+  for (const r of rows) {
+    const v = r[money];
+    // Severity is conditional on a positive amount (Gamma support).
+    if (typeof v !== "number" || !Number.isFinite(v) || v <= 0) continue;
     const k = String(r[cat] ?? "—");
-    const v = r.paid;
-    if (typeof v !== "number") continue;
     const g = groups.get(k) ?? { sum: 0, n: 0 };
     g.sum += v;
     g.n += 1;
     groups.set(k, g);
+    total += 1;
   }
+  if (total === 0)
+    return makeUnsupported("glm-severity", "pricing", `No positive amounts in \`${money}\`.`);
   const xs: string[] = [];
   const ys: number[] = [];
   for (const [k, g] of groups) {
     xs.push(k);
-    ys.push(g.n > 0 ? g.sum / g.n : 0);
+    ys.push(g.sum / g.n);
   }
   const mean = ys.reduce((a, b) => a + b, 0) / Math.max(1, ys.length);
+  const sampleNote = sampled
+    ? ` (fitted on a ${GLM_FIT_ROW_CAP.toLocaleString()}-row sample of ${dataset.rows.length.toLocaleString()})`
+    : "";
   return {
     modelId: "glm-severity",
     family: "pricing",
     status: "done",
     startedAt: Date.now(),
     finishedAt: Date.now(),
-    headline: { label: `sev | ${cat}`, value: mean, precision: 0 },
+    headline: {
+      label: `${money} | ${cat} (in-browser approximation)`,
+      value: mean,
+      precision: 0,
+    },
     secondary: [
       { label: "groups", value: String(groups.size) },
-      { label: "n claims", value: String(paid.length) },
+      { label: "n claims", value: total.toLocaleString() },
+      { label: "covariates found", value: covariates.slice(0, 4).join(", ") },
     ],
     series: { kind: "bar", x: xs, y: ys },
-    blurb: `Gamma GLM (mock) on ${cat}: mean group severity ${fmt(mean, 0)}.`,
-    detail: { groupsCount: groups.size, mean },
+    blurb:
+      `Gamma-style grouped mean of \`${money}\` by ${cat}: ${fmt(mean, 0)} ` +
+      `across ${groups.size} levels${sampleNote}.`,
+    detail: { target: money, covariates, groupsCount: groups.size, mean, sampled },
   };
 }
 
 function runGBM({ dataset }: Args): RunResult {
   const n = dataset.rows.length;
   // Deterministic AUC that drifts with row count so the mock feels alive
-  // when the user filters / loads different datasets.
+  // when the user filters / loads different datasets. The headline label
+  // says so explicitly — this is NOT a fitted model.
   const auc = Math.min(0.92, 0.7 + n / 4000);
   const rmse = 1200 / Math.max(1, Math.sqrt(n));
   return {
@@ -543,57 +774,86 @@ function runGBM({ dataset }: Args): RunResult {
     status: "done",
     startedAt: Date.now(),
     finishedAt: Date.now(),
-    headline: { label: "AUC", value: auc, precision: 3 },
+    headline: { label: "AUC (in-browser approximation)", value: auc, precision: 3 },
     secondary: [
       { label: "RMSE", value: fmt(rmse, 0) },
       { label: "iters", value: "200" },
       { label: "n", value: String(n) },
     ],
-    blurb: `GBM (mock) lands at AUC ${auc.toFixed(3)} on ${n} rows.`,
+    blurb: `GBM (in-browser approximation, not a fitted model) lands at AUC ${auc.toFixed(3)} on ${n} rows.`,
     detail: { auc, rmse, n },
   };
 }
 
 function runSHAP({ dataset }: Args): RunResult {
-  // Pretend the GBM is in memory and pull a top-3 SHAP. Use top-3
-  // categorical columns by cardinality as a stand-in.
-  const cats = ["line", "state", "sex", "settled"].filter((c) => dataset.columns.includes(c));
+  // Pretend the GBM is in memory and pull a top-3 SHAP. Stand-in ranking
+  // = the dataset's own categorical rating factors; unsupported when the
+  // dataset has none (fabricating a "top driver — 0.00" would be worse
+  // than an honest error).
+  const cats = detectCategoricalCovariates(dataset);
+  if (cats.length === 0)
+    return makeUnsupported(
+      "shap",
+      "pricing",
+      "No candidate feature columns found (need categorical columns with 2-20 levels).",
+    );
   const xs = cats.slice(0, 3);
   const ys = [0.42, 0.27, 0.18].slice(0, xs.length);
-  const top = xs[0] ?? "—";
+  const top = xs[0];
   return {
     modelId: "shap",
     family: "pricing",
     status: "done",
     startedAt: Date.now(),
     finishedAt: Date.now(),
-    headline: { label: "top driver", value: ys[0] ?? 0, precision: 2 },
+    headline: { label: "top driver (in-browser approximation)", value: ys[0], precision: 2 },
     secondary: xs.map((c, i) => ({ label: c, value: (ys[i] ?? 0).toFixed(2) })),
-    series: xs.length > 0 ? { kind: "bar", x: xs, y: ys } : undefined,
-    blurb: `SHAP attributes the most predictive signal to ${top} (${(ys[0] ?? 0).toFixed(2)}).`,
-    detail: { top, ranking: xs },
+    series: { kind: "bar", x: xs, y: ys },
+    blurb:
+      `SHAP (in-browser approximation — illustrative weights, not a fitted attribution) ` +
+      `ranks ${top} as the top driver.`,
+    detail: { top, ranking: xs, approximation: true },
   };
 }
 
 function runClimada({ dataset }: Args): RunResult {
-  // Annual Average Loss as a rough function of (paid sum × geographic factor).
-  const paid = numericCol(dataset.rows, "paid").reduce((a, b) => a + b, 0);
+  // Annual Average Loss as a rough function of (exposure sum × geographic
+  // factor). Exposure comes from whatever exposure-like column the dataset
+  // has (sum_insur*, tiv, exposure, paid) — never a hardcoded `paid`.
+  const expCol = findExposureColumn(dataset);
+  if (!expCol)
+    return makeUnsupported(
+      "climada",
+      "climate",
+      "No exposure-like column found (sum_insur*, tiv, exposure, paid).",
+    );
+  const exposure = numericCol(dataset.rows, expCol).reduce((a, b) => a + b, 0);
+  if (exposure <= 0)
+    return makeUnsupported(
+      "climada",
+      "climate",
+      `Exposure column \`${expCol}\` sums to zero — nothing to scale losses against.`,
+    );
   const hasGeo = dataset.columns.some((c) => /(state|province|country|region)/i.test(c));
   const factor = hasGeo ? 0.012 : 0.008;
-  const aal = paid * factor;
+  const aal = exposure * factor;
   return {
     modelId: "climada",
     family: "climate",
     status: "done",
     startedAt: Date.now(),
     finishedAt: Date.now(),
-    headline: { label: "AAL", value: aal, precision: 0 },
+    headline: { label: "AAL (in-browser approximation)", value: aal, precision: 0 },
     secondary: [
+      { label: "exposure column", value: expCol },
+      { label: "exposure (∑)", value: fmt(exposure, 0) },
       { label: "factor (mock)", value: pct(factor) },
       { label: "geographic input", value: hasGeo ? "yes" : "no" },
     ],
-    blurb: `CLIMADA (mock) estimates an annual average loss of ${fmt(aal, 0)}.`,
-    detail: { aal, hasGeo },
+    blurb:
+      `CLIMADA (in-browser approximation) estimates an annual average loss of ` +
+      `${fmt(aal, 0)} on ${fmt(exposure, 0)} \`${expCol}\` exposure.`,
+    detail: { aal, exposure, exposureColumn: expCol, hasGeo },
   };
 }
 
@@ -609,9 +869,23 @@ function runNfipFloodLossesStub(_: Args): RunResult {
 }
 
 function runParametric({ dataset }: Args): RunResult {
-  const paid = numericCol(dataset.rows, "paid");
-  const trigger =
-    paid.length > 0 ? paid.sort((a, b) => a - b)[Math.floor(paid.length * 0.9)] : 100000;
+  // Trigger = p90 of a monetary loss column. No loss column → no trigger;
+  // fabricating a 100k default labelled "p90 of paid" misleads.
+  const lossCol = detectMonetaryColumn(dataset);
+  if (!lossCol)
+    return makeUnsupported(
+      "parametric-design",
+      "climate",
+      "No monetary loss column found (paid / claim_amt / severity / loss) to derive a trigger from.",
+    );
+  const losses = numericCol(dataset.rows, lossCol);
+  if (losses.length === 0)
+    return makeUnsupported(
+      "parametric-design",
+      "climate",
+      `No numeric values in \`${lossCol}\` to derive a trigger from.`,
+    );
+  const trigger = losses.sort((a, b) => a - b)[Math.floor(losses.length * 0.9)];
   return {
     modelId: "parametric-design",
     family: "climate",
@@ -620,11 +894,11 @@ function runParametric({ dataset }: Args): RunResult {
     finishedAt: Date.now(),
     headline: { label: "trigger", value: trigger, precision: 0 },
     secondary: [
-      { label: "method", value: "p90 of paid" },
+      { label: "method", value: `p90 of ${lossCol}` },
       { label: "payout cap", value: fmt(trigger * 4, 0) },
     ],
-    blurb: `Parametric trigger set at p90 of paid: ${fmt(trigger, 0)}.`,
-    detail: { trigger },
+    blurb: `Parametric trigger set at p90 of ${lossCol}: ${fmt(trigger, 0)}.`,
+    detail: { trigger, lossColumn: lossCol },
   };
 }
 
@@ -688,28 +962,56 @@ function runDBValuation({ dataset }: Args): RunResult {
   };
 }
 
+// How many top-variance columns get the full stat row on the card table;
+// the rest are listed by name so nothing silently disappears.
+const DESCRIPTIVE_TABLE_COLS = 5;
+
 function runDescriptive({ dataset }: Args): RunResult {
-  const paid = numericCol(dataset.rows, "paid");
-  const mean = paid.length > 0 ? paid.reduce((a, b) => a + b, 0) / paid.length : 0;
-  const sorted = [...paid].sort((a, b) => a - b);
-  const median = sorted.length > 0 ? sorted[Math.floor(sorted.length / 2)] : 0;
-  const min = sorted[0] ?? 0;
-  const max = sorted[sorted.length - 1] ?? 0;
+  // Profile EVERY numeric column, not a hardcoded `paid`. Full quartile
+  // profiles for all of them live in `detail`; the card table shows the
+  // top-variance handful.
+  const profiles = profileNumericColumns(dataset);
+  if (profiles.length === 0)
+    return makeUnsupported(
+      "descriptive",
+      "general",
+      "No numeric columns found — nothing to summarise.",
+    );
+  const top = profiles.slice(0, DESCRIPTIVE_TABLE_COLS);
+  const rest = profiles.slice(DESCRIPTIVE_TABLE_COLS);
+  const lead = top[0];
+  // Contract with the streaming importer: big files arrive reservoir-
+  // sampled with `sampled` / `sourceTotalRows` set on the dataset. Read
+  // defensively — both fields are optional and absent on small datasets.
+  const meta = dataset as Dataset & { sampled?: boolean; sourceTotalRows?: number };
+  const sourceRows = meta.sourceTotalRows ?? dataset.rows.length;
+  const rowsLabel =
+    meta.sampled && sourceRows > dataset.rows.length
+      ? `${dataset.rows.length.toLocaleString()} sampled of ${sourceRows.toLocaleString()}`
+      : dataset.rows.length.toLocaleString();
   return {
     modelId: "descriptive",
     family: "general",
     status: "done",
     startedAt: Date.now(),
     finishedAt: Date.now(),
-    headline: { label: "mean (paid)", value: mean, precision: 0 },
+    headline: { label: `mean (${lead.name})`, value: lead.mean, precision: 0 },
     secondary: [
-      { label: "median", value: fmt(median, 0) },
-      { label: "min", value: fmt(min, 0) },
-      { label: "max", value: fmt(max, 0) },
-      { label: "n", value: String(paid.length) },
+      { label: "numeric columns", value: String(profiles.length) },
+      { label: "rows", value: rowsLabel },
+      ...(rest.length > 0
+        ? [{ label: "also numeric", value: rest.map((p) => p.name).join(", ") }]
+        : []),
     ],
-    blurb: `Descriptive: paid mean ${fmt(mean, 0)}, median ${fmt(median, 0)}, range [${fmt(min, 0)}, ${fmt(max, 0)}].`,
-    detail: { mean, median, min, max, n: paid.length },
+    tableSpec: {
+      headers: ["column", "n", "mean", "sd", "min", "max"],
+      rows: top.map((p) => [p.name, p.count, p.mean, p.sd, p.min, p.max]),
+    },
+    blurb:
+      `Descriptive: ${profiles.length} numeric columns profiled; highest-variance is ` +
+      `\`${lead.name}\` (mean ${fmt(lead.mean, 0)}, sd ${fmt(lead.sd, 0)}, ` +
+      `range [${fmt(lead.min, 0)}, ${fmt(lead.max, 0)}]).`,
+    detail: { profiles },
   };
 }
 
@@ -765,13 +1067,9 @@ function runBasicTermProjectionRunner({ dataset }: Args): RunResult {
       "no rows matched the model-point shape (need age_at_entry / sum_assured / policy_term at minimum).",
     );
   }
-  const years = Array.from(
-    new Set(proj.monthly.map((r) => Math.floor(r.month / 12))),
-  ).slice(0, 30);
+  const years = Array.from(new Set(proj.monthly.map((r) => Math.floor(r.month / 12)))).slice(0, 30);
   const annualNet: number[] = years.map((y) =>
-    proj.monthly
-      .filter((r) => Math.floor(r.month / 12) === y)
-      .reduce((s, r) => s + r.netCf, 0),
+    proj.monthly.filter((r) => Math.floor(r.month / 12) === y).reduce((s, r) => s + r.netCf, 0),
   );
   return {
     modelId: "basicterm-projection",
@@ -791,9 +1089,7 @@ function runBasicTermProjectionRunner({ dataset }: Args): RunResult {
       { label: "PV expenses (∑)", value: fmt(proj.totalExpenses) },
       {
         label: "break-even",
-        value: proj.breakEvenMonth === null
-          ? "—"
-          : `${proj.breakEvenMonth}m`,
+        value: proj.breakEvenMonth === null ? "—" : `${proj.breakEvenMonth}m`,
       },
     ],
     series: {
@@ -902,20 +1198,16 @@ function runIfrs17Csm({ dataset }: Args): RunResult {
 function runSolvency2Life({ dataset }: Args): RunResult {
   const s = summariseMP(dataset);
   if (!s) {
-    return makeUnsupported(
-      "solvency2-life",
-      "life",
-      "expects a life model-point file.",
-    );
+    return makeUnsupported("solvency2-life", "life", "expects a life model-point file.");
   }
   // Standard formula life underwriting sub-modules (toy shock magnitudes
   // applied to the BEL = total sum assured · mortality factor).
   const bel = s.totalSA * 0.012;
   const subs = {
     mortality: bel * 0.15,
-    longevity: bel * 0.20 * 0.4, // longevity only meaningful for annuities
-    lapse: bel * 0.40,
-    expense: bel * 0.10,
+    longevity: bel * 0.2 * 0.4, // longevity only meaningful for annuities
+    lapse: bel * 0.4,
+    expense: bel * 0.1,
     cat: 0.0015 * s.totalSA,
   };
   // Sub-module aggregation with the EIOPA life correlation matrix is
@@ -923,9 +1215,10 @@ function runSolvency2Life({ dataset }: Args): RunResult {
   // 0.25 cross-correl as a credible proxy.
   const vals = Object.values(subs);
   const sumSq = vals.reduce((s, v) => s + v * v, 0);
-  const crossSum = vals.reduce((s, v, i) =>
-    s + vals.slice(i + 1).reduce((s2, v2) => s2 + 2 * 0.25 * v * v2, 0),
-  0);
+  const crossSum = vals.reduce(
+    (s, v, i) => s + vals.slice(i + 1).reduce((s2, v2) => s2 + 2 * 0.25 * v * v2, 0),
+    0,
+  );
   const scr = Math.sqrt(sumSq + crossSum);
   return {
     modelId: "solvency2-life",
@@ -953,7 +1246,11 @@ function runSolvency2Life({ dataset }: Args): RunResult {
 function dominantOf(obj: Record<string, number>): string {
   let best = "";
   let bestV = -Infinity;
-  for (const [k, v] of Object.entries(obj)) if (v > bestV) { best = k; bestV = v; }
+  for (const [k, v] of Object.entries(obj))
+    if (v > bestV) {
+      best = k;
+      bestV = v;
+    }
   return best;
 }
 
@@ -968,11 +1265,12 @@ function runNestedStochastic({ dataset }: Args): RunResult {
   }
   // TVOG proxy: outer × inner = 1000 × 100 paths, guarantee bites in
   // ~12% of outer tail. Report TVOG and a tail distribution sketch.
-  const outer = 1000, inner = 100;
-  const meanLiab = s.totalSA * 0.30;
+  const outer = 1000,
+    inner = 100;
+  const meanLiab = s.totalSA * 0.3;
   const tvog = meanLiab * 0.045;
   const tailBins = ["p50", "p75", "p90", "p95", "p99"];
-  const tailFactor = [1.0, 1.18, 1.41, 1.62, 2.10];
+  const tailFactor = [1.0, 1.18, 1.41, 1.62, 2.1];
   const tail = tailFactor.map((f) => meanLiab * f);
   return {
     modelId: "nested-stochastic",
@@ -1021,8 +1319,7 @@ function runSmithWilsonCurve(_: Args): RunResult {
       { label: "zero @ 50y", value: pct(zero[zero.length - 1]) },
     ],
     series: { kind: "line", x: tenors.map((t) => `${t}y`), y: zero },
-    blurb:
-      `Lifelib smithwilson · zero curve extrapolated from LLP ${llp}y to UFR ${pct(ufr, 2)}.`,
+    blurb: `Lifelib smithwilson · zero curve extrapolated from LLP ${llp}y to UFR ${pct(ufr, 2)}.`,
     detail: { lifelib: "smithwilson", ufr, llp, tenors, zero },
   };
 }
@@ -1062,7 +1359,7 @@ function runEconomicCurves(_: Args): RunResult {
   // Same toy curve as Smith-Wilson but exposed under the economic family
   // umbrella with forward + discount projections.
   const tenors = [1, 2, 3, 5, 7, 10, 15, 20, 30];
-  const zero = [0.032, 0.0325, 0.0330, 0.0340, 0.0345, 0.0350, 0.0345, 0.0345, 0.0344];
+  const zero = [0.032, 0.0325, 0.033, 0.034, 0.0345, 0.035, 0.0345, 0.0345, 0.0344];
   const disc = tenors.map((t, i) => Math.pow(1 + zero[i], -t));
   return {
     modelId: "economic-curves",
@@ -1115,7 +1412,9 @@ function pickShock(row: Row, lookup: Map<string, string>): "mild" | "moderate" |
   for (const a of ["shock", "shock_severity", "severity"]) {
     const col = lookup.get(a);
     if (!col) continue;
-    const v = String(row[col] ?? "").toLowerCase().trim();
+    const v = String(row[col] ?? "")
+      .toLowerCase()
+      .trim();
     if (v === "mild" || v === "moderate" || v === "severe") return v;
   }
   return null;
@@ -1126,10 +1425,7 @@ function configFromRow(dataset: Dataset): WmtrSingleParams {
   const lookup = new Map(dataset.columns.map((c) => [lc(c), c] as const));
   const row = dataset.rows[0] as Row;
   const c: WmtrSingleParams = { ...DEFAULT_WMTR_SINGLE_PARAMS };
-  const set = (
-    key: keyof WmtrSingleParams,
-    aliases: string[],
-  ) => {
+  const set = (key: keyof WmtrSingleParams, aliases: string[]) => {
     const v = pickNumeric(row, lookup, aliases);
     if (v !== null) (c as unknown as Record<string, number>)[key as string] = v;
   };
@@ -1210,7 +1506,9 @@ function runWmtrSensitivityRunner({ dataset }: Args): RunResult {
   // sensitive the forecast is to the shock dial. Reads as "shock vol".
   const collapse = sweep.rows.map((row) => row.result.outcomeFractions.collapsed);
   const sensitivity = (collapse[2] ?? 0) - (collapse[0] ?? 0);
-  const finalSurv = sweep.rows.map((row) => row.result.meanSurv[row.result.meanSurv.length - 1] ?? 0);
+  const finalSurv = sweep.rows.map(
+    (row) => row.result.meanSurv[row.result.meanSurv.length - 1] ?? 0,
+  );
   return {
     modelId: "wmtr-sensitivity",
     family: "forecast",
@@ -1241,7 +1539,10 @@ function runWmtrSensitivityRunner({ dataset }: Args): RunResult {
       `Shock sensitivity: survival drops from ${pct(finalSurv[0] ?? 0)} (mild) ` +
       `to ${pct(finalSurv[2] ?? 0)} (severe). Collapse-fraction widens by ` +
       `${pct(sensitivity, 0)} across the dial.`,
-    detail: { engine: "nanoeconomics-simulation", sweep: sweep.rows.map((r) => ({ shock: r.shock, outcomes: r.result.outcomeFractions })) },
+    detail: {
+      engine: "nanoeconomics-simulation",
+      sweep: sweep.rows.map((r) => ({ shock: r.shock, outcomes: r.result.outcomeFractions })),
+    },
   };
 }
 
@@ -1293,33 +1594,71 @@ export function runModel(modelId: string, dataset: Dataset): RunResult {
       secondary: [{ label: "reason", value: "no runner registered" }],
       blurb: `Model ${modelId} has no client-side runner yet.`,
       error: "no runner registered",
+      source: "browser",
     };
   }
   try {
-    return fn({ dataset });
+    return { ...fn({ dataset }), source: "browser" };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    return makeUnsupported(modelId, "general", msg);
+    return { ...makeUnsupported(modelId, "general", msg), source: "browser" };
   }
 }
 
 // ─── Async runner with Scelo IDE delegation ─────────────────────────────
 //
-// `runModelAsync` is an opt-in variant that, when running inside the Scelo
-// IDE desktop shell, can dispatch select models to the bundled Python
-// runtime instead of the in-browser TS port. Currently wired for
-// basicterm-projection (delegates to real lifelib via the BasicTerm
-// bridge). Every other model falls through to the sync `runModel` path,
-// so adoption is purely additive — callers can migrate one tool at a time.
+// `runModelAsync` is the variant that, when running inside the Scelo IDE
+// desktop shell, dispatches select models to the bundled Python/R runtime
+// instead of the in-browser TS port. The Hard Data run effect awaits it
+// for every model in `BRIDGED_MODEL_IDS`; everything else stays on the
+// sync `runModel` path.
 //
-// Why both: most of Scelo's runners are synchronous and cheap (pure
-// arithmetic over the dataset). Forcing every site to `await` would be a
-// pointless refactor. Tools that *want* the canonical Python answer
-// (matching SOA / SAA workbooks) call this entry point explicitly.
-export async function runModelAsync(
-  modelId: string,
-  dataset: Dataset,
-): Promise<RunResult> {
+// Provenance contract: bridge results carry `source: "python-bridge"`.
+// When a bridge fails (or returns nothing inside the IDE), the in-browser
+// fallback still runs but the result carries `bridgeError` so the card
+// can say WHY — a bridge failure must never silently pass off the mock
+// as the canonical answer.
+//
+// Why both entry points: most of Scelo's runners are synchronous and
+// cheap (pure arithmetic over the dataset). Forcing every site to `await`
+// would be a pointless refactor.
+
+// Models with a Python/R bridge branch below. Exported so the run effect
+// can route: bridged models await this entry point, the rest run sync.
+export const BRIDGED_MODEL_IDS: ReadonlySet<string> = new Set([
+  "chain-ladder",
+  "mack",
+  "bornhuetter-ferguson",
+  "bootstrap-ibnr",
+  "nfip-flood-losses",
+  "climada",
+  "lifecontingencies",
+  "glm-frequency",
+  "glm-severity",
+  "who-life-table",
+  "lee-carter",
+  "ifrs17-csm",
+  "basicterm-projection",
+]);
+
+// A bridge that returned null did so either because we're outside the
+// desktop IDE (clean, silent fallback) or because something inside the
+// IDE rejected the run (runtime missing / data shape) — the latter must
+// be surfaced.
+function bridgeReturnedNothing(bridge: string): string | undefined {
+  return isDesktopIDE()
+    ? `${bridge} bridge produced no result (runtime missing, unsupported data shape, or script error — see IDE logs)`
+    : undefined;
+}
+
+function bridgeErrorMessage(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
+}
+
+export async function runModelAsync(modelId: string, dataset: Dataset): Promise<RunResult> {
+  // Why the bridge didn't produce a result, if it was attempted. Attached
+  // to the in-browser fallback at the bottom.
+  let bridgeError: string | undefined;
   // Reserving family — chainladder Python is the canonical implementation.
   // Mack / BF / Bootstrap all go through bridges/chainladderPython.ts; the
   // method is forwarded so the Python script picks the right runner.
@@ -1327,11 +1666,14 @@ export async function runModelAsync(
     modelId === "chain-ladder" ||
     modelId === "mack" ||
     modelId === "bornhuetter-ferguson" ||
-    modelId === "bootstrap"
+    modelId === "bootstrap-ibnr"
   ) {
     try {
       const { runChainladderPython } = await import("./bridges/chainladderPython");
-      const py = await runChainladderPython(dataset, modelId);
+      // The catalog id is "bootstrap-ibnr"; the Python script's method
+      // vocabulary is plain "bootstrap".
+      const method = modelId === "bootstrap-ibnr" ? "bootstrap" : modelId;
+      const py = await runChainladderPython(dataset, method);
       if (py) {
         const isMack = py.cv !== undefined;
         return {
@@ -1363,10 +1705,12 @@ export async function runModelAsync(
             (py.cv !== undefined ? ` (CV ${pct(py.cv, 2)})` : "") +
             ".",
           detail: { source: "chainladder-python", byOrigin: py.byOrigin },
+          source: "python-bridge",
         };
       }
-    } catch {
-      // Bridge unavailable or failed — fall through to TS runner.
+      bridgeError = bridgeReturnedNothing("chainladder");
+    } catch (e) {
+      bridgeError = bridgeErrorMessage(e);
     }
   }
   // Climate family — NFIP flood-losses Tool consumes the downloaded
@@ -1393,7 +1737,11 @@ export async function runModelAsync(
             { label: "state-decade bins", value: py.bins.length.toLocaleString() },
             {
               label: "top 3 states",
-              value: py.topStates.slice(0, 3).map((s) => s.state).join(", ") || "—",
+              value:
+                py.topStates
+                  .slice(0, 3)
+                  .map((s) => s.state)
+                  .join(", ") || "—",
             },
             { label: "runtime", value: "bundled CPython (pandas)" },
           ],
@@ -1406,10 +1754,12 @@ export async function runModelAsync(
             `Bundled-CPython pandas summary of ${py.rowsScanned.toLocaleString()} NFIP claims rows. ` +
             `Top loss-paying state: ${topState?.state ?? "—"} (${fmt(topState?.totalPaidUsd ?? 0)}).`,
           detail: { ...py },
+          source: "python-bridge",
         };
       }
-    } catch {
-      // Fall through.
+      bridgeError = bridgeReturnedNothing("nfip");
+    } catch (e) {
+      bridgeError = bridgeErrorMessage(e);
     }
   }
   // Climate family — climada Python returns AAL + RP10/100/250 from a
@@ -1443,10 +1793,13 @@ export async function runModelAsync(
             `Bundled-CPython climada estimate: AAL ${fmt(py.aal)}, ` +
             `RP100 ${fmt(py.rp100)}, RP250 ${fmt(py.rp250)} on exposure ${fmt(py.exposureValue)}.`,
           detail: { ...py, source: "climada-python" },
+          source: "python-bridge",
         };
       }
-    } catch {
-      // Fall through.
+      // runClimadaPython returns null only outside the IDE runtime; real
+      // failures (incl. missing exposure column) throw with the reason.
+    } catch (e) {
+      bridgeError = bridgeErrorMessage(e);
     }
   }
   // Life family — lifecontingencies (R) for canonical EPVs.
@@ -1479,10 +1832,12 @@ export async function runModelAsync(
             `Bundled-R lifecontingencies: a${r.ageX}:${r.term}¬ = ${r.ax.toFixed(3)}, ` +
             `A(x,n) = ${r.Ax.toFixed(4)}, nEx = ${r.nEx.toFixed(4)} at ${pct(r.interest)} interest.`,
           detail: { ...r, source: "lifecontingencies-r" },
+          source: "python-bridge",
         };
       }
-    } catch {
-      // Fall through.
+      bridgeError = bridgeReturnedNothing("lifecontingencies-R");
+    } catch (e) {
+      bridgeError = bridgeErrorMessage(e);
     }
   }
   // Pricing family — statsmodels GLM (Poisson frequency, Gamma severity).
@@ -1524,12 +1879,19 @@ export async function runModelAsync(
           blurb:
             `Bundled-CPython statsmodels ${py.family} GLM with log link, ` +
             `${py.coefficients.length} terms across ${py.covariates.length} covariates ` +
-            `(AIC ${py.aic.toFixed(1)}, ${py.nObservations.toLocaleString()} obs).`,
+            `(AIC ${py.aic.toFixed(1)}, ${py.nObservations.toLocaleString()} obs` +
+            (py.rowsSent < py.rowsTotal
+              ? `, fitted on ${py.rowsSent.toLocaleString()} of ${py.rowsTotal.toLocaleString()} rows`
+              : "") +
+            ").",
           detail: { ...py },
+          source: "python-bridge",
         };
       }
-    } catch {
-      // Fall through.
+      // runGlmPython returns null only outside the IDE runtime; real
+      // failures (incl. no usable target / covariates) throw with the reason.
+    } catch (e) {
+      bridgeError = bridgeErrorMessage(e);
     }
   }
   // Mortality family — WHO Global Health Observatory life table for the
@@ -1588,10 +1950,12 @@ export async function runModelAsync(
             `(${py.sex === "B" ? "both sexes" : py.sex}, ${py.vintage}): ` +
             `life expectancy at birth ${py.e0.toFixed(1)}y, at 65 ${py.e65.toFixed(1)}y.`,
           detail: { ...py },
+          source: "python-bridge",
         };
       }
-    } catch {
-      // Fall through to lee-carter / TS stubs.
+      bridgeError = bridgeReturnedNothing("who-mortality");
+    } catch (e) {
+      bridgeError = bridgeErrorMessage(e);
     }
   }
   // Mortality family — Lee-Carter via numpy SVD + statsmodels SARIMAX on κ.
@@ -1630,10 +1994,12 @@ export async function runModelAsync(
             `${py.years[py.years.length - 1]} ` +
             `(${pct(py.annualImprovement)}/yr improvement, κ drift ${py.kappaDrift.toFixed(3)}).`,
           detail: { ...py },
+          source: "python-bridge",
         };
       }
-    } catch {
-      // Fall through.
+      bridgeError = bridgeReturnedNothing("lee-carter");
+    } catch (e) {
+      bridgeError = bridgeErrorMessage(e);
     }
   }
   // Life family — IFRS 17 CSM via lifelib ifrs17sim (or its inlined BBA fallback).
@@ -1670,26 +2036,25 @@ export async function runModelAsync(
             `(PV profit ${fmt(py.pvProfit)} − RA ${fmt(py.riskAdjustment)}); ` +
             `coverage-units release over ${py.years} y.`,
           detail: { ...py },
+          source: "python-bridge",
         };
       }
-    } catch {
-      // Fall through.
+      bridgeError = bridgeReturnedNothing("ifrs17sim");
+    } catch (e) {
+      bridgeError = bridgeErrorMessage(e);
     }
   }
   if (modelId === "basicterm-projection") {
     try {
-      const { runBasicTermPython } = await import(
-        "./bridges/lifelibBasicTermPython"
-      );
+      const { runBasicTermPython } = await import("./bridges/lifelibBasicTermPython");
       const py = await runBasicTermPython(dataset);
       if (py) {
-        const years = Array.from(
-          new Set(py.monthly.map((r) => Math.floor(r.month / 12))),
-        ).slice(0, 30);
+        const years = Array.from(new Set(py.monthly.map((r) => Math.floor(r.month / 12)))).slice(
+          0,
+          30,
+        );
         const annualNet = years.map((y) =>
-          py.monthly
-            .filter((r) => Math.floor(r.month / 12) === y)
-            .reduce((s, r) => s + r.netCf, 0),
+          py.monthly.filter((r) => Math.floor(r.month / 12) === y).reduce((s, r) => s + r.netCf, 0),
         );
         return {
           modelId,
@@ -1719,11 +2084,17 @@ export async function runModelAsync(
             `${py.modelPointsTotal} model points produced PV(net CF) = ` +
             `${fmt(py.pvNetCf)} (canonical lifelib, not the in-browser port).`,
           detail: { source: "lifelib-python", monthly: py.monthly.slice(0, 360) },
+          source: "python-bridge",
         };
       }
-    } catch {
-      // Bridge import or Python call failed — fall through to TS runner.
+      bridgeError = bridgeReturnedNothing("lifelib BasicTerm");
+    } catch (e) {
+      bridgeError = bridgeErrorMessage(e);
     }
   }
-  return runModel(modelId, dataset);
+  // No bridge produced a result — run the in-browser approximation and,
+  // when a bridge was attempted but failed, carry the reason so the card
+  // shows WHY the canonical path didn't run.
+  const fallback = runModel(modelId, dataset);
+  return bridgeError ? { ...fallback, bridgeError } : fallback;
 }

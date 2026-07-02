@@ -7,6 +7,7 @@
 // useful for THIS column rather than a generic "ask anything".
 
 import type { ColumnMeta } from "./SoftDataWorkstation";
+import { findNearDuplicateLabel } from "./cleaning";
 
 // Pick a single, focused placeholder for the input. Heuristics ordered so
 // the most diagnostic shape wins — e.g. "almost all missing" beats "numeric".
@@ -31,6 +32,10 @@ export function placeholderHintFor(meta: ColumnMeta): string {
   }
   // string / categorical
   if (meta.topValues && meta.topValues.length > 0) {
+    const dupe = findNearDuplicateLabel(meta.topValues, meta.count - meta.missing);
+    if (dupe) {
+      return `fix the near-duplicate "${dupe.from}" → "${dupe.to}", or merge sparse labels?`;
+    }
     const top = meta.topValues[0];
     if (meta.unique <= 12) {
       return `one-hot encode, ordinal-rank, or merge "${top.value}" with others?`;
@@ -80,8 +85,7 @@ export function summariseColumnForPrompt(meta: ColumnMeta): string {
 function playbookFor(meta: ColumnMeta): string[] {
   const playbook: string[] = [];
   const missingPct = meta.count > 0 ? meta.missing / meta.count : 0;
-  const uniqueRatio =
-    meta.count - meta.missing > 0 ? meta.unique / (meta.count - meta.missing) : 0;
+  const uniqueRatio = meta.count - meta.missing > 0 ? meta.unique / (meta.count - meta.missing) : 0;
 
   // Universal checks that apply to any column.
   playbook.push(
@@ -118,6 +122,11 @@ function playbookFor(meta: ColumnMeta): string[] {
         `OUTLIERS DETECTED: ${meta.outliers.length} values sit outside Tukey fences (Q1 - 1.5·IQR, Q3 + 1.5·IQR). Decide: keep (real fat tail), cap at fence (winsorize), transform (log / sqrt), or null (data error). Fit any threshold on TRAIN only — never on the full dataset.`,
       );
     }
+    if (meta.loFence !== undefined && meta.hiFence !== undefined && meta.hiFence <= meta.loFence) {
+      playbook.push(
+        "DEGENERATE IQR: Q1 equals Q3, so the Tukey fences coincide. DO NOT cap/winsorize at the fences — min(max(x, fence), fence) flattens the whole column to one constant. If the user asks to cap outliers, say the fences are degenerate and offer a percentile cap (e.g. 1st/99th) instead.",
+      );
+    }
   }
 
   if (meta.type === "date") {
@@ -142,6 +151,41 @@ function playbookFor(meta: ColumnMeta): string[] {
 export function buildColumnStageContext(meta: ColumnMeta): string {
   const summary = summariseColumnForPrompt(meta);
   const playbook = playbookFor(meta);
+  // The cap-at-fences example only makes sense when the fences exist and are
+  // distinct — with a degenerate IQR (Q1 === Q3) loFence === hiFence, and
+  // min(max(x, lo), hi) would flatten the whole column to one constant.
+  const hasSpreadFences =
+    meta.loFence !== undefined && meta.hiFence !== undefined && meta.hiFence > meta.loFence;
+  const capExample = hasSpreadFences
+    ? [
+        "User: cap outliers at the fences",
+        "Reply:",
+        "```transform",
+        `{"column": "${meta.name}", "formula": "min(max(${meta.name}, ${meta.loFence}), ${meta.hiFence})"}`,
+        "```",
+        "",
+      ]
+    : [];
+  // Categorical typo repair gets its own block type — an exact value
+  // rewrite, no formula grammar involved. Ground the example in a real
+  // near-duplicate pair from this column's top values when one exists.
+  const dupe =
+    meta.type === "string" && meta.topValues
+      ? findNearDuplicateLabel(meta.topValues, meta.count - meta.missing)
+      : null;
+  const recodeVocab =
+    meta.type === "string"
+      ? [
+          `To fix a misspelled or near-duplicate category value in THIS column (e.g. "Seperated" alongside "Separated"), emit a fenced \`recode\` block. The client rewrites every exact match immediately:`,
+          "",
+          "```recode",
+          `{"column": "${meta.name}", "from": "${dupe?.from ?? "<misspelled value>"}", "to": "${dupe?.to ?? "<canonical value>"}"}`,
+          "```",
+          "",
+          "After the block, one short sentence on why the merge is right (same category, one spelling wrong). Do NOT use a transform or derive block for value recodes.",
+          "",
+        ]
+      : [];
   return [
     `You are Scelo, scoped to the column "${meta.name}".`,
     "Your job is to help the user clean / convert / transform / derive from THIS column.",
@@ -171,7 +215,8 @@ export function buildColumnStageContext(meta: ColumnMeta): string {
     `Grammar inside the formula (same for both block types): bare arithmetic (+, -, *, /, %, **), bare function names log / log10 / log2 / exp / sqrt / abs / min / max / floor / ceil / round / pow / sign, plus if(cond, a, b) and coalesce(a, b, ...). Reference the column as the bare identifier ${meta.name}. DO NOT prefix functions with "Math." and DO NOT wrap column names in backticks: the parser only accepts the bare form.`,
     "After the block, write EXACTLY ONE short professional sentence (max ~20 words) describing the analytic intent: WHY this transformation matters for downstream work. Do not restate the numbers (the card renders cell-count, mean shift, range, and old→new samples automatically). Talk about meaning: 'normalises skew so the column is closer to Gaussian for linear models', 'rounds to integer for cleaner reporting', 'caps the right tail so a single outlier stops dragging the mean'. Keep it under one line; no preamble, no follow-up question.",
     "",
-    "Cleaning steps: when the action maps to a banner op (case folding, whitespace, encoding, missing markers, dtype coercion, sentinel numerics, duplicate rows, renaming, dropping empty/constant columns), name the matching op exactly (one of: trim whitespace, collapse internal whitespace, fix encoding artefacts, normalise missing markers, parse numeric strings, parse date strings, standardise booleans, replace sentinel numerics, merge case-only duplicates, rename to snake_case, drop near-empty columns, drop constant columns, drop duplicate rows). Do NOT use a transform or derive block for these.",
+    ...recodeVocab,
+    "Cleaning steps: when the action maps to a banner op (case folding, whitespace, encoding, missing markers, dtype coercion, sentinel numerics, duplicate rows, renaming, dropping empty/constant columns), name the matching op exactly (one of: trim whitespace, collapse internal whitespace, fix encoding artefacts, normalise missing markers, parse numeric strings, coerce mixed numeric text, parse date strings, standardise booleans, replace sentinel numerics, recode near-duplicate label, null future years, merge case-only duplicates, rename to snake_case, drop near-empty columns, drop constant columns, drop duplicate rows). Do NOT use a transform or derive block for these.",
     "",
     "## EXAMPLES OF GOOD RESPONSES (match this shape exactly)",
     "User: round this column",
@@ -196,12 +241,7 @@ export function buildColumnStageContext(meta: ColumnMeta): string {
     "User: lowercase it",
     "Reply: Enable `merge case-only duplicates` in the cleaning banner.",
     "",
-    "User: cap outliers at the fences",
-    "Reply:",
-    "```transform",
-    `{"column": "${meta.name}", "formula": "min(max(${meta.name}, ${meta.loFence ?? 0}), ${meta.hiFence ?? 100})"}`,
-    "```",
-    "",
+    ...capExample,
     "## REFERENCE PLAYBOOK (do NOT recite, use only to pick the right action)",
     ...playbook,
     "",
