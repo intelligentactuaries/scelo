@@ -42,6 +42,7 @@ import { SceloChatMarkdown } from "./SceloChatMarkdown";
 import { SimulateScenarioModal } from "./SimulateScenarioModal";
 import { SmartColumnDashboard } from "./SmartColumnDashboard";
 import { StageChatPanel } from "./StageChatPanel";
+import { UploadIndicator, type UploadState, useMinVisible } from "./UploadIndicator";
 import {
   type CleaningOpKey,
   type CleaningPlan,
@@ -2912,6 +2913,34 @@ export function SoftDataWorkstation() {
     | { kind: "loading"; name: string; pct?: number; rowsSeen?: number }
     | { kind: "error"; message: string }
   >({ kind: "idle" });
+  // Which intake drove the current parse — selects the loading verb ("parsing"
+  // vs "staging"). Set once per parse in the entry points; the streamer's
+  // onProgress only ever writes pct/rowsSeen, so the verb stays stable.
+  const [uploadOp, setUploadOp] = useState<"import" | "stage">("import");
+  // combineAll() runs synchronously on the main thread; combineBusy drives a
+  // dimmed overlay that paints (via an async tick) before the merge blocks. It
+  // holds the total dataset count captured at trigger time (not live state,
+  // which the merge clears to empty), so the "combining N datasets" label stays
+  // correct for the whole overlay lifetime; null = not combining.
+  const [combineBusy, setCombineBusy] = useState<number | null>(null);
+  // Map the raw upload union into the loading primitive's shape, then hold it
+  // on screen for a 350ms floor so a sub-100ms parse of a tiny file animates
+  // instead of flashing. `heldUpload && !dataset` drives the big empty-state
+  // card; `heldUpload && dataset` drives the inline header strip.
+  const rawUpload: UploadState | null =
+    uploadState.kind === "loading"
+      ? {
+          verb: /\.parquet$/i.test(uploadState.name)
+            ? "decoding"
+            : uploadOp === "stage"
+              ? "staging"
+              : "parsing",
+          name: uploadState.name,
+          pct: uploadState.pct,
+          rowsSeen: uploadState.rowsSeen,
+        }
+      : null;
+  const heldUpload = useMinVisible(rawUpload, 350);
   // Post-import advisory (malformed-row padding, combine summaries). Keyed to
   // the dataset name so it disappears once another dataset replaces the
   // import. `label` overrides the strip's default "import notice" tag.
@@ -3015,6 +3044,7 @@ export function SoftDataWorkstation() {
   // each having to re-implement the dispatch.
   const onPickFileObject = useCallback(
     async (file: File) => {
+      setUploadOp("import");
       setUploadState({ kind: "loading", name: file.name });
       setImportNotice(null);
       try {
@@ -3134,6 +3164,7 @@ export function SoftDataWorkstation() {
         });
         return;
       }
+      setUploadOp("stage");
       setUploadState({ kind: "loading", name: file.name });
       try {
         const { dataset: staged, malformedRows } = await parseFileToDataset(file);
@@ -3182,12 +3213,21 @@ export function SoftDataWorkstation() {
   // and flows through the normal pipeline via setDataset — profiling,
   // cleaning analysis, and the picker's re-identify (name change) all fire
   // without extra wiring.
-  const onCombineDatasets = useCallback(() => {
+  const onCombineDatasets = useCallback(async () => {
     if (!dataset || stagedDatasets.length === 0) return;
     const others = stagedDatasets.map((ds, i) => ({
       dataset: ds,
       step: combineSteps[i] ?? combineSuggestions[i]?.step ?? { strategy: "append" as const },
     }));
+    // combineAll is synchronous and blocks the main thread on big joins. Show
+    // the overlay first: two rAFs guarantee the paint commits before the merge
+    // starts, and a min-visible floor keeps it up long enough to read. Snapshot
+    // the count now — the merge clears stagedDatasets before the floor elapses.
+    setCombineBusy(others.length + 1);
+    await new Promise<void>((r) =>
+      requestAnimationFrame(() => requestAnimationFrame(() => r())),
+    );
+    const startedAt = performance.now();
     try {
       const result = combineAll(dataset, others, DEFAULT_IMPORT_ROW_CAP);
       setDataset(result.dataset);
@@ -3227,6 +3267,10 @@ export function SoftDataWorkstation() {
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Unknown error combining datasets.";
       setUploadState({ kind: "error", message: `combine failed — ${msg}` });
+    } finally {
+      const remaining = 350 - (performance.now() - startedAt);
+      if (remaining > 0) await new Promise<void>((r) => setTimeout(r, remaining));
+      setCombineBusy(null);
     }
   }, [
     dataset,
@@ -3359,31 +3403,11 @@ export function SoftDataWorkstation() {
         </div>
       </header>
 
-      {/* upload status banner — loading / error feedback */}
-      {uploadState.kind === "loading" && (
-        <div className="flex shrink-0 items-center gap-2 border-b border-border bg-bg-1 px-3 py-1 font-mono text-[10px] text-fg-mute">
-          <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-warn" />
-          <span>parsing</span>
-          <span className="text-fg-dim">·</span>
-          <span className="truncate">{uploadState.name}</span>
-          {uploadState.rowsSeen !== undefined && (
-            <>
-              <span className="text-fg-dim">·</span>
-              <span className="shrink-0">{uploadState.rowsSeen.toLocaleString()} rows</span>
-            </>
-          )}
-          {uploadState.pct !== undefined && (
-            <>
-              <span className="shrink-0 text-right">{Math.floor(uploadState.pct)}%</span>
-              <span className="relative h-1 w-24 shrink-0 overflow-hidden rounded bg-bg-2">
-                <span
-                  className="absolute inset-y-0 left-0 rounded bg-warn"
-                  style={{ width: `${Math.min(100, uploadState.pct)}%` }}
-                />
-              </span>
-            </>
-          )}
-        </div>
+      {/* upload status — the inline strip only shows when a dataset is already
+          on screen (the empty-state canvas below hosts the big card instead, so
+          the two are mutually exclusive and never double up). */}
+      {heldUpload && dataset && (
+        <UploadIndicator layout="inline" state={heldUpload} accent="warn" />
       )}
       {uploadState.kind === "error" && (
         <div className="flex shrink-0 items-start gap-2 border-b border-error/40 bg-error/10 px-3 py-1.5 font-mono text-[10px] text-error">
@@ -3524,25 +3548,41 @@ export function SoftDataWorkstation() {
           chat popover). */}
       <div className="flex min-h-0 flex-1">
         {/* center: grid */}
-        <main className="min-w-0 flex-1 p-3">
+        <main className="relative min-w-0 flex-1 p-3">
           {dataset ? (
-            <DataGrid
-              dataset={dataset}
-              rows={filteredRows}
-              columnMetas={columnMetas}
-              filters={filters}
-              onFilter={toggleFilter}
-              selectedColumn={selectedMeta?.name ?? null}
-              onSelectColumn={setSelected}
-              derivedColumnNames={derivedColumnNameSet}
-              dateColumns={dateColumns}
-              onReformatColumnDates={onReformatColumnDates}
-              onColumnCommand={handleColumnChatCommand}
-            />
+            // key on the dataset name so a fresh import / sample / combine
+            // remounts and fades in (ia-materialize-in) — data always "arrives".
+            <div key={dataset.name} className="ia-materialize-in h-full">
+              <DataGrid
+                dataset={dataset}
+                rows={filteredRows}
+                columnMetas={columnMetas}
+                filters={filters}
+                onFilter={toggleFilter}
+                selectedColumn={selectedMeta?.name ?? null}
+                onSelectColumn={setSelected}
+                derivedColumnNames={derivedColumnNameSet}
+                dateColumns={dateColumns}
+                onReformatColumnDates={onReformatColumnDates}
+                onColumnCommand={handleColumnChatCommand}
+              />
+            </div>
+          ) : heldUpload ? (
+            // no dataset yet + a parse in flight → the big reassuring card fills
+            // the empty canvas (same flex-centered footprint as EmptyState, so
+            // swapping one for the other is zero layout shift).
+            <UploadIndicator layout="lg" state={heldUpload} accent="warn" />
           ) : (
             <EmptyState
               onLoadSample={() => setSamplePickerOpen(true)}
               onPickFile={() => setImportModalOpen(true)}
+            />
+          )}
+          {combineBusy != null && (
+            <UploadIndicator
+              layout="overlay"
+              accent="accent-2"
+              state={{ verb: "combining", name: `${combineBusy} datasets` }}
             />
           )}
         </main>

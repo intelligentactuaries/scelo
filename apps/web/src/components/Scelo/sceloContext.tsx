@@ -62,7 +62,7 @@ type StoredProjectState = {
   project: SceloProject | null;
 };
 
-interface StoredSessionSnapshot {
+export interface StoredSessionSnapshot {
   dataset: Dataset | null;
   filters: Filter[];
   selectedModels: SelectedModel[];
@@ -284,6 +284,12 @@ type SceloState = {
   chatMemoryPrefix: string | null;
   startProject: (name: string) => void;
   endProject: () => void;
+  // Whole-session save/load — the .sce project file. `snapshotSession`
+  // captures the live pipeline (dataset + filters + picks + runs + derived
+  // columns + activity log) for serialisation; `restoreSession` replaces it
+  // wholesale (used when a .sce file is opened).
+  snapshotSession: () => StoredSessionSnapshot;
+  restoreSession: (snap: StoredSessionSnapshot, project?: SceloProject | null) => void;
 };
 
 const SceloContext = createContext<SceloState | null>(null);
@@ -385,6 +391,51 @@ export function SceloProvider({ children }: { children: ReactNode }) {
     setMode("explore");
   }, []);
 
+  const snapshotSession = useCallback(
+    (): StoredSessionSnapshot => ({
+      dataset,
+      filters,
+      selectedModels,
+      domain,
+      pickSummary,
+      picksDatasetName,
+      runs,
+      derivedColumns,
+      transformLog: Array.from(transformLog),
+      events,
+    }),
+    [
+      dataset,
+      filters,
+      selectedModels,
+      domain,
+      pickSummary,
+      picksDatasetName,
+      runs,
+      derivedColumns,
+      transformLog,
+      events,
+    ],
+  );
+
+  const restoreSession = useCallback((snap: StoredSessionSnapshot, proj?: SceloProject | null) => {
+    setDataset(snap.dataset ?? null);
+    setFilters(snap.filters ?? []);
+    setSelectedModels(snap.selectedModels ?? []);
+    setDomain(snap.domain ?? null);
+    setPickSummary(snap.pickSummary ?? null);
+    setPicksDatasetName(snap.picksDatasetName ?? null);
+    setStagedDatasets([]);
+    setRuns(snap.runs ?? {});
+    setDerivedColumns(snap.derivedColumns ?? {});
+    setTransformLog(new Set(snap.transformLog ?? []));
+    setEvents(snap.events ?? []);
+    if (proj) {
+      setProject(proj);
+      setMode("project");
+    }
+  }, []);
+
   const chatMemoryPrefix = mode === "project" && project ? project.id : null;
 
   const value = useMemo(
@@ -417,6 +468,8 @@ export function SceloProvider({ children }: { children: ReactNode }) {
       chatMemoryPrefix,
       startProject,
       endProject,
+      snapshotSession,
+      restoreSession,
     }),
     [
       dataset,
@@ -437,6 +490,8 @@ export function SceloProvider({ children }: { children: ReactNode }) {
       chatMemoryPrefix,
       startProject,
       endProject,
+      snapshotSession,
+      restoreSession,
     ],
   );
 
