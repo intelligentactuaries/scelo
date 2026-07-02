@@ -444,6 +444,129 @@
   }
 }
 
+/* ── data-upload indicator (UploadIndicator.tsx) ─────────────────────────────
+   One vocabulary shared by every intake surface: a skeleton table materialising
+   over a hairline rail. Determinate fill when the caller passes pct (CSV streams
+   real byte-%); indeterminate scan otherwise (parquet decode, combine merge,
+   pre-first-chunk). Coheres with the existing .ia-pip / iaPulse status-dot
+   family. */
+
+/* skeleton cells fade in on a staggered diagonal wave — 'rows being read in'.
+   Opacity-only, no transform, so it never touches layout. */
+.ia-skel-cell {
+  display: block;
+  border-radius: 2px;
+  background: rgb(var(--rgb-fg) / 0.16);
+  animation: iaMaterialize 1.4s ease-in-out infinite;
+}
+.ia-skel-head {
+  background: rgb(var(--rgb-fg) / 0.32);
+} /* header row a touch stronger */
+@keyframes iaMaterialize {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+/* hairline rail — shared track for the determinate fill and indeterminate scan.
+   Accent (warn / accent-2 / primary) is passed inline. */
+.ia-rail {
+  position: relative;
+  display: block;
+  overflow: hidden;
+  border-radius: 9999px;
+  background: rgb(var(--rgb-border) / 0.5);
+}
+.ia-rail-fill {
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: 0;
+  border-radius: 9999px;
+  /* smooths the throttled ~10 Hz pct updates into one continuous advance */
+  transition: width 0.22s cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+.ia-rail-scan {
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: 0;
+  width: 30%;
+  border-radius: 9999px;
+  animation: iaScan 1.15s cubic-bezier(0.65, 0, 0.35, 1) infinite;
+  will-change: transform;
+}
+@keyframes iaScan {
+  from {
+    transform: translateX(-120%);
+  }
+  to {
+    transform: translateX(430%);
+  }
+}
+
+/* status pip — reuses the .ia-pip shape + iaPulse breath; accent set inline. */
+.ia-load-pip {
+  animation: iaPulse 1.1s ease-in-out infinite;
+}
+
+/* true tabular monospace numerals for the counter / pct. Needed because
+   `.scelo-app *` forces SN Pro with !important; this selector is more specific
+   so font-mono wins, and tabular-nums keeps the rolling digits width-stable so
+   the counter never reflows. */
+.scelo-app .ia-num {
+  font-family: "JetBrains Mono", ui-monospace, monospace !important;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
+}
+
+/* one-shot fade so every dataset (import AND sample) 'arrives' instead of
+   snapping in — ties the sample path into the same materialising language
+   without any spinner. */
+.ia-materialize-in {
+  animation: iaFadeIn 0.32s ease-out both;
+}
+@keyframes iaFadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* calm fallback — opacity breath only, no sweeps / transforms. */
+@keyframes iaBreath {
+  0%,
+  100% {
+    opacity: 0.3;
+  }
+  50% {
+    opacity: 0.65;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ia-skel-cell {
+    animation: none;
+    opacity: 0.55;
+  }
+  .ia-rail-scan {
+    animation: iaBreath 2.4s ease-in-out infinite;
+    width: 100%;
+  }
+  .ia-rail-fill {
+    transition: none;
+  } /* truthful width still updates, no easing */
+  .ia-load-pip {
+    animation: iaBreath 2.4s ease-in-out infinite;
+  }
+  .ia-materialize-in {
+    animation: none;
+  }
+}
+
 /* ── Markdown rendered inside chat messages ───────────────────────────── */
 .ia-md > * + * {
   margin-top: 0.75rem;

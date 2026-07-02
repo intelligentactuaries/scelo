@@ -3,7 +3,7 @@
 // outermost view a user lands on.
 
 import { useTheme } from "@/lib/theme";
-import { type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
+import { type ChangeEvent, type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 import ReactFlow, {
   type Edge,
   MarkerType,
@@ -15,6 +15,7 @@ import "reactflow/dist/style.css";
 import { ExportButton } from "./ExportScreen";
 import { FlowControls } from "./FlowControls";
 import { SceloNode, type SceloNodeData } from "./SceloNode";
+import { downloadSce, parseSce } from "./projectFile";
 import { useScelo } from "./sceloContext";
 
 const nodeTypes = { scelo: SceloNode };
@@ -148,6 +149,90 @@ export function SceloFlow({ className }: { className?: string }) {
 //     memory is preserved in localStorage in case the user re-creates the
 //     project later, but new chats won't see it because the project id is
 //     freshly generated).
+// Save / open the whole session as a .sce file. Rendered in both project and
+// explore modes next to the export button. Save is disabled with nothing
+// loaded; open replaces the current session (after a confirm if one exists).
+function ProjectFileActions() {
+  const { dataset, project, snapshotSession, restoreSession } = useScelo();
+  const fileRef = useRef<HTMLInputElement | null>(null);
+  const [note, setNote] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
+  const noteTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const flash = (kind: "ok" | "err", text: string) => {
+    setNote({ kind, text });
+    if (noteTimer.current) clearTimeout(noteTimer.current);
+    noteTimer.current = setTimeout(() => setNote(null), kind === "ok" ? 3500 : 6000);
+  };
+
+  const onSave = () => {
+    try {
+      const { filename } = downloadSce(snapshotSession(), project, dataset?.name ?? null);
+      flash("ok", `saved ${filename}`);
+    } catch (e) {
+      flash("err", `save failed — ${e instanceof Error ? e.message : String(e)}`);
+    }
+  };
+
+  const onOpen = async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (fileRef.current) fileRef.current.value = ""; // allow re-picking the same file
+    if (!file) return;
+    if (dataset && !window.confirm("Open this project? It will replace your current session.")) {
+      return;
+    }
+    try {
+      const { session, project: proj } = parseSce(await file.text());
+      restoreSession(session, proj);
+      flash("ok", `opened ${file.name}${proj ? ` · ${proj.name}` : ""}`);
+    } catch (err) {
+      flash("err", err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  return (
+    <>
+      {note && (
+        <span
+          className={`max-w-[40ch] truncate font-mono text-[10px] ${
+            note.kind === "ok" ? "text-primary" : "text-error"
+          }`}
+          title={note.text}
+        >
+          {note.text}
+        </span>
+      )}
+      <input
+        ref={fileRef}
+        type="file"
+        accept=".sce,application/vnd.scelo.project+json,application/json"
+        className="hidden"
+        onChange={onOpen}
+      />
+      <button
+        type="button"
+        onClick={() => fileRef.current?.click()}
+        title="Open a saved .sce project file (replaces the current session)"
+        className="rounded border border-border bg-bg-2 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider text-fg-mute hover:border-primary hover:text-primary"
+      >
+        open .sce
+      </button>
+      <button
+        type="button"
+        onClick={onSave}
+        disabled={!dataset}
+        title={
+          dataset
+            ? "Save the whole session (data, filters, model picks, runs) to a .sce project file"
+            : "Load a dataset first — there's nothing to save yet"
+        }
+        className="rounded border border-border bg-bg-2 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider text-fg-mute hover:border-primary hover:text-primary disabled:cursor-not-allowed disabled:opacity-40"
+      >
+        save .sce
+      </button>
+    </>
+  );
+}
+
 function ProjectBar() {
   const { mode, project, startProject, endProject } = useScelo();
   const [namePromptOpen, setNamePromptOpen] = useState(false);
@@ -193,6 +278,7 @@ function ProjectBar() {
         </span>
         <span className="font-mono text-[10px] text-fg-dim">· chats persist</span>
         <div className="flex-1" />
+        <ProjectFileActions />
         <ExportButton stage="macro" variant="primary" label="export · whole pipeline" />
         <button
           type="button"
@@ -247,6 +333,7 @@ function ProjectBar() {
         </>
       ) : (
         <>
+          <ProjectFileActions />
           <ExportButton stage="macro" variant="primary" label="export · whole pipeline" />
           <button
             type="button"
