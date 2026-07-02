@@ -24,9 +24,9 @@ import {
 } from "electron";
 import log from "electron-log/main";
 import { autoUpdater } from "electron-updater";
-import { type ChildProcess, spawn } from "node:child_process";
+import { type ChildProcess, execFileSync, spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { cp, mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
+import { cp, mkdir, open, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { join, normalize, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
@@ -39,6 +39,11 @@ import {
 // ~/.config/Scelo IDE/logs/main.log on Linux / equivalents per OS.
 log.initialize();
 autoUpdater.logger = log;
+
+// Renderer V8 heap: Chromium's default (~4 GB old-space) OOMs mid-parse on
+// large dataset imports. 8192 MB is a machine-independent ceiling — V8 only
+// commits what it actually uses. Must be appended before app ready.
+app.commandLine.appendSwitch("js-flags", "--max-old-space-size=8192");
 
 const isMac = process.platform === "darwin";
 const isWin = process.platform === "win32";
@@ -101,9 +106,7 @@ function registerSceloProtocol(): void {
  *  Per-platform layout matches python-build-standalone's tarballs. */
 function pythonBinary(): string | null {
   const root = join(resourceDir(), "runtime", "python");
-  const candidate = isWin
-    ? join(root, "python.exe")
-    : join(root, "bin", "python3");
+  const candidate = isWin ? join(root, "python.exe") : join(root, "bin", "python3");
   return existsSync(candidate) ? candidate : null;
 }
 
@@ -148,6 +151,33 @@ function createMainWindow(): BrowserWindow {
   // suggestions, link + image actions). Chromium gives us no menu by default
   // in a custom Electron shell, so the whole IDE felt "dead" on right-click.
   attachContextMenu(win);
+
+  // A renderer that dies (OOM during a huge import, GPU crash, external
+  // kill) would otherwise leave a permanently dead white window. Log why
+  // and offer a reload so the user can recover without restarting the app.
+  win.webContents.on("render-process-gone", (_event, details) => {
+    if (details.reason === "clean-exit") return; // normal teardown
+    log.error(`renderer gone: reason=${details.reason} exitCode=${details.exitCode}`);
+    if (win.isDestroyed()) return;
+    void dialog
+      .showMessageBox(win, {
+        type: "error",
+        title: "Scelo IDE",
+        message: "This window's renderer process stopped unexpectedly.",
+        detail:
+          `Reason: ${details.reason} (exit code ${details.exitCode}). ` +
+          "If this happened during a large data import, it likely ran out of memory. " +
+          "Reload the window to keep working.",
+        buttons: ["Reload", "Close window"],
+        defaultId: 0,
+        cancelId: 0,
+      })
+      .then(({ response }) => {
+        if (win.isDestroyed()) return;
+        if (response === 0) win.webContents.reload();
+        else win.close();
+      });
+  });
 
   // Drop the per-window workspace override when the window closes so
   // _windowWorkspace doesn't accumulate stale webContents ids across
@@ -208,8 +238,7 @@ function attachContextMenu(win: BrowserWindow): void {
       }
       items.push({
         label: "Add to dictionary",
-        click: () =>
-          win.webContents.session.addWordToSpellCheckerDictionary(params.misspelledWord),
+        click: () => win.webContents.session.addWordToSpellCheckerDictionary(params.misspelledWord),
       });
       items.push({ type: "separator" });
     }
@@ -316,7 +345,8 @@ function buildMenu(): void {
           // menu still works when invoked from the macOS dock with no
           // BrowserWindow focused.
           click: async (_menuItem, focusedWindow) => {
-            const win = (focusedWindow as BrowserWindow | undefined) ?? BrowserWindow.getAllWindows()[0];
+            const win =
+              (focusedWindow as BrowserWindow | undefined) ?? BrowserWindow.getAllWindows()[0];
             if (!win) return;
             const res = await dialog.showOpenDialog(win, {
               properties: ["openDirectory", "createDirectory"],
@@ -331,7 +361,8 @@ function buildMenu(): void {
           label: "Switch workspace…",
           accelerator: isMac ? "Cmd+Shift+O" : "Ctrl+Shift+O",
           click: (_menuItem, focusedWindow) => {
-            const win = (focusedWindow as BrowserWindow | undefined) ?? BrowserWindow.getAllWindows()[0];
+            const win =
+              (focusedWindow as BrowserWindow | undefined) ?? BrowserWindow.getAllWindows()[0];
             if (!win) return;
             win.loadURL(`${SCELO_SCHEME}://app/settings/workspaces`);
           },
@@ -404,9 +435,7 @@ function buildMenu(): void {
         {
           label: "Documentation",
           click: () =>
-            shell.openExternal(
-              "https://github.com/intelligentactuaries/intelligentactuaries",
-            ),
+            shell.openExternal("https://github.com/intelligentactuaries/intelligentactuaries"),
         },
       ],
     },
@@ -438,6 +467,16 @@ interface ExecResult {
   exitCode: number | null;
 }
 
+/** Absorb 'error' events on a child's stdin. A child that exits before
+ *  draining its stdin raises EPIPE (EOF on Windows) on the stream; with no
+ *  listener Node escalates that to an uncaught exception in the MAIN
+ *  process. The child's own 'error'/'close' events still report the real
+ *  outcome, so the stream error only needs to be observed (optionally
+ *  folded into collected stderr). Attach before the first write. */
+function guardStdin(child: ChildProcess, onError?: (err: Error) => void): void {
+  child.stdin?.on("error", (err) => onError?.(err));
+}
+
 function execRuntime(
   binary: string | null,
   runtimeFlag: string,
@@ -458,19 +497,23 @@ function execRuntime(
     });
     let stdout = "";
     let stderr = "";
+    guardStdin(child, (err) => {
+      stderr += `[stdin] ${String(err)}\n`;
+    });
     child.stdout.on("data", (chunk) => {
       stdout += chunk.toString();
     });
     child.stderr.on("data", (chunk) => {
       stderr += chunk.toString();
     });
-    child.on("close", (code) =>
-      resolve({ ok: code === 0, stdout, stderr, exitCode: code }),
-    );
+    child.on("close", (code) => resolve({ ok: code === 0, stdout, stderr, exitCode: code }));
     child.on("error", (err) =>
       resolve({ ok: false, stdout, stderr: stderr + String(err), exitCode: null }),
     );
     if (req.stdin !== undefined) {
+      // write+end queues the whole payload in memory and Node flushes it in
+      // the background; no 'drain' handling is needed for correctness, only
+      // to bound memory — payloads here are scripts, not datasets.
       child.stdin.write(req.stdin);
       child.stdin.end();
     }
@@ -481,9 +524,7 @@ ipcMain.handle("scelo:runPython", (_event, req: ExecRequest) =>
   execRuntime(pythonBinary(), "-c", req),
 );
 
-ipcMain.handle("scelo:runR", (_event, req: ExecRequest) =>
-  execRuntime(rBinary(), "-e", req),
-);
+ipcMain.handle("scelo:runR", (_event, req: ExecRequest) => execRuntime(rBinary(), "-e", req));
 
 // ─── LLM bridge ─────────────────────────────────────────────────────────
 //
@@ -658,9 +699,225 @@ async function chatGemini(req: LlmChatRequest): Promise<LlmChatResult> {
   return { ok: true, text };
 }
 
+// ── Claude Code provider ─────────────────────────────────────────────────
+//
+// Unlike the hosted providers, this one needs no API key: it shells out to
+// the locally-installed, already-signed-in `claude` CLI in headless mode
+// (`claude -p`), reusing the user's Claude Code subscription auth. The prompt
+// goes in on stdin (no arg-length / quoting limits), the reply comes back as
+// JSON on stdout. We replace the agentic system prompt with a lean chat one
+// and pass --strict-mcp-config so no MCP servers spin up for a plain reply.
+
+/** How to launch the claude CLI. On Windows a global npm/bun install often
+ *  exposes only a .cmd/.bat script shim, which libuv refuses to spawn
+ *  without a shell (EINVAL since Node 20's spawn hardening). We prefer a
+ *  real .exe, then unwrap the shim to its node script, and only as a last
+ *  resort run the shim through cmd.exe with quoted args. */
+interface ClaudeLaunch {
+  bin: string;
+  /** Args injected before the CLI's own flags (e.g. the unwrapped cli.js). */
+  argPrefix: string[];
+  /** True when bin must go through cmd.exe (`shell: true`). */
+  viaShell: boolean;
+}
+
+let _claudeLaunch: ClaudeLaunch | null | undefined; // undefined = unresolved, null = absent
+
+/** Unwrap an npm cmd-shim to the node script it targets. The generated
+ *  .cmd contains a quoted `%dp0%`-relative path to the JS entry (e.g.
+ *  `"%~dp0\node_modules\@anthropic-ai\claude-code\cli.js" %*`). Returns a
+ *  direct `node <script>` launch (no shell, so multi-line args survive),
+ *  or null when the shim doesn't match or node isn't on PATH. */
+function _unwrapCmdShim(shimPath: string): ClaudeLaunch | null {
+  try {
+    const text = readFileSync(shimPath, "utf-8");
+    const m = /"%(?:~dp0|dp0%)\\([^"]+\.[cm]?js)"/i.exec(text);
+    if (!m) return null;
+    const target = join(shimPath, "..", m[1]);
+    if (!existsSync(target)) return null;
+    execFileSync(isWin ? "where" : "which", ["node"], { encoding: "utf-8" });
+    return { bin: "node", argPrefix: [target], viaShell: false };
+  } catch {
+    return null;
+  }
+}
+
+function _claudeLaunchFor(bin: string): ClaudeLaunch {
+  if (isWin && /\.(cmd|bat)$/i.test(bin)) {
+    return _unwrapCmdShim(bin) ?? { bin, argPrefix: [], viaShell: true };
+  }
+  return { bin, argPrefix: [], viaShell: false };
+}
+
+function resolveClaudeLaunch(): ClaudeLaunch | null {
+  if (_claudeLaunch !== undefined) return _claudeLaunch;
+  const override = process.env.SCELO_CLAUDE_BIN;
+  if (override) {
+    _claudeLaunch = _claudeLaunchFor(override);
+    return _claudeLaunch;
+  }
+  try {
+    const out = execFileSync(isWin ? "where" : "which", ["claude"], {
+      encoding: "utf-8",
+    });
+    const lines = out
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .filter(Boolean);
+    // Prefer a real executable over a .cmd/.ps1/.bat shim on Windows — libuv's
+    // spawn (shell:false) resolves .exe directly but not script shims. A bare
+    // extensionless hit (the sh-script sibling) is the worst candidate, so
+    // .cmd/.bat outranks it.
+    const exe = lines.find((l) => /\.exe$/i.test(l));
+    const cmdShim = lines.find((l) => /\.(cmd|bat)$/i.test(l));
+    const chosen = exe ?? cmdShim ?? lines[0] ?? null;
+    _claudeLaunch = chosen ? _claudeLaunchFor(chosen) : null;
+  } catch {
+    _claudeLaunch = null;
+  }
+  return _claudeLaunch;
+}
+
+/** Quote one argument for the cmd.exe fallback (`shell: true`). cmd cannot
+ *  carry newlines in an argument and has no escape for embedded double
+ *  quotes that survives both cmd and the CLI's own argv parsing, so both
+ *  fold to benign characters — acceptable for the prose this path carries. */
+function _cmdArg(arg: string): string {
+  return `"${arg.replace(/\r?\n/g, " ").replace(/"/g, "'")}"`;
+}
+
+const CLAUDE_CODE_MISSING =
+  "Claude Code CLI not found. Install it from https://claude.com/claude-code and sign in once (run `claude`), then retry. No API key needed — Scelo reuses your Claude Code login.";
+
+async function chatClaudeCode(req: LlmChatRequest): Promise<LlmChatResult> {
+  const launch = resolveClaudeLaunch();
+  if (!launch) return { ok: false, error: CLAUDE_CODE_MISSING };
+
+  const systemText = req.messages
+    .filter((m) => m.role === "system")
+    .map((m) => m.content)
+    .join("\n\n")
+    .trim();
+  const turns = req.messages.filter((m) => m.role !== "system");
+  // A single user turn passes verbatim; a multi-turn thread becomes a labelled
+  // transcript so the CLI (one-shot -p) still sees the conversation.
+  const prompt =
+    turns.length === 1 && turns[0].role === "user"
+      ? turns[0].content
+      : turns.map((m) => `${m.role === "user" ? "User" : "Assistant"}: ${m.content}`).join("\n\n");
+  const system = `${systemText ? `${systemText}\n\n` : ""}Answer directly and concisely in plain text. Do not use tools, do not read or write files, do not run commands — this is a chat reply.`;
+
+  const args = [
+    ...launch.argPrefix,
+    "-p",
+    "--output-format",
+    "json",
+    "--strict-mcp-config",
+    "--system-prompt",
+    system,
+  ];
+  if (req.model) args.push("--model", req.model);
+
+  return new Promise<LlmChatResult>((resolve) => {
+    let child: ChildProcess;
+    try {
+      // Script shims must go through cmd.exe; everything else spawns
+      // directly so args (incl. the multi-line system prompt) pass verbatim.
+      child = launch.viaShell
+        ? spawn(_cmdArg(launch.bin), args.map(_cmdArg), {
+            env: process.env,
+            windowsHide: true,
+            shell: true,
+          })
+        : spawn(launch.bin, args, { env: process.env, windowsHide: true });
+    } catch (e) {
+      const code = (e as NodeJS.ErrnoException).code;
+      resolve(
+        code === "EINVAL" || code === "ENOENT"
+          ? { ok: false, error: CLAUDE_CODE_MISSING }
+          : {
+              ok: false,
+              error: `failed to launch Claude Code CLI: ${e instanceof Error ? e.message : String(e)}`,
+            },
+      );
+      return;
+    }
+    let stdout = "";
+    let stderr = "";
+    let settled = false;
+    const done = (r: LlmChatResult) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(r);
+    };
+    const timer = setTimeout(() => {
+      try {
+        child.kill();
+      } catch {
+        /* already gone */
+      }
+      done({ ok: false, error: "Claude Code CLI timed out after 180s." });
+    }, 180_000);
+
+    child.stdout?.on("data", (d) => {
+      stdout += d.toString();
+    });
+    child.stderr?.on("data", (d) => {
+      stderr += d.toString();
+    });
+    child.on("error", (e) => {
+      // ENOENT: `where` found a shim we couldn't actually spawn. EINVAL:
+      // libuv refusing a .cmd/.bat without a shell (Node 20+). Both mean the
+      // install isn't usable as found — reuse the install guidance.
+      const code = (e as NodeJS.ErrnoException).code;
+      done({
+        ok: false,
+        error:
+          code === "ENOENT" || code === "EINVAL"
+            ? CLAUDE_CODE_MISSING
+            : `Claude Code CLI error: ${e.message}`,
+      });
+    });
+    child.on("close", (code) => {
+      if (code !== 0) {
+        done({
+          ok: false,
+          error: `Claude Code CLI exited ${code}: ${(stderr || stdout).slice(0, 400) || "no output"}`,
+        });
+        return;
+      }
+      try {
+        const data = JSON.parse(stdout) as {
+          is_error?: boolean;
+          result?: string;
+          subtype?: string;
+        };
+        if (data.is_error) {
+          done({
+            ok: false,
+            error: `Claude Code: ${data.subtype ?? "error"} — ${(data.result ?? "").slice(0, 400)}`,
+          });
+          return;
+        }
+        done({ ok: true, text: (data.result ?? "").trim() });
+      } catch {
+        // Older CLI without --output-format json — treat stdout as the reply.
+        done({ ok: true, text: stdout.trim() });
+      }
+    });
+    // Feed the prompt on stdin. Guarded: if the CLI exits before reading
+    // (bad flag, auth failure), the EPIPE must not crash the main process.
+    guardStdin(child);
+    child.stdin?.end(prompt);
+  });
+}
+
 async function llmChat(req: LlmChatRequest): Promise<LlmChatResult> {
   try {
     switch (req.provider) {
+      case "claude_code":
+        return await chatClaudeCode(req);
       case "openrouter":
         return await chatOpenAICompatible(
           "https://openrouter.ai/api/v1/chat/completions",
@@ -685,7 +942,8 @@ async function llmChat(req: LlmChatRequest): Promise<LlmChatResult> {
         });
       }
       case "openai_compat": {
-        if (!req.baseUrl) return { ok: false, error: "base URL required for OpenAI-compatible provider" };
+        if (!req.baseUrl)
+          return { ok: false, error: "base URL required for OpenAI-compatible provider" };
         const base = trimTrailingSlash(req.baseUrl);
         return await chatOpenAICompatible(`${base}/chat/completions`, req.apiKey, req);
       }
@@ -697,8 +955,9 @@ async function llmChat(req: LlmChatRequest): Promise<LlmChatResult> {
   }
 }
 
-ipcMain.handle("scelo:llm:chat", (_event, req: LlmChatRequest): Promise<LlmChatResult> =>
-  llmChat(req),
+ipcMain.handle(
+  "scelo:llm:chat",
+  (_event, req: LlmChatRequest): Promise<LlmChatResult> => llmChat(req),
 );
 
 // ─── Streaming exec ─────────────────────────────────────────────────────
@@ -715,11 +974,11 @@ ipcMain.handle("scelo:llm:chat", (_event, req: LlmChatRequest): Promise<LlmChatR
 
 interface StreamExecRequest {
   runtime: "python" | "r" | "shell";
-  script?: string;            // -c / -e payload (python/r only)
-  command?: string;           // raw shell command (shell only)
+  script?: string; // -c / -e payload (python/r only)
+  command?: string; // raw shell command (shell only)
   argv?: string[];
   stdin?: string;
-  cwd?: string;               // optional working dir
+  cwd?: string; // optional working dir
 }
 
 // Session value is either a regular child_process (python/r runs + the
@@ -792,10 +1051,7 @@ function _loadPty(): PtyModule | null {
     log.info("node-pty: loaded prebuilt module");
     _ptyProbe = m as PtyModule;
   } catch (e) {
-    log.warn(
-      "node-pty: load failed, terminal falls back to spawn (no PTY features):",
-      e,
-    );
+    log.warn("node-pty: load failed, terminal falls back to spawn (no PTY features):", e);
     _ptyProbe = null;
   }
   return _ptyProbe;
@@ -830,7 +1086,10 @@ function _augmentedEnv(extra?: Record<string, string>): NodeJS.ProcessEnv {
 
 ipcMain.handle(
   "scelo:exec:start",
-  (event: IpcMainInvokeEvent, req: StreamExecRequest): { sessionId: string } | { error: string } => {
+  (
+    event: IpcMainInvokeEvent,
+    req: StreamExecRequest,
+  ): { sessionId: string } | { error: string } => {
     let binary: string | null = null;
     let argv: string[] = [];
     if (req.runtime === "python") {
@@ -916,6 +1175,9 @@ ipcMain.handle(
       env: _augmentedEnv(),
       cwd: req.cwd && existsSync(req.cwd) ? req.cwd : undefined,
     });
+    // stdin is written both below and later via scelo:exec:write — a child
+    // that has already exited would otherwise EPIPE-crash the main process.
+    guardStdin(child, (err) => log.warn(`exec[${sessionId}]: stdin error`, err));
     _execSessions.set(sessionId, { kind: "spawn", child });
 
     const wc = event.sender;
@@ -959,23 +1221,20 @@ ipcMain.handle("scelo:exec:write", (_event, sessionId: string, data: string) => 
   return { ok: true };
 });
 
-ipcMain.handle(
-  "scelo:exec:resize",
-  (_event, sessionId: string, cols: number, rows: number) => {
-    const h = _execSessions.get(sessionId);
-    if (!h) return { ok: false, error: "no such session" };
-    if (h.kind === "pty") {
-      try {
-        h.pty.resize(Math.max(1, cols), Math.max(1, rows));
-        return { ok: true };
-      } catch (e) {
-        return { ok: false, error: String(e) };
-      }
+ipcMain.handle("scelo:exec:resize", (_event, sessionId: string, cols: number, rows: number) => {
+  const h = _execSessions.get(sessionId);
+  if (!h) return { ok: false, error: "no such session" };
+  if (h.kind === "pty") {
+    try {
+      h.pty.resize(Math.max(1, cols), Math.max(1, rows));
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, error: String(e) };
     }
-    // spawn() has no PTY to resize — no-op.
-    return { ok: true };
-  },
-);
+  }
+  // spawn() has no PTY to resize — no-op.
+  return { ok: true };
+});
 
 ipcMain.handle("scelo:exec:cancel", (_event, sessionId: string) => {
   const h = _execSessions.get(sessionId);
@@ -1130,9 +1389,7 @@ function _resolveInWorkspace(rel: string, event?: IpcMainInvokeEvent): string {
 
 ipcMain.handle("scelo:workspace:get", (event) => {
   const rec = _activeWorkspaceRecordFor(event);
-  return rec
-    ? { path: rec.path, id: rec.id }
-    : { path: null, id: null };
+  return rec ? { path: rec.path, id: rec.id } : { path: null, id: null };
 });
 
 ipcMain.handle("scelo:workspace:setForWindow", (event, id: string) => {
@@ -1204,6 +1461,7 @@ const SAMPLE_TEMPLATES = [
   "climate-risk",
   "scelo-brain",
   "reserving",
+  "soa-exams",
 ] as const;
 type SampleTemplateId = (typeof SAMPLE_TEMPLATES)[number];
 
@@ -1213,56 +1471,52 @@ function _templatesDir(): string {
   return join(app.getAppPath(), "templates");
 }
 
-ipcMain.handle(
-  "scelo:workspace:create-from-template",
-  async (event, templateId: string) => {
-    if (!SAMPLE_TEMPLATES.includes(templateId as SampleTemplateId)) {
-      return { ok: false, error: `unknown template: ${templateId}` };
-    }
-    const srcDir = join(_templatesDir(), templateId);
-    if (!existsSync(srcDir)) {
-      return { ok: false, error: `template missing on disk: ${srcDir}` };
-    }
-    const win =
-      BrowserWindow.fromWebContents(event.sender) ?? BrowserWindow.getFocusedWindow();
-    const picked = await dialog.showOpenDialog(win ?? undefined!, {
-      title: `Choose parent folder for the ${templateId} workspace`,
-      properties: ["openDirectory", "createDirectory"],
+ipcMain.handle("scelo:workspace:create-from-template", async (event, templateId: string) => {
+  if (!SAMPLE_TEMPLATES.includes(templateId as SampleTemplateId)) {
+    return { ok: false, error: `unknown template: ${templateId}` };
+  }
+  const srcDir = join(_templatesDir(), templateId);
+  if (!existsSync(srcDir)) {
+    return { ok: false, error: `template missing on disk: ${srcDir}` };
+  }
+  const win = BrowserWindow.fromWebContents(event.sender) ?? BrowserWindow.getFocusedWindow();
+  const picked = await dialog.showOpenDialog(win ?? undefined!, {
+    title: `Choose parent folder for the ${templateId} workspace`,
+    properties: ["openDirectory", "createDirectory"],
+  });
+  if (picked.canceled || !picked.filePaths[0]) {
+    return { ok: false, error: "cancelled" };
+  }
+  const parentDir = picked.filePaths[0];
+  const destDir = join(parentDir, templateId);
+  if (existsSync(destDir)) {
+    return {
+      ok: false,
+      error: `${destDir} already exists; pick a different parent folder or rename the existing directory.`,
+    };
+  }
+  try {
+    await mkdir(destDir, { recursive: true });
+    await cp(srcDir, destDir, { recursive: true });
+  } catch (e) {
+    return { ok: false, error: `copy failed: ${String(e)}` };
+  }
+  // Best-effort git init so the user can `git status` from day one.
+  // Skipped silently when git isn't on PATH.
+  try {
+    await new Promise<void>((resolve) => {
+      const p = spawn("git", ["init", "--quiet"], { cwd: destDir });
+      p.on("error", () => resolve());
+      p.on("exit", () => resolve());
     });
-    if (picked.canceled || !picked.filePaths[0]) {
-      return { ok: false, error: "cancelled" };
-    }
-    const parentDir = picked.filePaths[0];
-    const destDir = join(parentDir, templateId);
-    if (existsSync(destDir)) {
-      return {
-        ok: false,
-        error: `${destDir} already exists; pick a different parent folder or rename the existing directory.`,
-      };
-    }
-    try {
-      await mkdir(destDir, { recursive: true });
-      await cp(srcDir, destDir, { recursive: true });
-    } catch (e) {
-      return { ok: false, error: `copy failed: ${String(e)}` };
-    }
-    // Best-effort git init so the user can `git status` from day one.
-    // Skipped silently when git isn't on PATH.
-    try {
-      await new Promise<void>((resolve) => {
-        const p = spawn("git", ["init", "--quiet"], { cwd: destDir });
-        p.on("error", () => resolve());
-        p.on("exit", () => resolve());
-      });
-    } catch {
-      // best-effort
-    }
-    _setActiveWorkspace(destDir);
-    const id = _wsIdFor(destDir);
-    _windowWorkspace.set(event.sender.id, id);
-    return { ok: true, id, path: destDir };
-  },
-);
+  } catch {
+    // best-effort
+  }
+  _setActiveWorkspace(destDir);
+  const id = _wsIdFor(destDir);
+  _windowWorkspace.set(event.sender.id, id);
+  return { ok: true, id, path: destDir };
+});
 
 // ─── Git ───────────────────────────────────────────────────────────────
 //
@@ -1295,12 +1549,21 @@ function _runGit(
   cwd: string,
   args: string[],
   opts: { input?: string } = {},
-): Promise<{ ok: boolean; stdout: string; stderr: string; code: number | null; spawnError?: string }> {
+): Promise<{
+  ok: boolean;
+  stdout: string;
+  stderr: string;
+  code: number | null;
+  spawnError?: string;
+}> {
   return new Promise((resolve) => {
     let stdout = "";
     let stderr = "";
     let resolved = false;
     const child = spawn("git", args, { cwd, env: process.env });
+    guardStdin(child, (err) => {
+      stderr += `[stdin] ${String(err)}\n`;
+    });
     child.stdout.on("data", (c) => {
       stdout += c.toString();
     });
@@ -1410,7 +1673,7 @@ ipcMain.handle("scelo:git:status", async (event): Promise<GitStatus> => {
       error: r.stderr.trim() || "git status failed",
     };
   }
-  return { isRepo: true, gitInstalled: true, ...(_parseGitStatus(r.stdout)) };
+  return { isRepo: true, gitInstalled: true, ..._parseGitStatus(r.stdout) };
 });
 
 ipcMain.handle(
@@ -1486,7 +1749,12 @@ ipcMain.handle(
       return { ok: false, filesWritten: 0, matchesReplaced: 0, error: "no files" };
     }
     if (typeof replacement !== "string") {
-      return { ok: false, filesWritten: 0, matchesReplaced: 0, error: "replacement must be a string" };
+      return {
+        ok: false,
+        filesWritten: 0,
+        matchesReplaced: 0,
+        error: "replacement must be a string",
+      };
     }
     let filesWritten = 0;
     let matchesReplaced = 0;
@@ -1580,7 +1848,12 @@ function _parseTestthatFiles(stdout: string): DiscoveredTest[] {
 
 ipcMain.handle("scelo:tests:discover", async (event): Promise<DiscoverResult> => {
   const ws = _activeWorkspace(event);
-  if (!ws) return { ok: false, tests: [], errors: [{ framework: "pytest", message: "no active workspace" }] };
+  if (!ws)
+    return {
+      ok: false,
+      tests: [],
+      errors: [{ framework: "pytest", message: "no active workspace" }],
+    };
   const tests: DiscoveredTest[] = [];
   const errors: DiscoverResult["errors"] = [];
 
@@ -1608,7 +1881,10 @@ ipcMain.handle("scelo:tests:discover", async (event): Promise<DiscoverResult> =>
     child.on("close", () => {
       tests.push(..._parsePytestCollect(stdout));
       if (tests.length === 0 && stderr.trim()) {
-        errors.push({ framework: "pytest", message: stderr.trim().split("\n").slice(0, 3).join(" / ") });
+        errors.push({
+          framework: "pytest",
+          message: stderr.trim().split("\n").slice(0, 3).join(" / "),
+        });
       }
       resolve();
     });
@@ -1634,9 +1910,7 @@ ipcMain.handle("scelo:tests:discover", async (event): Promise<DiscoverResult> =>
       child.stdout.on("data", (c) => {
         stdout += c.toString();
       });
-      child.on("error", (err) =>
-        errors.push({ framework: "testthat", message: String(err) }),
-      );
+      child.on("error", (err) => errors.push({ framework: "testthat", message: String(err) }));
       child.on("close", () => {
         tests.push(..._parseTestthatFiles(stdout));
         resolve();
@@ -1751,7 +2025,7 @@ ipcMain.handle("scelo:workspace:state:get", (event) => {
         // Skipped — invalid path.
       }
     }
-    const active = surviving.includes(s.activeTab ?? "") ? s.activeTab : surviving[0] ?? null;
+    const active = surviving.includes(s.activeTab ?? "") ? s.activeTab : (surviving[0] ?? null);
     return {
       version: 1,
       openTabs: surviving,
@@ -1764,35 +2038,80 @@ ipcMain.handle("scelo:workspace:state:get", (event) => {
   }
 });
 
-ipcMain.handle(
-  "scelo:workspace:state:set",
-  (event, state: WorkspaceUIState) => {
-    try {
-      // Always pin `version: 1` on write so the persisted shape never
-      // ages out — even if the renderer somehow sends a partial / v0
-      // payload, what lands on disk is a current-version document.
-      const normalised: WorkspaceUIState = { ...state, version: 1 };
-      writeFileSync(_workspaceStateFile(event), JSON.stringify(normalised), {
-        encoding: "utf-8",
-        mode: 0o600,
-      });
-      return { ok: true };
-    } catch (e) {
-      return { ok: false, error: String(e) };
-    }
-  },
-);
+ipcMain.handle("scelo:workspace:state:set", (event, state: WorkspaceUIState) => {
+  try {
+    // Always pin `version: 1` on write so the persisted shape never
+    // ages out — even if the renderer somehow sends a partial / v0
+    // payload, what lands on disk is a current-version document.
+    const normalised: WorkspaceUIState = { ...state, version: 1 };
+    writeFileSync(_workspaceStateFile(event), JSON.stringify(normalised), {
+      encoding: "utf-8",
+      mode: 0o600,
+    });
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: String(e) };
+  }
+});
+
+// Hard cap for whole-file reads AND per-call ranged reads. The editor
+// buffers the whole string in the renderer, so anything bigger belongs in
+// a streaming path (Soft Data import), not a single IPC payload.
+const FS_READ_MAX_BYTES = 5 * 1024 * 1024;
 
 ipcMain.handle("scelo:fs:read", async (event, rel: string) => {
   try {
     const abs = _resolveInWorkspace(rel, event);
     const s = await stat(abs);
-    if (s.size > 5 * 1024 * 1024) {
-      return { ok: false, error: "file > 5 MB; refusing to open in editor" };
+    if (s.size > FS_READ_MAX_BYTES) {
+      const mb = (s.size / 1024 ** 2).toFixed(1);
+      // Structured refusal, not a bare failure: the renderer shows `error`
+      // verbatim today, and `tooLarge`/`size` let a future preview page
+      // through the file via scelo:fs:readRange instead.
+      return {
+        ok: false,
+        tooLarge: true,
+        size: s.size,
+        error:
+          `This file is ${mb} MB — too large to open in the editor (5 MB limit). ` +
+          "For CSV and other datasets, use the Soft Data workstation's import instead: it streams the file without loading it whole.",
+      };
     }
     const buf = await readFile(abs);
     // Best-effort UTF-8 decode; binary files surface mojibake but won't crash.
     return { ok: true, content: buf.toString("utf-8"), size: s.size };
+  } catch (e) {
+    return { ok: false, error: String(e) };
+  }
+});
+
+// Ranged read for paging through files the whole-file handler refuses.
+// Same workspace-root validation as every other fs IPC; the per-call cap
+// keeps a single IPC payload bounded no matter what length is asked for.
+ipcMain.handle("scelo:fs:readRange", async (event, rel: string, offset: number, length: number) => {
+  try {
+    const abs = _resolveInWorkspace(rel, event);
+    const s = await stat(abs);
+    const start = Math.min(Math.max(0, Math.floor(offset) || 0), s.size);
+    const want = Math.min(Math.max(0, Math.floor(length) || 0), FS_READ_MAX_BYTES);
+    const fh = await open(abs, "r");
+    try {
+      const buf = Buffer.alloc(Math.min(want, s.size - start));
+      const { bytesRead } = await fh.read(buf, 0, buf.length, start);
+      // Best-effort UTF-8 decode, as in fs:read. A byte range can split a
+      // multibyte character at either edge; callers paging text should
+      // trim to line breaks before rendering.
+      return {
+        ok: true,
+        content: buf.subarray(0, bytesRead).toString("utf-8"),
+        offset: start,
+        bytesRead,
+        size: s.size,
+        eof: start + bytesRead >= s.size,
+      };
+    } finally {
+      await fh.close();
+    }
   } catch (e) {
     return { ok: false, error: String(e) };
   }
@@ -1818,9 +2137,9 @@ interface DatasetSpec {
   label: string;
   blurb: string;
   url: string;
-  filename: string;            // basename under userData
-  approxBytes: number;         // for the UI summary; not enforced
-  usedBy: string;              // which Scelo Tool benefits
+  filename: string; // basename under userData
+  approxBytes: number; // for the UI summary; not enforced
+  usedBy: string; // which Scelo Tool benefits
   /** Hex sha256 of the expected file. When set, the download is
    *  verified after streaming completes — mismatch deletes the temp
    *  file and surfaces an error instead of atomic-renaming a broken
@@ -1868,8 +2187,7 @@ const DATASETS: DatasetSpec[] = [
     filename: "chembl_34_sqlite.tar.gz",
     approxBytes: 7 * 1024 ** 3,
     usedBy: "drug-pricing + mortality",
-    expectedSha256:
-      "67a3f4f6a02d3e8d3f87b1a4c66f1eecaa84a3a8c3c0f4b8b8a8a0a4e8b3c8d4",
+    expectedSha256: "67a3f4f6a02d3e8d3f87b1a4c66f1eecaa84a3a8c3c0f4b8b8a8a0a4e8b3c8d4",
     // Note: the sha256 above is a placeholder. Production deploys must
     // pin a real digest from the EMBL-EBI manifest (the digest file is
     // listed alongside the archive in the same FTP dir).
@@ -1964,8 +2282,13 @@ ipcMain.handle("scelo:data:download", async (event, id: string) => {
     // Resume support: if a .partial file from a previous attempt exists,
     // send Range: bytes=N- and append rather than overwriting. Big-dataset
     // hygiene — a cancelled 7 GB ChEMBL download stays useful.
-    const { existsSync: _existsSync, createReadStream, createWriteStream, statSync: _statSync, unlinkSync } =
-      require("node:fs") as typeof import("node:fs");
+    const {
+      existsSync: _existsSync,
+      createReadStream,
+      createWriteStream,
+      statSync: _statSync,
+      unlinkSync,
+    } = require("node:fs") as typeof import("node:fs");
     const { createHash } = require("node:crypto") as typeof import("node:crypto");
     let resumeFrom = 0;
     if (_existsSync(tmp)) {
@@ -2164,16 +2487,16 @@ function _findPyrightLangServer(): string | null {
   const py = pythonBinary();
   if (py) {
     const dir = isWin ? join(py, "..", "Scripts") : join(py, "..");
-    const candidate = isWin
-      ? join(dir, "pyright-langserver.exe")
-      : join(dir, "pyright-langserver");
+    const candidate = isWin ? join(dir, "pyright-langserver.exe") : join(dir, "pyright-langserver");
     if (existsSync(candidate)) return candidate;
   }
   // 2. PATH lookup.
   const which = isWin ? "where" : "which";
   try {
     const { execFileSync } = require("node:child_process") as typeof import("node:child_process");
-    const out = execFileSync(which, ["pyright-langserver"], { encoding: "utf-8" }).toString().trim();
+    const out = execFileSync(which, ["pyright-langserver"], { encoding: "utf-8" })
+      .toString()
+      .trim();
     if (out) return out.split(/\r?\n/)[0];
   } catch {
     // not on path
@@ -2250,6 +2573,9 @@ function _startLsp(lang: LspLang): { ok: boolean; error?: string } {
   }
   try {
     const child = spawn(resolved.bin, resolved.argv, { env: _augmentedEnv() });
+    // scelo:lsp:send writes frames to stdin for the server's whole life —
+    // an exiting server would otherwise EPIPE-crash the main process.
+    guardStdin(child, (err) => log.warn(`LSP[${lang}]: stdin error`, err));
     const proc: LspProcess = {
       lang,
       child,
@@ -2371,9 +2697,7 @@ function _findPyrightBin(): string | null {
   // 1. bundled python's bin (pip install pyright into the IDE python).
   const py = pythonBinary();
   if (py) {
-    const pyDir = isWin
-      ? join(py, "..", "Scripts")
-      : join(py, "..");
+    const pyDir = isWin ? join(py, "..", "Scripts") : join(py, "..");
     const candidate = isWin ? join(pyDir, "pyright.exe") : join(pyDir, "pyright");
     if (existsSync(candidate)) return candidate;
   }
@@ -2478,7 +2802,11 @@ ipcMain.handle("scelo:fs:lintR", async (event, rel: string) => {
     const abs = _resolveInWorkspace(rel, event);
     const r = rBinary();
     if (!r) {
-      return { ok: true, diagnostics: [] as RLintDiagnostic[], note: "bundled R not installed; skipping lint" };
+      return {
+        ok: true,
+        diagnostics: [] as RLintDiagnostic[],
+        note: "bundled R not installed; skipping lint",
+      };
     }
     const res = await new Promise<{ stdout: string; stderr: string; exitCode: number | null }>(
       (resolve) => {
@@ -2548,8 +2876,8 @@ function _sha1OfFile(abs: string): string | null {
 interface UnsavedRecord {
   rel: string;
   content: string;
-  baseSha1: string;     // sha1 of the on-disk file when we saved this draft
-  savedAt: string;      // ISO
+  baseSha1: string; // sha1 of the on-disk file when we saved this draft
+  savedAt: string; // ISO
 }
 
 ipcMain.handle("scelo:fs:saveUnsaved", (event, rel: string, content: string) => {
@@ -2714,7 +3042,7 @@ cat(jsonlite::toJSON(out, auto_unbox = TRUE))
 // model, baseUrl) without a schema migration.
 
 interface SecretRecord {
-  provider: string;        // anthropic | openai | gemini | openai_compat
+  provider: string; // anthropic | openai | gemini | openai_compat
   apiKey: string;
   model?: string;
   baseUrl?: string;
@@ -2823,7 +3151,7 @@ ipcMain.handle("scelo:secrets:status", () => ({
   // to surface so the user knows whether their keychain is actually wiring.
   backend:
     process.platform === "linux"
-      ? safeStorage.getSelectedStorageBackend?.() ?? "unknown"
+      ? (safeStorage.getSelectedStorageBackend?.() ?? "unknown")
       : process.platform,
 }));
 
@@ -2866,14 +3194,14 @@ function maybeScheduleUpdateCheck(): void {
     return;
   }
   // Check immediately, then every 6h while the app is open.
-  autoUpdater.checkForUpdatesAndNotify().catch((err) =>
-    log.warn("autoUpdater: initial check failed", err),
-  );
+  autoUpdater
+    .checkForUpdatesAndNotify()
+    .catch((err) => log.warn("autoUpdater: initial check failed", err));
   setInterval(
     () => {
-      autoUpdater.checkForUpdatesAndNotify().catch((err) =>
-        log.warn("autoUpdater: periodic check failed", err),
-      );
+      autoUpdater
+        .checkForUpdatesAndNotify()
+        .catch((err) => log.warn("autoUpdater: periodic check failed", err));
     },
     6 * 60 * 60 * 1000,
   );
