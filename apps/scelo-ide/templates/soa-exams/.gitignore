@@ -1,0 +1,5 @@
+# SOA exam content is copyright — fetched on demand, never committed.
+data/
+*.pdf
+__pycache__/
+.pytest_cache/

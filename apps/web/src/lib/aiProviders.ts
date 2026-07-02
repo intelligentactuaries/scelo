@@ -23,6 +23,7 @@ export type LlmMessage = { role: "system" | "user" | "assistant"; content: strin
 
 export type ProviderId =
   | "ollama"
+  | "claude_code"
   | "openrouter"
   | "anthropic"
   | "openai"
@@ -41,6 +42,9 @@ export interface ProviderDescriptor {
   label: string;
   blurb: string;
   needsKey: boolean;
+  /** Keyless providers that can still run a "test connection" (e.g. a local
+   *  CLI/daemon). The settings card shows a test button even with no key. */
+  testable?: boolean;
   defaultModel: string;
   modelHint: string;
   needsBaseUrl: boolean;
@@ -59,6 +63,20 @@ export const PROVIDER_CATALOG: ProviderDescriptor[] = [
     modelHint: "Set via the orchestrator env; the model must be pulled via `ollama pull`.",
     needsBaseUrl: false,
     keyHelpUrl: "https://ollama.com/download",
+  },
+  {
+    id: "claude_code",
+    label: "Claude Code (your Claude login · no key)",
+    blurb:
+      "Answers via the Claude Code CLI already installed and signed in on this machine — strongest reasoning, no API key, no spend beyond your Claude plan. Desktop app only (needs `claude` on PATH). Inherits whichever model your Claude Code uses by default.",
+    needsKey: false,
+    testable: true,
+    // Blank → inherit the CLI's configured model (your Opus/Sonnet default).
+    defaultModel: "",
+    modelHint:
+      "Leave blank to use your Claude Code default model; or set an alias like opus / sonnet / haiku.",
+    needsBaseUrl: false,
+    keyHelpUrl: "https://claude.com/claude-code",
   },
   {
     id: "openrouter",
@@ -146,6 +164,11 @@ export async function getProviderConfig(
   if (id === "ollama") {
     return { id: "ollama", apiKey: "" };
   }
+  // Claude Code needs no stored secret — auth lives in the local CLI. Always
+  // "configured" so it's selectable without a save step.
+  if (id === "claude_code") {
+    return { id: "claude_code", apiKey: "" };
+  }
   if (isDesktopIDE()) {
     const rec = await window.scelo!.secrets.get(id);
     if (!rec) return null;
@@ -168,7 +191,7 @@ export async function getProviderConfig(
 }
 
 export async function setProviderConfig(cfg: ProviderConfig): Promise<void> {
-  if (cfg.id === "ollama") return; // nothing to store
+  if (cfg.id === "ollama" || cfg.id === "claude_code") return; // nothing to store
   if (isDesktopIDE()) {
     await window.scelo!.secrets.set(cfg.id, {
       apiKey: cfg.apiKey,
@@ -182,7 +205,7 @@ export async function setProviderConfig(cfg: ProviderConfig): Promise<void> {
 }
 
 export async function clearProviderConfig(id: ProviderId): Promise<void> {
-  if (id === "ollama") return;
+  if (id === "ollama" || id === "claude_code") return;
   if (isDesktopIDE()) {
     await window.scelo!.secrets.clear(id);
     return;
