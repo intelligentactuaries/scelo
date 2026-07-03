@@ -22,7 +22,7 @@ Scelo is a desktop app. Pick your platform:
 
 | | Minimum |
 | --- | --- |
-| **OS** | Linux (x64), Windows 10/11 (x64), macOS 12+ (Apple Silicon) |
+| **OS** | Ubuntu 22.04+ / Debian 12+ (x64) · Windows 10/11 (x64) · macOS 12+ (Intel & Apple Silicon) |
 | **Disk** | ~2 GB (the installer bundles a full Python + R runtime) |
 | **RAM** | 8 GB recommended |
 | **Network** | Only for first download and optional hosted AI / the swarm. The core app runs **offline**. |
@@ -31,6 +31,10 @@ Scelo is a desktop app. Pick your platform:
     The installer ships a portable **CPython** and **R** with the IA actuarial
     package set (lifelib, chainladder, climada, forecast, ChainLadder, and
     more). You do **not** need Python or R installed on your machine.
+
+    The Ubuntu 22.04 floor comes from this bundle: the packaged R runtime is
+    built against the 22.04 baseline, so older distributions are missing the
+    system libraries it links. Any distro at or above that baseline works.
 
 ## A note on "unknown publisher" warnings
 

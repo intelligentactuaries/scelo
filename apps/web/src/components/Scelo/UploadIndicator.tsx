@@ -1,7 +1,7 @@
 // Scelo's single data-intake loading primitive. One 'data materialising'
 // vocabulary — a skeleton table shimmering in over a hairline rail — reused at
 // three prominences across all six upload surfaces:
-//   layout="lg"      → the empty-state canvas (the #1 anxiety fix)
+//   layout="lg"      → the empty-state canvas + the import-modal drop zone
 //   layout="inline"  → the compact strip under the header (import / staging)
 //   layout="overlay" → a dimmed scrim over the grid while combineAll() runs
 //
@@ -12,6 +12,27 @@
 // invented. Keyframes + reduced-motion live in styles/theme.css.
 
 import { useEffect, useRef, useState } from "react";
+
+// ── helper: commit a loading state to screen before blocking the thread ─────
+// Double-rAF guarantees the busy UI set in the current tick actually paints
+// before a synchronous compute starts. Two hazards make the naive version a
+// stall: hidden tabs never fire rAF at all (resolve immediately — nothing to
+// paint), and occluded-but-not-hidden windows can starve rAF (the timeout
+// backstop keeps the compute batch moving no matter what).
+export function nextPaint(timeoutMs = 250): Promise<void> {
+  if (typeof document !== "undefined" && document.hidden) return Promise.resolve();
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = () => {
+      if (!settled) {
+        settled = true;
+        resolve();
+      }
+    };
+    requestAnimationFrame(() => requestAnimationFrame(finish));
+    setTimeout(finish, timeoutMs);
+  });
+}
 
 export type UploadAccent = "warn" | "accent-2" | "primary";
 

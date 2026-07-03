@@ -13,6 +13,7 @@
 // `shell.editor`, `shell.palettes`) so JSX call sites stay tidy.
 
 import { Link, Navigate } from "react-router-dom";
+import { SwarmNavLink } from "../components/SwarmStatus";
 import AIPanel from "../components/workspace/AIPanel";
 import CommandPalette from "../components/workspace/CommandPalette";
 import EditorPanel from "../components/workspace/EditorPanel";
@@ -24,11 +25,11 @@ import SearchPanel from "../components/workspace/SearchPanel";
 import SourceControlPanel from "../components/workspace/SourceControlPanel";
 import StatusBar from "../components/workspace/StatusBar";
 import SymbolPalette from "../components/workspace/SymbolPalette";
-import TestsPanel from "../components/workspace/TestsPanel";
 import TerminalPanel from "../components/workspace/TerminalPanel";
+import TestsPanel from "../components/workspace/TestsPanel";
 import ToastTray from "../components/workspace/ToastTray";
 import { isDesktopIDE } from "../lib/sceloIDE";
-import { useWorkspaceShell, type SidebarTab } from "../lib/useWorkspaceShell";
+import { type SidebarTab, useWorkspaceShell } from "../lib/useWorkspaceShell";
 
 export default function Workspace() {
   const shell = useWorkspaceShell();
@@ -64,13 +65,7 @@ export default function Workspace() {
           <Link to="/dashboards/scelo" className="ia-btn ia-btn-sm ia-btn-ghost">
             scelo
           </Link>
-          <Link
-            to="/swarm"
-            className="ia-btn ia-btn-sm ia-btn-ghost"
-            title="Open the Swarm dashboard"
-          >
-            swarm
-          </Link>
+          <SwarmNavLink />
           <Link to="/settings/ai" className="ia-btn ia-btn-sm ia-btn-ghost">
             settings
           </Link>
@@ -95,22 +90,22 @@ export default function Workspace() {
           style={{ gridTemplateRows: "auto 1fr" }}
         >
           <div className="flex border-b border-border bg-bg-2">
-            {(
-              ["files", "search", "outline", "git", "problems", "tests"] as SidebarTab[]
-            ).map((t) => (
-              <button
-                key={t}
-                type="button"
-                onClick={() => workspace.setSidebarTab(t)}
-                className={`flex-1 px-2 py-1 text-[10px] uppercase tracking-wider ${
-                  workspace.sidebarTab === t
-                    ? "border-b border-fg text-fg"
-                    : "text-fg-mute hover:text-fg"
-                }`}
-              >
-                {t}
-              </button>
-            ))}
+            {(["files", "search", "outline", "git", "problems", "tests"] as SidebarTab[]).map(
+              (t) => (
+                <button
+                  key={t}
+                  type="button"
+                  onClick={() => workspace.setSidebarTab(t)}
+                  className={`flex-1 px-2 py-1 text-[10px] uppercase tracking-wider ${
+                    workspace.sidebarTab === t
+                      ? "border-b border-fg text-fg"
+                      : "text-fg-mute hover:text-fg"
+                  }`}
+                >
+                  {t}
+                </button>
+              ),
+            )}
           </div>
           {workspace.sidebarTab === "files" && (
             <FileBrowser
@@ -149,15 +144,10 @@ export default function Workspace() {
               }}
             />
           )}
-          {workspace.sidebarTab === "tests" && (
-            <TestsPanel workspacePath={workspace.path} />
-          )}
+          {workspace.sidebarTab === "tests" && <TestsPanel workspacePath={workspace.path} />}
         </aside>
 
-        <SidebarResizer
-          width={workspace.sidebarWidth}
-          onChange={workspace.setSidebarWidth}
-        />
+        <SidebarResizer width={workspace.sidebarWidth} onChange={workspace.setSidebarWidth} />
 
         {palettes.quickOpen && (
           <QuickOpen
@@ -179,10 +169,7 @@ export default function Workspace() {
         )}
 
         {palettes.command && (
-          <CommandPalette
-            commands={palettes.commands}
-            onClose={() => palettes.setCommand(false)}
-          />
+          <CommandPalette commands={palettes.commands} onClose={() => palettes.setCommand(false)} />
         )}
 
         <div
@@ -193,9 +180,7 @@ export default function Workspace() {
             // on the section) so xterm + the shell process survive a
             // toggle. That's what makes "terminal in background"
             // actually mean "long-running processes keep running".
-            gridTemplateRows: workspace.terminalVisible
-              ? "auto 1fr 280px"
-              : "auto 1fr 0",
+            gridTemplateRows: workspace.terminalVisible ? "auto 1fr 280px" : "auto 1fr 0",
           }}
         >
           {tabs.open.length > 0 && (
@@ -222,9 +207,7 @@ export default function Workspace() {
               }
               onJumpHandled={() => editor.setPendingJump(null)}
               breadcrumb={
-                editor.caretLine != null
-                  ? breadcrumbFor(editor.outline, editor.caretLine)
-                  : []
+                editor.caretLine != null ? breadcrumbFor(editor.outline, editor.caretLine) : []
               }
               onCaretChange={editor.setCaretLine}
               onBufferChange={editor.setActiveBuffer}
@@ -240,10 +223,7 @@ export default function Workspace() {
         </div>
         {workspace.aiPanelVisible && (
           <>
-            <AIPanelResizer
-              width={workspace.aiPanelWidth}
-              onChange={workspace.setAiPanelWidth}
-            />
+            <AIPanelResizer width={workspace.aiPanelWidth} onChange={workspace.setAiPanelWidth} />
             <aside className="min-h-0 overflow-hidden border-l border-border">
               <AIPanel
                 workspacePath={workspace.path}

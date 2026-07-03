@@ -53,6 +53,7 @@ import { ResizablePanel } from "./ResizablePanel";
 import { SciText } from "./SciText";
 import { type ColumnMeta, type Dataset, formatNumber } from "./SoftDataWorkstation";
 import { StageChatPanel } from "./StageChatPanel";
+import { UploadIndicator } from "./UploadIndicator";
 import { getColumnMetas } from "./columnMetaCache";
 import {
   type CatalogModel,
@@ -1872,7 +1873,18 @@ export function ToolsWorkstation() {
             selectedCount={enabledCount}
           />
         </ResizablePanel>
-        <main className="min-w-0 flex-1">
+        <main className="relative min-w-0 flex-1">
+          {/* Model identification in flight with nothing picked yet — the
+              canvas would sit empty for the whole LLM round-trip. Same
+              loading vocabulary as Soft; indeterminate scan because an LLM
+              call has no honest progress signal. */}
+          {status === "loading" && selectedModels.length === 0 && dataset && (
+            <UploadIndicator
+              layout="overlay"
+              accent="primary"
+              state={{ verb: "identifying", name: dataset.name }}
+            />
+          )}
           {dataset ? (
             <ReactFlow
               nodes={nodes}

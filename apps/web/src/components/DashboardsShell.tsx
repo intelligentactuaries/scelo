@@ -11,9 +11,10 @@
 // alive machinery from the monorepo is dropped here because there's
 // only one dashboard to mount.
 
-import { Link, Navigate, useLocation } from "react-router-dom";
+import { SwarmNavLink } from "@/components/SwarmStatus";
 import { isDesktopIDE } from "@/lib/sceloIDE";
 import Scelo from "@/routes/Scelo";
+import { Link, Navigate, useLocation } from "react-router-dom";
 
 export default function DashboardsShell() {
   const { pathname } = useLocation();
@@ -34,6 +35,9 @@ export default function DashboardsShell() {
         <Link to={target} className="font-mono text-fg-mute hover:text-primary">
           {label}
         </Link>
+        {/* right-aligned so a live deliberation is one click away from any
+            stage — soft, tools, or hard. */}
+        <SwarmNavLink className="ml-auto" />
       </nav>
       <div className="min-h-0 flex-1 overflow-auto">
         <Scelo />

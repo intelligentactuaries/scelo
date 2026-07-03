@@ -2,6 +2,12 @@
 
 Three ways to install, from most to least recommended.
 
+!!! info "Supported distributions"
+    **Ubuntu 22.04+, Debian 12+, or any distro on the same baseline** (x64).
+    The floor is set by the bundled R runtime, which is built against
+    Ubuntu 22.04's system libraries — this applies to all three install
+    methods below, including the AppImage.
+
 ## 1. apt (verified + auto-updating) — recommended
 
 This adds Scelo's **GPG-signed apt repository**, so the package is
@@ -34,7 +40,8 @@ sudo apt remove scelo-ide
 
 ## 2. AppImage (portable, no install)
 
-A single self-contained file that runs on any distro.
+A single self-contained file that runs on any supported distro (see the
+baseline above) — no package manager involved.
 
 ```bash
 # download from the website's Linux tile, then:

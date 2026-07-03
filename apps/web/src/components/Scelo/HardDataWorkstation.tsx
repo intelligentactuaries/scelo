@@ -39,16 +39,29 @@ import ReactFlow, {
   useNodesState,
 } from "reactflow";
 import "reactflow/dist/style.css";
+import { SWARM_DOCS_URL, swarmStartCommand } from "../workspace/SwarmPanel";
 import { ChatInputPill } from "./ChatInputPill";
 import { ClimateDataPanel, isClimateFamilyModel } from "./ClimateDataPanel";
 import { ExportButton } from "./ExportScreen";
 import { FlowControls } from "./FlowControls";
 import { ResizablePanel } from "./ResizablePanel";
-import { ScrollFade } from "./ScrollFade";
 import { SceloChatMarkdown } from "./SceloChatMarkdown";
 import { SceloLogo } from "./SceloLogo";
+import { ScrollFade } from "./ScrollFade";
 import { type Dataset, formatNumber } from "./SoftDataWorkstation";
 import { StageChatPanel } from "./StageChatPanel";
+import { UploadIndicator, nextPaint } from "./UploadIndicator";
+import { useSwarmProbe } from "../SwarmStatus";
+import { type CouncilSynthesis, conveneCouncil } from "./forecast/councilClient";
+import { forecastConfigFor } from "./forecast/derive";
+import { hasForecastDomain } from "./forecast/domainLabels";
+import { runForecast } from "./forecast/runner";
+import type { ForecastResult } from "./forecast/runner";
+import {
+  buildLifelibNotebook,
+  isLifelibModel,
+  triggerNotebookDownload,
+} from "./lifelibNotebookExport";
 import {
   FAMILY_COLOR_DARK,
   FAMILY_COLOR_LIGHT,
@@ -57,17 +70,6 @@ import {
 } from "./modelCatalog";
 import { BRIDGED_MODEL_IDS, type RunResult, runModel, runModelAsync } from "./modelRunner";
 import { modelTheoryFor } from "./modelTheory";
-import {
-  buildLifelibNotebook,
-  isLifelibModel,
-  triggerNotebookDownload,
-} from "./lifelibNotebookExport";
-import { forecastConfigFor } from "./forecast/derive";
-import { runForecast } from "./forecast/runner";
-import { hasForecastDomain } from "./forecast/domainLabels";
-import { type ForecastResult } from "./forecast/runner";
-import { conveneCouncil, type CouncilSynthesis, swarmApiUrl } from "./forecast/councilClient";
-import { SWARM_DOCS_URL, swarmStartCommand } from "../workspace/SwarmPanel";
 import { type SelectedModel, useScelo } from "./sceloContext";
 import { useNodeChat } from "./useNodeChat";
 
@@ -1534,9 +1536,12 @@ function ForecastAttachCta({ focused }: { focused: RunResult }) {
   const [error, setError] = useState<string | null>(null);
   const scenario = dataset?.name ?? null;
 
-  const run = useCallback(() => {
+  const run = useCallback(async () => {
     setBusy(true);
     setError(null);
+    // Paint "projecting…" before the synchronous engine blocks the thread —
+    // setBusy alone never reaches the screen.
+    await nextPaint();
     try {
       const config = forecastConfigFor(focused, scenario, focused.family);
       const r = runForecast(config, focused.family);
@@ -1668,32 +1673,6 @@ function ForecastInline({ forecast }: { forecast: ForecastResult }) {
 // fetch: connection-refused throws, any HTTP response resolves) but targets
 // the :3010 API base the council actually calls — including the ?swarmUrl=
 // override — so the status dot can never disagree with the button's fate.
-function useSwarmApiProbe(): "probing" | "up" | "down" {
-  const [probe, setProbe] = useState<"probing" | "up" | "down">("probing");
-  useEffect(() => {
-    let cancelled = false;
-    const base = swarmApiUrl();
-    const ping = async () => {
-      try {
-        const ctrl = new AbortController();
-        const t = setTimeout(() => ctrl.abort(), 800);
-        await fetch(base, { mode: "no-cors", signal: ctrl.signal });
-        clearTimeout(t);
-        if (!cancelled) setProbe("up");
-      } catch {
-        if (!cancelled) setProbe("down");
-      }
-    };
-    void ping();
-    const id = window.setInterval(ping, 5_000);
-    return () => {
-      cancelled = true;
-      window.clearInterval(id);
-    };
-  }, []);
-  return probe;
-}
-
 function CouncilAttachCta({ focused }: { focused: RunResult }) {
   const { dataset } = useScelo();
   const navigate = useNavigate();
@@ -1702,7 +1681,7 @@ function CouncilAttachCta({ focused }: { focused: RunResult }) {
   const [error, setError] = useState<string | null>(null);
   const [progressId, setProgressId] = useState<string | null>(null);
   const [subset, setSubset] = useState<12 | 24 | 48 | 96 | 192>(12);
-  const probe = useSwarmApiProbe();
+  const probe = useSwarmProbe();
   // Society pulse defaults ON so the swarm app's Society tab is populated
   // when the user clicks "open in swarm ↗". Adds ~30s of Ollama time on a
   // local run; the user can opt out via the "skip society" toggle for a
@@ -1850,6 +1829,10 @@ function CouncilAttachCta({ focused }: { focused: RunResult }) {
               {skipSociety ? " · council-only" : " · + society"}
             </span>
           </button>
+          {/* A local-LLM council deliberates for minutes — surface the live
+              swarm view as soon as the run has an id, not only when the
+              synthesis lands. */}
+          {busy && progressId && <OpenInSwarmLink runId={progressId} live />}
         </div>
       )}
       {error && (
@@ -1912,14 +1895,15 @@ function CouncilSynthesisCard({ synth }: { synth: CouncilSynthesis }) {
   );
 }
 
-/** "Open in swarm" : the primary CTA on a synthesis card. Inside the
- *  IDE we route through swarmBus so /swarm loads the run-specific
- *  iframe; in the browser preview the same navigation works (the
- *  Swarm route degrades to an iframe of localhost:5190 which the user
- *  may or may not have running). Minimalist single-stroke icon per
+/** "Open in swarm" : the primary CTA on a synthesis card, and (with
+ *  `live`) the watch-it-deliberate link shown while a run is still in
+ *  flight. Inside the IDE we route through swarmBus so /swarm loads the
+ *  run-specific iframe; in the browser preview the same navigation works
+ *  (the Swarm route degrades to an iframe of localhost:5190 which the
+ *  user may or may not have running). Minimalist single-stroke icon per
  *  the rest of the site's iconography (currentColor, 1.5 stroke,
  *  round caps). */
-function OpenInSwarmLink({ runId }: { runId: string }) {
+function OpenInSwarmLink({ runId, live = false }: { runId: string; live?: boolean }) {
   const navigate = useNavigate();
   return (
     <button
@@ -1930,15 +1914,19 @@ function OpenInSwarmLink({ runId }: { runId: string }) {
         openInSwarm({ runId });
         navigate("/swarm");
       }}
-      title={`Open the full deliberation for ${runId} in the swarm view`}
+      title={
+        live
+          ? `Watch run ${runId} deliberate live in the swarm view`
+          : `Open the full deliberation for ${runId} in the swarm view`
+      }
       className="group mt-1 flex w-full items-center justify-between gap-2 rounded border border-border bg-bg-2 px-3 py-2 text-xs text-fg transition hover:border-primary hover:bg-bg-1"
     >
       <span className="flex items-center gap-2">
         <ExternalSquareIcon className="h-4 w-4 text-fg-mute group-hover:text-primary" />
-        <span className="font-medium">Open in swarm</span>
+        <span className="font-medium">{live ? "Watch live in swarm" : "Open in swarm"}</span>
       </span>
       <span className="font-mono text-[10px] text-fg-dim group-hover:text-fg-mute">
-        full deliberation →
+        {live ? "deliberating now →" : "full deliberation →"}
       </span>
     </button>
   );
@@ -2067,14 +2055,28 @@ export function HardDataWorkstation() {
   // swap, model toggle, unmount) stops writing results.
   const runEpoch = useRef(0);
 
+  // Batch-level busy state for the canvas overlay — same loading vocabulary
+  // as Soft's import/combine. Done/total gives HONEST determinate progress
+  // (models completed, not time); `current` names the model on the rail.
+  const [computeBusy, setComputeBusy] = useState<{
+    done: number;
+    total: number;
+    current: string;
+  } | null>(null);
+
   // Execute all enabled models. Models with a Python/R bridge go through
   // runModelAsync (the desktop IDE's bundled runtime — canonical numbers);
   // everything else uses the sync in-browser runner. Every model is staged
   // as "running" first so the status pips pulse while bridges execute, and
-  // results land one by one as they finish.
+  // results land one by one as they finish. The sync runners block the main
+  // thread, so the overlay is committed via a double-rAF before the loop and
+  // the loop yields a frame per model — the browser gets a paint between
+  // models instead of one long freeze.
   const executeRuns = useCallback(
     async (models: SelectedModel[], ds: Dataset) => {
       const epoch = ++runEpoch.current;
+      const startedAt = performance.now();
+      setComputeBusy({ done: 0, total: models.length, current: models[0]?.id ?? "" });
       const staged: Record<string, RunResult> = {};
       for (const m of models) {
         staged[m.id] = {
@@ -2088,35 +2090,59 @@ export function HardDataWorkstation() {
         };
       }
       setRuns(staged);
-      for (const m of models) {
-        let result: RunResult;
-        try {
-          result = BRIDGED_MODEL_IDS.has(m.id) ? await runModelAsync(m.id, ds) : runModel(m.id, ds);
-        } catch (e) {
-          // Both runners catch internally; this guard keeps one unexpected
-          // rejection from killing the rest of the batch.
-          const msg = e instanceof Error ? e.message : String(e);
-          result = {
-            modelId: m.id,
-            family: MODEL_BY_ID.get(m.id)?.family ?? "general",
-            status: "error",
-            startedAt: Date.now(),
-            finishedAt: Date.now(),
-            headline: { label: "—", value: 0 },
-            secondary: [{ label: "reason", value: msg }],
-            blurb: `${m.id} failed: ${msg}`,
-            error: msg,
-            source: "browser",
-          };
+      // Commit the overlay + staged pips to screen before the first
+      // synchronous model blocks the thread. nextPaint (not raw rAF): rAF
+      // never fires in hidden/occluded tabs, which would stall the whole
+      // batch until the tab is refocused.
+      await nextPaint();
+      try {
+        let done = 0;
+        for (const m of models) {
+          if (runEpoch.current !== epoch) return; // superseded mid-flight
+          setComputeBusy({ done, total: models.length, current: m.id });
+          // One paint so the overlay's model name / progress just set above
+          // reaches the screen before this model blocks the thread.
+          await nextPaint();
+          let result: RunResult;
+          try {
+            result = BRIDGED_MODEL_IDS.has(m.id)
+              ? await runModelAsync(m.id, ds)
+              : runModel(m.id, ds);
+          } catch (e) {
+            // Both runners catch internally; this guard keeps one unexpected
+            // rejection from killing the rest of the batch.
+            const msg = e instanceof Error ? e.message : String(e);
+            result = {
+              modelId: m.id,
+              family: MODEL_BY_ID.get(m.id)?.family ?? "general",
+              status: "error",
+              startedAt: Date.now(),
+              finishedAt: Date.now(),
+              headline: { label: "—", value: 0 },
+              secondary: [{ label: "reason", value: msg }],
+              blurb: `${m.id} failed: ${msg}`,
+              error: msg,
+              source: "browser",
+            };
+          }
+          if (runEpoch.current !== epoch) return; // superseded mid-flight
+          done++;
+          setRuns((prev) => ({ ...prev, [m.id]: result }));
         }
-        if (runEpoch.current !== epoch) return; // superseded mid-flight
-        setRuns((prev) => ({ ...prev, [m.id]: result }));
+        logEvent({
+          stage: "hard",
+          kind: "runs.execute",
+          payload: { models: models.map((m) => m.id) },
+        });
+      } finally {
+        // Only the batch that owns the overlay may clear it — a superseding
+        // batch has already replaced it with its own state.
+        if (runEpoch.current === epoch) {
+          const remaining = 350 - (performance.now() - startedAt);
+          if (remaining > 0) await new Promise((r) => setTimeout(r, remaining));
+          if (runEpoch.current === epoch) setComputeBusy(null);
+        }
       }
-      logEvent({
-        stage: "hard",
-        kind: "runs.execute",
-        payload: { models: models.map((m) => m.id) },
-      });
     },
     [setRuns, logEvent],
   );
@@ -2126,6 +2152,7 @@ export function HardDataWorkstation() {
   useEffect(() => {
     if (!dataset || enabled.length === 0) {
       setRuns({});
+      setComputeBusy(null);
       return;
     }
     void executeRuns(enabled, dataset);
@@ -2414,7 +2441,19 @@ export function HardDataWorkstation() {
             narrativeStatus={narrativeStatus}
           />
         </ResizablePanel>
-        <main className="min-w-0 flex-1">
+        <main className="relative min-w-0 flex-1">
+          {computeBusy && (
+            <UploadIndicator
+              layout="overlay"
+              accent="accent-2"
+              state={{
+                verb: "computing",
+                name: computeBusy.current,
+                pct:
+                  computeBusy.total > 0 ? (100 * computeBusy.done) / computeBusy.total : undefined,
+              }}
+            />
+          )}
           {dataset && enabled.length > 0 ? (
             <ReactFlow
               nodes={nodes}
