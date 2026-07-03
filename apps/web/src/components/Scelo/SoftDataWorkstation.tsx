@@ -42,7 +42,7 @@ import { SceloChatMarkdown } from "./SceloChatMarkdown";
 import { SimulateScenarioModal } from "./SimulateScenarioModal";
 import { SmartColumnDashboard } from "./SmartColumnDashboard";
 import { StageChatPanel } from "./StageChatPanel";
-import { UploadIndicator, type UploadState, useMinVisible } from "./UploadIndicator";
+import { UploadIndicator, type UploadState, nextPaint, useMinVisible } from "./UploadIndicator";
 import {
   type CleaningOpKey,
   type CleaningPlan,
@@ -68,6 +68,18 @@ import {
 } from "./combineData";
 import { CLIMATE_SAMPLE } from "./climateSampleData";
 import { getColumnMetas } from "./columnMetaCache";
+import {
+  type ColumnOpIntent,
+  convertColumnToNumber,
+  convertColumnToString,
+  dropColumnFromDataset,
+  fillMissingInColumn,
+  parseColumnOpIntent,
+  removeOutlierRows,
+  resolveColumnsMentioned,
+  roundColumnValues,
+  transformColumnCase,
+} from "./columnOps";
 import { buildDirtySample } from "./dirtySampleData";
 import { buildColumnStageContext, placeholderHintFor } from "./columnChatHints";
 import { type ExportFormat, exportDataset } from "./exportDataset";
@@ -2255,15 +2267,23 @@ function SampleLibraryModal({
 // Drag-and-drop file picker. Same modal frame as SampleLibraryModal so
 // the two intake paths feel like siblings. Drop a file onto the dashed
 // canvas, or click it to open the OS file picker — either path calls
-// `onFile(file)` and closes. ESC + outside-click dismiss.
+// `onFile(file)` and closes. ESC + outside-click dismiss. While `busy`
+// the drop zone is swapped for the shared UploadIndicator so the parse
+// is visibly in flight *inside* the modal (the canvas indicator sits
+// behind the backdrop); `error` surfaces parse failures here for the
+// same reason.
 function ImportFileModal({
   open,
   onFile,
   onDismiss,
+  busy,
+  error,
 }: {
   open: boolean;
   onFile: (file: File) => void | Promise<void>;
   onDismiss: () => void;
+  busy?: UploadState | null;
+  error?: string | null;
 }) {
   const [dragging, setDragging] = useState(false);
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -2321,42 +2341,53 @@ function ImportFileModal({
           </button>
         </header>
         <div className="flex min-h-0 flex-1 items-center justify-center px-5 py-6">
-          {/* The drop zone is a button so click-to-browse and drop-to-load
-              share one element; we lean on `<input type=file>` hidden
-              behind it for the file dialog. */}
-          <button
-            type="button"
-            onClick={() => inputRef.current?.click()}
-            onDragOver={(e) => {
-              e.preventDefault();
-              setDragging(true);
-            }}
-            onDragLeave={() => setDragging(false)}
-            onDrop={handleDrop}
-            className={`flex w-full max-w-2xl flex-col items-center justify-center gap-3 rounded-2xl border-2 border-dashed px-8 py-12 transition ${
-              dragging ? "border-fg-mute bg-bg/60" : "border-border bg-bg-1 hover:border-fg-dim"
-            }`}
-          >
-            <span className="font-mono text-[11px] uppercase tracking-[0.18em] text-fg-dim">
-              {dragging ? "release to load" : "drag a file in"}
-            </span>
-            <span className="font-mono text-sm text-fg-mute">or click to browse</span>
-            <span className="mt-2 font-mono text-[10px] text-fg-dim">
-              .csv · .tsv · .parquet — column types are detected automatically
-            </span>
-          </button>
-          <input
-            ref={inputRef}
-            type="file"
-            accept=".csv,.tsv,text/csv,text/tab-separated-values,.parquet,application/parquet,application/x-parquet,application/octet-stream"
-            className="hidden"
-            onChange={(e) => {
-              const file = e.target.files?.[0];
-              if (file) void onFile(file);
-              // Reset so the same file can be re-selected if needed.
-              e.target.value = "";
-            }}
-          />
+          {busy ? (
+            <UploadIndicator layout="lg" state={busy} accent="warn" />
+          ) : (
+            <div className="flex w-full max-w-2xl flex-col items-center">
+              {/* The drop zone is a button so click-to-browse and drop-to-load
+                  share one element; we lean on `<input type=file>` hidden
+                  behind it for the file dialog. */}
+              <button
+                type="button"
+                onClick={() => inputRef.current?.click()}
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  setDragging(true);
+                }}
+                onDragLeave={() => setDragging(false)}
+                onDrop={handleDrop}
+                className={`flex w-full flex-col items-center justify-center gap-3 rounded-2xl border-2 border-dashed px-8 py-12 transition ${
+                  dragging ? "border-fg-mute bg-bg/60" : "border-border bg-bg-1 hover:border-fg-dim"
+                }`}
+              >
+                <span className="font-mono text-[11px] uppercase tracking-[0.18em] text-fg-dim">
+                  {dragging ? "release to load" : "drag a file in"}
+                </span>
+                <span className="font-mono text-sm text-fg-mute">or click to browse</span>
+                <span className="mt-2 font-mono text-[10px] text-fg-dim">
+                  .csv · .tsv · .parquet — column types are detected automatically
+                </span>
+              </button>
+              {error && (
+                <p className="mt-3 w-full break-words rounded border border-error/50 bg-bg-1 px-3 py-2 font-mono text-[10px] leading-relaxed text-error/90">
+                  {error}
+                </p>
+              )}
+              <input
+                ref={inputRef}
+                type="file"
+                accept=".csv,.tsv,text/csv,text/tab-separated-values,.parquet,application/parquet,application/x-parquet,application/octet-stream"
+                className="hidden"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) void onFile(file);
+                  // Reset so the same file can be re-selected if needed.
+                  e.target.value = "";
+                }}
+              />
+            </div>
+          )}
         </div>
       </ChatModalPanel>
     </ChatModalBackdrop>
@@ -2615,6 +2646,162 @@ export function SoftDataWorkstation() {
     [reformatColumnsTo],
   );
 
+  // Execute a parsed column operation against the live dataset and narrate
+  // what happened. Shared by the column hover-chat (hovered column) and the
+  // soft stage chat (column resolved from the message text). Always returns a
+  // reply — once an intent parses, the request must mutate the grid, never
+  // fall through to the AI as advice.
+  const runColumnOpIntent = useCallback(
+    (column: string, intent: ColumnOpIntent): string => {
+      if (!dataset) return "Load a dataset first.";
+      const commit = (next: Dataset, action: string, affected: number, reply: string): string => {
+        setDataset(next);
+        setFilters([]);
+        logEvent({ stage: "soft", kind: "cleaning.column", payload: { column, action, affected } });
+        return reply;
+      };
+      const plural = (n: number) => (n === 1 ? "" : "s");
+      switch (intent.kind) {
+        case "to-string": {
+          const { dataset: next, converted } = convertColumnToString(dataset, column);
+          if (converted === 0) {
+            return `\`${column}\` is already all text — no numeric cells to convert.`;
+          }
+          return commit(
+            next,
+            "converted to string",
+            converted,
+            `Done — converted ${converted.toLocaleString()} numeric cell${plural(converted)} in \`${column}\` to text. The column is now uniformly string-typed.`,
+          );
+        }
+        case "to-number": {
+          const { dataset: next, converted, nulled } = convertColumnToNumber(
+            dataset,
+            column,
+            intent.integer,
+          );
+          if (converted === 0 && nulled === 0) {
+            return `\`${column}\` is already fully numeric — nothing to convert.`;
+          }
+          const label = intent.integer ? "integer" : "numeric";
+          const nulledNote =
+            nulled > 0
+              ? ` ${nulled.toLocaleString()} cell${plural(nulled)} had no usable number and became null.`
+              : "";
+          return commit(
+            next,
+            `coerced to ${label}`,
+            converted + nulled,
+            `Done — coerced ${converted.toLocaleString()} cell${plural(converted)} in \`${column}\` to ${label} values.${nulledNote}`,
+          );
+        }
+        case "case": {
+          const { dataset: next, changed } = transformColumnCase(dataset, column, intent.mode);
+          const label =
+            intent.mode === "lower" ? "lowercase" : intent.mode === "upper" ? "UPPERCASE" : "Title Case";
+          if (changed === 0) return `\`${column}\` is already ${label} — nothing to change.`;
+          return commit(
+            next,
+            `recased to ${label}`,
+            changed,
+            `Done — recased ${changed.toLocaleString()} cell${plural(changed)} in \`${column}\` to ${label}.`,
+          );
+        }
+        case "round": {
+          const { dataset: next, changed } = roundColumnValues(dataset, column, intent.decimals);
+          const label =
+            intent.decimals === 0
+              ? "whole numbers"
+              : `${intent.decimals} decimal place${plural(intent.decimals)}`;
+          if (changed === 0) {
+            return `Nothing to round in \`${column}\` — its numeric cells are already at ${label} (text cells are left alone).`;
+          }
+          return commit(
+            next,
+            `rounded to ${label}`,
+            changed,
+            `Done — rounded ${changed.toLocaleString()} cell${plural(changed)} in \`${column}\` to ${label}.`,
+          );
+        }
+        case "fill-missing": {
+          const { dataset: next, filled, fillValue } = fillMissingInColumn(
+            dataset,
+            column,
+            intent.filler,
+          );
+          if (fillValue === null) {
+            return `I can't compute a fill value for \`${column}\` — it has no usable non-missing cells to derive one from. Tell me the value: "fill missing with 0".`;
+          }
+          if (filled === 0) return `\`${column}\` has no missing cells — nothing to fill.`;
+          const how =
+            intent.filler === "auto"
+              ? ` (auto-picked the column ${typeof fillValue === "number" ? "median" : "mode"})`
+              : typeof intent.filler === "string" && intent.filler !== "zero"
+                ? ` (the column ${intent.filler})`
+                : "";
+          return commit(
+            next,
+            `filled missing with ${String(fillValue)}`,
+            filled,
+            `Done — filled ${filled.toLocaleString()} missing cell${plural(filled)} in \`${column}\` with ${
+              typeof fillValue === "string" ? `"${fillValue}"` : fillValue.toLocaleString()
+            }${how}.`,
+          );
+        }
+        case "remove-outliers": {
+          const meta = rawMetas.find((m) => m.name === column);
+          const res = removeOutlierRows(dataset, column, meta);
+          if (res === null) {
+            return `\`${column}\` isn't a numeric column with an outlier fence, so there are no outliers to remove here.`;
+          }
+          if (res.removed === 0) {
+            return `No outliers in \`${column}\` — every value already sits inside the Tukey fences [${res.lo.toLocaleString()}, ${res.hi.toLocaleString()}].`;
+          }
+          return commit(
+            res.dataset,
+            "removed outlier rows",
+            res.removed,
+            `Done — removed ${res.removed.toLocaleString()} row${plural(res.removed)} where \`${column}\` fell outside the Tukey fences [${res.lo.toLocaleString()}, ${res.hi.toLocaleString()}]. The dataset now has ${res.dataset.rows.length.toLocaleString()} rows.`,
+          );
+        }
+        case "drop-column": {
+          if (dataset.columns.length <= 1) {
+            return `\`${column}\` is the only column left — dropping it would empty the dataset, so I left it alone.`;
+          }
+          const { dataset: next } = dropColumnFromDataset(dataset, column);
+          setDerivedColumns((prev) => {
+            if (!(column in prev)) return prev;
+            const { [column]: _omit, ...rest } = prev;
+            return rest;
+          });
+          return commit(
+            next,
+            "dropped column",
+            dataset.rows.length,
+            `Done — dropped \`${column}\`. The dataset now has ${next.columns.length} columns.`,
+          );
+        }
+        case "trim": {
+          const { dataset: next, tidied, nulled } = cleanColumnCells(dataset, column);
+          if (tidied === 0 && nulled === 0) {
+            return `\`${column}\` has no stray whitespace or encoding junk — already tidy.`;
+          }
+          const nulledNote =
+            nulled > 0
+              ? ` and nulled ${nulled.toLocaleString()} missing-marker${plural(nulled)}`
+              : "";
+          return commit(
+            next,
+            "trimmed whitespace",
+            tidied + nulled,
+            `Done — trimmed / tidied ${tidied.toLocaleString()} cell${plural(tidied)} in \`${column}\`${nulledNote}.`,
+          );
+        }
+      }
+    },
+    [dataset, rawMetas, setDataset, setDerivedColumns, setFilters, logEvent],
+  );
+
   // Per-column natural-language intent (the hover chat popover). Same date-style
   // detection as the soft chat, but scoped to the hovered column so "make this
   // american" / "change to ISO" affect only that column. Returns the assistant
@@ -2667,6 +2854,13 @@ export function SoftDataWorkstation() {
         return reformatColumnsTo([column], style);
       }
 
+      // ── generic column operations ────────────────────────────────────────
+      // Type conversion, casing, rounding, fill-missing, outlier removal,
+      // drop, trim — parsed deterministically so "convert this column to
+      // string" mutates the grid instead of returning advice.
+      const opIntent = parseColumnOpIntent(text);
+      if (opIntent) return runColumnOpIntent(column, opIntent);
+
       // ── clean this column ────────────────────────────────────────────────
       // Trim, repair encoding, collapse whitespace, null missing-markers — and
       // for a date column, also clear leftover non-date junk.
@@ -2706,7 +2900,7 @@ export function SoftDataWorkstation() {
 
       return null;
     },
-    [dataset, dateColumns, reformatColumnsTo, setDataset, setFilters, logEvent],
+    [dataset, dateColumns, reformatColumnsTo, runColumnOpIntent, setDataset, setFilters, logEvent],
   );
 
   // Deterministic chat intents handled client-side, so they work even though
@@ -2775,6 +2969,34 @@ export function SoftDataWorkstation() {
         return reformatDatesInDataset(style);
       }
 
+      // ── column-scoped operations ("convert the airbags column to string") ──
+      // Same deterministic parser as the hover chat; the target column is
+      // resolved from the message text. Whole-dataset trim routes to the
+      // cleaning plan's whitespace ops instead of demanding a column name.
+      const opIntent = parseColumnOpIntent(text);
+      if (opIntent) {
+        if (!dataset) return "Load a dataset first, then I can transform its columns.";
+        const cols = resolveColumnsMentioned(text, dataset.columns);
+        if (cols.length === 1) return runColumnOpIntent(cols[0], opIntent);
+        if (cols.length > 1) {
+          return `You named ${cols.length} columns (${cols
+            .map((c) => `\`${c}\``)
+            .join(", ")}) — I apply these one column at a time. Which one first?`;
+        }
+        const wholeDataset = /\b(dataset|data|everything|all|entire|whole)\b/.test(t);
+        if (opIntent.kind === "trim" && wholeDataset && cleaningPlan) {
+          const wsOps = new Set<CleaningOpKey>(
+            (["trim", "collapse-whitespace"] as const).filter((k) =>
+              cleaningPlan.ops.some((op) => op.key === k),
+            ),
+          );
+          if (wsOps.size === 0) return "No stray whitespace anywhere — the dataset is already tidy.";
+          const applied = applyCleaningOps(wsOps);
+          return `Done — ${applied.join(" and ")}. The grid now shows the trimmed data.`;
+        }
+        return `Which column should I apply that to? Name it — e.g. \`${dataset.columns[0]}\`.`;
+      }
+
       const mentionsClean =
         /\b(clean|cleanse|cleaning|tidy|sanit[iy][sz]e|scrub|wrangle|preprocess|pre-process)\b/.test(
           t,
@@ -2806,6 +3028,7 @@ export function SoftDataWorkstation() {
       enabledOps,
       applyCleaningOps,
       reformatDatesInDataset,
+      runColumnOpIntent,
       rawMetas,
       setDataset,
       setFilters,
@@ -3224,9 +3447,9 @@ export function SoftDataWorkstation() {
     // starts, and a min-visible floor keeps it up long enough to read. Snapshot
     // the count now — the merge clears stagedDatasets before the floor elapses.
     setCombineBusy(others.length + 1);
-    await new Promise<void>((r) =>
-      requestAnimationFrame(() => requestAnimationFrame(() => r())),
-    );
+    // nextPaint, not raw rAF — rAF never fires in hidden/occluded tabs and
+    // would stall the merge until the tab is refocused.
+    await nextPaint();
     const startedAt = performance.now();
     try {
       const result = combineAll(dataset, others, DEFAULT_IMPORT_ROW_CAP);
@@ -3635,6 +3858,8 @@ export function SoftDataWorkstation() {
         open={importModalOpen}
         onFile={onPickFileObject}
         onDismiss={() => setImportModalOpen(false)}
+        busy={heldUpload}
+        error={uploadState.kind === "error" ? uploadState.message : null}
       />
       {/* same modal frame, routed to the staging handler — the picked file is
           parsed and queued for combining instead of replacing the dataset. */}
@@ -3642,6 +3867,8 @@ export function SoftDataWorkstation() {
         open={combineModalOpen}
         onFile={onStageFileObject}
         onDismiss={() => setCombineModalOpen(false)}
+        busy={heldUpload}
+        error={uploadState.kind === "error" ? uploadState.message : null}
       />
       <SimulateScenarioModal
         open={simulateOpen}

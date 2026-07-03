@@ -12,17 +12,19 @@
 // dashboard link work; folder / template actions explain they need
 // the desktop IDE.
 
-import { useEffect, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import ToastTray from "../components/workspace/ToastTray";
 import { SceloLogo } from "../components/Scelo/SceloLogo";
-import { isDesktopIDE, type WorkspaceRecord } from "../lib/sceloIDE";
+import { SwarmNavLink, useSwarmProbe } from "../components/SwarmStatus";
+import ToastTray from "../components/workspace/ToastTray";
 import { SAMPLE_WORKSPACES, type SampleWorkspaceSpec } from "../lib/sampleWorkspaces";
+import { type WorkspaceRecord, isDesktopIDE } from "../lib/sceloIDE";
 import { emitToast } from "../lib/toastBus";
 
 export default function Welcome() {
   const desktop = isDesktopIDE();
   const navigate = useNavigate();
+  const swarmProbe = useSwarmProbe();
   const [recents, setRecents] = useState<WorkspaceRecord[]>([]);
   const [busyTemplate, setBusyTemplate] = useState<string | null>(null);
 
@@ -103,6 +105,7 @@ export default function Welcome() {
             <Link to="/dashboards/scelo" className="ia-btn ia-btn-sm ia-btn-ghost">
               scelo
             </Link>
+            <SwarmNavLink />
             <Link to="/settings/ai" className="ia-btn ia-btn-sm ia-btn-ghost">
               settings
             </Link>
@@ -116,7 +119,11 @@ export default function Welcome() {
           <div className="mt-3 grid gap-2">
             <PrimaryAction
               label="Open Folder…"
-              hint={desktop ? "Pick any directory; Scelo treats it as the workspace root." : "Desktop only."}
+              hint={
+                desktop
+                  ? "Pick any directory; Scelo treats it as the workspace root."
+                  : "Desktop only."
+              }
               disabled={!desktop}
               onClick={openFolder}
             />
@@ -136,16 +143,35 @@ export default function Welcome() {
               hint="IBTrACS, WHO life tables, NFIP claims, ChEMBL."
               onClick={() => navigate("/settings/data")}
             />
+            <PrimaryAction
+              label={
+                <span className="inline-flex items-center gap-2">
+                  Open the Swarm
+                  <span
+                    aria-hidden
+                    className={`inline-block h-1.5 w-1.5 rounded-full ${
+                      swarmProbe === "up" ? "bg-primary" : "bg-fg-dim"
+                    }`}
+                  />
+                  {swarmProbe === "up" && (
+                    <span className="font-mono text-[10px] text-primary">live</span>
+                  )}
+                </span>
+              }
+              hint={
+                swarmProbe === "up"
+                  ? "The council deliberation UI — server is live on :3010."
+                  : "Stratified-persona councils on your results. Server not detected on :3010 — the view shows how to start it."
+              }
+              onClick={() => navigate("/swarm")}
+            />
           </div>
 
           <h2 className="mt-8 font-display text-lg">Recent workspaces</h2>
-          {!desktop && (
-            <p className="mt-2 text-sm text-fg-mute">Available in Scelo IDE.</p>
-          )}
+          {!desktop && <p className="mt-2 text-sm text-fg-mute">Available in Scelo IDE.</p>}
           {desktop && recents.length === 0 && (
             <p className="mt-2 text-sm text-fg-mute">
-              You haven't opened a workspace yet. Pick one above or scaffold a
-              sample on the right.
+              You haven't opened a workspace yet. Pick one above or scaffold a sample on the right.
             </p>
           )}
           {desktop && recents.length > 0 && (
@@ -157,9 +183,7 @@ export default function Welcome() {
                     onClick={() => switchTo(w)}
                     className="flex w-full items-baseline justify-between gap-3 rounded border border-transparent px-2 py-1 text-left text-sm hover:border-border hover:bg-bg-2"
                   >
-                    <span className="truncate text-fg">
-                      {pathLeaf(w.path)}
-                    </span>
+                    <span className="truncate text-fg">{pathLeaf(w.path)}</span>
                     <span className="shrink-0 truncate font-mono text-[11px] text-fg-mute">
                       {w.path}
                     </span>
@@ -173,15 +197,12 @@ export default function Welcome() {
         <section>
           <h2 className="font-display text-lg">Sample workspaces</h2>
           <p className="mt-1 text-sm text-fg-mute">
-            Each template scaffolds a small but runnable workspace, no
-            placeholders, no TODO bodies. Pick one to copy it onto disk.
+            Each template scaffolds a small but runnable workspace, no placeholders, no TODO bodies.
+            Pick one to copy it onto disk.
           </p>
           <div className="mt-3 grid gap-3">
             {SAMPLE_WORKSPACES.map((s) => (
-              <article
-                key={s.id}
-                className="rounded border border-border bg-bg-2 p-4"
-              >
+              <article key={s.id} className="rounded border border-border bg-bg-2 p-4">
                 <header className="flex items-baseline justify-between gap-2">
                   <h3 className="text-base text-fg">{s.title}</h3>
                   <button
@@ -227,7 +248,7 @@ function PrimaryAction({
   onClick,
   disabled,
 }: {
-  label: string;
+  label: ReactNode;
   hint: string;
   onClick: () => void;
   disabled?: boolean;

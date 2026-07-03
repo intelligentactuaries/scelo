@@ -11,7 +11,7 @@
   "license": "LicenseRef-Scelo-IDE-1.0",
   "main": "dist/main.js",
   "scripts": {
-    "build:renderer": "bun run --cwd ../web build && rm -rf resources/renderer && cp -r ../web/dist resources/renderer",
+    "build:renderer": "bun run --cwd ../web build && node -e \"const fs=require('fs');fs.rmSync('resources/renderer',{recursive:true,force:true});fs.cpSync('../web/dist','resources/renderer',{recursive:true})\"",
     "build:main": "tsc -p tsconfig.json",
     "build": "bun run build:renderer && bun run build:main",
     "bundle:runtime": "bash scripts/bundle-runtimes.sh",
