@@ -3,6 +3,12 @@
 The swarm is a separate application that Scelo embeds. It is **not** bundled into
 the installer, so you start it yourself.
 
+!!! info "Access"
+    The swarm lives in a **private companion repository** — it is not publicly
+    available. If you don't have a checkout, contact the Intelligent Actuaries
+    team (hello@intelligentactuaries.com) for access. Scelo itself works fully
+    without it; only the "Convene council" / swarm features need it.
+
 ## The two ports
 
 | Port | What it is | Used by |
