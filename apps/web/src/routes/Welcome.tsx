@@ -87,9 +87,23 @@ export default function Welcome() {
               <span>Scelo</span>
             </h1>
             <p className="mt-1 text-sm text-fg-mute">
-              {desktop
-                ? "Open a workspace to start, or pick a sample to scaffold one."
-                : "Browser preview, the full workspace requires the Scelo IDE download."}
+              {desktop ? (
+                "Open a workspace to start, or pick a sample to scaffold one."
+              ) : (
+                <>
+                  You're on Scelo Web — the full workbench runs in your browser; data you import
+                  stays on your machine. Terminals + bundled Python/R need the{" "}
+                  <a
+                    href="https://docs.intelligentactuaries.com/scelo/installation/"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-fg underline hover:text-primary"
+                  >
+                    Scelo IDE download
+                  </a>
+                  .
+                </>
+              )}
             </p>
           </div>
           <nav className="flex items-center gap-1">
