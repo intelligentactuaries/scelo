@@ -1,5 +1,5 @@
-// Swarm view — iframes the Scelo-integrated swarm app from the
-// intelligentactuaries/swarms repo (dev port 5190, api on 3010 per its
+// Swarm view — iframes the Scelo-integrated swarm app from its separate
+// PRIVATE companion repo (dev port 5190, api on 3010 per its
 // vite proxy). That fork adds Scelo surfaces (ForecastCanvas,
 // SimulationView, WmtrStrip, theme.ts) on top of the upstream
 // swarm-council app, so it's what we point at. The swarm is a SEPARATE
@@ -119,9 +119,9 @@ function OfflineFallback() {
       <div className="max-w-sm space-y-3 text-center text-xs">
         <p className="text-fg">Swarm server isn't running.</p>
         <p className="text-fg-mute">
-          The Scelo-integrated swarm is a separate app in the{" "}
-          <span className="font-mono">intelligentactuaries/swarms</span> repo — it is not bundled
-          with Scelo, so run this from your own checkout of it. It starts a Vite + Bun pair on{" "}
+          The Scelo-integrated swarm is a separate private companion app — it is not bundled with
+          Scelo, so run this from your own swarm checkout (ask the Intelligent Actuaries team for
+          access). It starts a Vite + Bun pair on{" "}
           <span className="font-mono">localhost:5190</span> (api on{" "}
           <span className="font-mono">3010</span>). The <span className="font-mono">PORT=3010</span>{" "}
           is required — its default is 3000. Start it once and this panel will live-attach on the
