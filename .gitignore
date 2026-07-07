@@ -33,7 +33,3 @@ Thumbs.db
 coverage/
 playwright-report/
 test-results/
-
-# Marketing assets — PRIVATE repo (alidenewade/scelo-marketing), a nested
-# git checkout. Never commit into this public repo.
-marketing/
