@@ -1,0 +1,3 @@
+[submodule "marketing"]
+	path = marketing
+	url = git@github.com:alidenewade/scelo-marketing.git
