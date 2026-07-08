@@ -186,6 +186,7 @@ blocks the markdown renderer (`SceloChatMarkdown`) intercepts:
 | --- | --- | --- |
 | ```derive``` | `{"name":"paid_rounded","formula":"round(paid)"}` | Adds a NEW column. Idempotent on the column name. |
 | ```transform``` | `{"column":"paid","formula":"round(paid)"}` | Replaces values of an EXISTING column in place. Idempotent on a `(column + formula)` fingerprint stored in `SceloContext.transformLog`. |
+| ```clean``` | `{"ops":["drop-duplicates","missing-tokens"]}` (or `{"ops":"safe"}` / `{"ops":"all"}`) | Runs the deterministic cleaning engine (`cleaning.ts`, the same ops the banner drives) against the active dataset. Idempotent on the raw block (`clean::…` fingerprint reuses `transformLog`). Rendered by `cleanAction.tsx`'s `ChatClean`. |
 
 Both render a card showing what was applied plus a deterministic
 summary (cells changed, mean shift, range delta, sample of old → new
@@ -200,10 +201,29 @@ whole dataset.
 is silently rewritten to `round(paid)` so output drift between models
 does not break execution.
 
-### Derived columns
+### Derived columns + the formula DSL
 
-`formulaEvaluator.ts` — restricted JS expression with column references
-and numeric helpers. The formula source is stored in
+`formulaEvaluator.ts` — a restricted, sandboxed expression compiler (strict
+identifier whitelist, no `fetch`/`window` reach). Beyond arithmetic + math
+helpers it now supports:
+
+- **strings**: `lower upper trim len replace(x,'a','b') concat str`
+- **dates** (timezone-free calendar parsing): `to_us_date to_iso_date
+  to_eu_date to_long_date year month day weekday`
+- **column aggregates** folded to a constant from the rows (the basis for
+  imputation): `mean median mode colmin colmax colsum colcount stdev` —
+  each takes a column reference, e.g. `mean(\`age\`)`
+- **column references** by bare name, **backtick-quoted** names with spaces
+  (`` `Joined Date` ``), or `value`/`col`/`cell` for the current column in a
+  per-column `transform`
+- **string literals** (`'...'`/`"..."`)
+
+So per-column cleaning that used to be impossible now works as a
+`transform`: reformat dates (`to_us_date(value)`), impute
+(`if(\`x\`==-999, mean(\`x\`), \`x\`)`, `coalesce(value, median(value))`),
+lowercase/trim, etc. Aggregates need the dataset rows, so callers pass
+`{ rows }` (and per-column transforms pass `{ selfColumn }`) to
+`compileFormula`. The formula source is stored in
 `SceloContext.derivedColumns` so it can be re-exported by `scriptExporter`.
 
 ### Smart dashboards
@@ -559,7 +579,8 @@ Rules:
 | `ResizablePanel.tsx` | drag-to-resize + collapse chevron; in-memory state |
 | `StageChatPanel.tsx` | persistent right-side chat (all 3 workstations) |
 | `ChatInputPill.tsx` | the chat textarea + send/stop pill |
-| `SceloChatMarkdown.tsx` | renders chat replies; embeds `viz` blocks |
+| `SceloChatMarkdown.tsx` | renders chat replies; intercepts `viz` / `derive` / `transform` / `clean` blocks |
+| `cleanAction.tsx` | `ChatClean` — runs a `clean` block's ops through the cleaning engine |
 | `chatViz.tsx` | parses `viz` fences in chat into ECharts |
 | `activityLog.ts` | typed `ActivityEvent` history feeding script exporters |
 | `scriptExporter.ts` | Python / R / C++ / prompt scripts from the log |
