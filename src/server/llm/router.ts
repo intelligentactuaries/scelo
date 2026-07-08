@@ -146,11 +146,13 @@ class LLMRouter {
       if (pref === 'ollama') return this.ollamaSelected ? 'ollama' : null;
       return this.keys[pref] ? pref : null;
     }
-    if (tier === 'society') {
-      return this.ollamaSelected ? 'ollama' : this.firstCloud();
-    }
-    // council + chat default to cloud, fall back to ollama
-    return this.firstCloud() ?? (this.ollamaSelected ? 'ollama' : null);
+    // Local-first (Scelo default): under 'auto', prefer a loaded local Ollama
+    // model for every tier — council, chat, and society — falling back to the
+    // first cloud provider that has a key. Keeps runs local, free, and private
+    // whenever a local model is present; picking an explicit provider above
+    // still forces cloud. (Previously council/chat preferred cloud, which routed
+    // to a stray/misconfigured cloud key even with a local model loaded.)
+    return this.ollamaSelected ? 'ollama' : this.firstCloud();
   }
 
   async route(messages: Message[], tier: Tier, opts: RouteOpts = {}): Promise<string> {

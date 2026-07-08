@@ -242,6 +242,11 @@ function buildOption(run: Run, colors: ThemeColors): echarts.EChartsCoreOption {
 
   return {
     backgroundColor: 'transparent',
+    // Supersonic — barely-there motion so the flow draws / re-flows near-instantly.
+    animationDuration: 30,
+    animationDurationUpdate: 20,
+    animationEasing: 'linear',
+    animationEasingUpdate: 'linear',
     tooltip: {
       trigger: 'item',
       confine: true,

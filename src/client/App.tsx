@@ -146,7 +146,7 @@ export function App() {
   // component dims its non-matching nodes/links so hover reads as a
   // single attention focus.
   const [crossHighlight, setCrossHighlight] = useState<{
-    source: 'graph' | 'sankey';
+    source: 'graph' | 'sankey' | 'legend' | 'group';
     agentIds: string[];
     key: string;
     locked: boolean;

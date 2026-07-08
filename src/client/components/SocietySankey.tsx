@@ -33,6 +33,11 @@ function sentimentColor(c: ThemeColors): Record<Sentiment, string> {
 
 // Shared with SocietyGraph — keep these palettes in sync.
 const CLUSTER_PALETTE = ['#4a9eff', '#b388ff', '#7fc8ff', '#ffd866', '#a0a0a0', '#5fdfb3'];
+// Light-theme overrides: c3 (amber) and c5 (mint) wash out on a light ground.
+// Kept in sync with SocietyGraph.
+const CLUSTER_PALETTE_LIGHT = ['#4a9eff', '#b388ff', '#7fc8ff', '#c99700', '#a0a0a0', '#1f9e7b'];
+const clusterColor = (i: number, dark: boolean) =>
+  (dark ? CLUSTER_PALETTE : CLUSTER_PALETTE_LIGHT)[i % CLUSTER_PALETTE.length];
 
 type IntBand = 'High ≥70' | 'Mid 40–69' | 'Low <40';
 function intColor(c: ThemeColors): Record<IntBand, string> {
@@ -55,7 +60,7 @@ export function SocietySankey({ run, crossHighlight, onCrossHighlight }: Props) 
   const { resolved } = useTheme();
   const colors = useMemo(() => colorsForTheme(resolved), [resolved]);
 
-  const option = useMemo(() => buildOption(run, colors), [run, colors]);
+  const option = useMemo(() => buildOption(run, colors, resolved === 'dark'), [run, colors, resolved]);
 
   const onCrossHighlightRef = useRef(onCrossHighlight);
   const crossHighlightRef = useRef(crossHighlight);
@@ -164,7 +169,7 @@ export function SocietySankey({ run, crossHighlight, onCrossHighlight }: Props) 
   return <div ref={ref} className="decision-sankey-canvas" />;
 }
 
-function buildOption(run: Run, colors: ThemeColors): echarts.EChartsCoreOption {
+function buildOption(run: Run, colors: ThemeColors, dark: boolean): echarts.EChartsCoreOption {
   const total = Math.max(1, run.societyResults.length);
   const SENTIMENT_COLOR = sentimentColor(colors);
   const INT_COLOR = intColor(colors);
@@ -176,7 +181,7 @@ function buildOption(run: Run, colors: ThemeColors): echarts.EChartsCoreOption {
   const clusterNodes = clusterIds.map((c, i) => ({
     name: `clu:c${c}`,
     label: { formatter: `c${c}`, color: colors.fg, fontSize: 11 },
-    itemStyle: { color: CLUSTER_PALETTE[i % CLUSTER_PALETTE.length] },
+    itemStyle: { color: clusterColor(i, dark) },
   }));
   const sentiments: Sentiment[] = ['enthusiastic', 'supportive', 'neutral', 'skeptical', 'hostile'];
   const sentimentNodes = sentiments.map((s) => ({
@@ -213,6 +218,11 @@ function buildOption(run: Run, colors: ThemeColors): echarts.EChartsCoreOption {
 
   return {
     backgroundColor: 'transparent',
+    // Supersonic — barely-there motion so the flow draws / re-flows near-instantly.
+    animationDuration: 30,
+    animationDurationUpdate: 20,
+    animationEasing: 'linear',
+    animationEasingUpdate: 'linear',
     tooltip: {
       trigger: 'item',
       confine: true,
