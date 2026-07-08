@@ -58,15 +58,8 @@ import {
   detectDateColumns,
   reformatDateColumns,
 } from "./cleaning";
-import {
-  type CombineStats,
-  type CombineStep,
-  type CombineStrategy,
-  type CombineSuggestion,
-  combineAll,
-  suggestCombine,
-} from "./combineData";
 import { CLIMATE_SAMPLE } from "./climateSampleData";
+import { buildColumnStageContext, placeholderHintFor } from "./columnChatHints";
 import { getColumnMetas } from "./columnMetaCache";
 import {
   type ColumnOpIntent,
@@ -80,8 +73,15 @@ import {
   roundColumnValues,
   transformColumnCase,
 } from "./columnOps";
+import {
+  type CombineStats,
+  type CombineStep,
+  type CombineStrategy,
+  type CombineSuggestion,
+  combineAll,
+  suggestCombine,
+} from "./combineData";
 import { buildDirtySample } from "./dirtySampleData";
-import { buildColumnStageContext, placeholderHintFor } from "./columnChatHints";
 import { type ExportFormat, exportDataset } from "./exportDataset";
 import { compileFormula, previewFormula, validateColumnName } from "./formulaEvaluator";
 import { useScelo } from "./sceloContext";
@@ -1921,6 +1921,12 @@ const SOFT_STAGE_FRAME = [
   'Column ops (same family, scoped to ONE column — point the user at these by key): `coerce-numeric` (column) parses the numeric prefix of mixed cells in a number column ("6+" -> 6) and nulls what\'s left over — the fix for columns flagged with a `mixed` badge. `recode-value` (column, from, to) recodes one categorical label to another — the fix for typo categories like "Seperated" -> "Separated".',
   "Combining datasets: up to 3 OFFLINE files can be loaded at once (the active dataset + 2 staged) and combined via the '+ combine data' toolbar button — smart append (schema-aligned row stacking, optional exact-duplicate drop) or key join (left / inner on a shared id-like column). When the user asks to merge / join / concatenate / stack / combine another file with this one, point them at that button; its review panel suggests a strategy and key per staged file with match evidence before applying.",
   "",
+  "Dataset-wide cleaning: when the user asks to run a banner op (drop duplicate ROWS, drop empty/constant columns, normalise missing markers, fix encoding, trim/collapse whitespace, parse numeric/date strings, standardise booleans, replace sentinel numerics, merge case-only duplicates, rename headers to snake_case), DO NOT just name it — EMIT a fenced `clean` block. The client runs the deterministic cleaning engine immediately and renders a real before/after card:",
+  "```clean",
+  '{"ops": ["<op-key>"]}',
+  "```",
+  'Valid op keys: trim, collapse-whitespace, fix-encoding, missing-tokens, parse-numeric, coerce-numeric, parse-dates, standardise-booleans, replace-numeric-sentinels, null-future-years, drop-duplicates, drop-empty-cols, drop-constant-cols, lowercase-categoricals, rename-snake-case. Or {"ops": "safe"} for all safe fixes, {"ops": "all"} for every applicable op.',
+  "",
   "Derived columns: when the user asks for any per-row transformation (round, log, sqrt, abs, clip, cap, normalise, bin, extract, derive, compute, calculate, etc.), DO NOT describe the formula. EMIT a fenced `derive` block. The client compiles the formula and adds the new column to the dataset IMMEDIATELY, so the user sees the result without copy-pasting anything.",
   "",
   "Format:",
@@ -1928,7 +1934,13 @@ const SOFT_STAGE_FRAME = [
   '{"name": "<new_column_name>", "formula": "<expression>"}',
   "```",
   "",
-  'Grammar inside the formula: bare arithmetic (+, -, *, /, %, **), bare function names log / log10 / log2 / exp / sqrt / abs / min / max / floor / ceil / round / pow / sign, plus if(cond, a, b) and coalesce(a, b, ...). Reference columns as bare identifiers (paid, incurred). DO NOT prefix functions with "Math." and DO NOT wrap column names in backticks: the parser only accepts the bare form. The new name must be a fresh snake_case identifier.',
+  'Grammar inside the formula. Reference columns by bare name (paid, incurred) or backticks if the name has spaces (`Joined Date`). DO NOT prefix functions with "Math.". The new name must be a fresh snake_case identifier.',
+  "- arithmetic: + - * / % **",
+  "- math: log log10 log2 exp sqrt abs min max floor ceil round pow sign sin cos tan",
+  "- logic: if(cond, a, b), coalesce(a, b, ...), isnull(x), == != > >= < <= && ||",
+  "- strings: lower(x) upper(x) trim(x) len(x) replace(x, 'find', 'repl') concat(a, b, ...) str(x)",
+  "- dates (timezone-free): to_us_date(x) to_iso_date(x) to_eu_date(x) to_long_date(x) year(x) month(x) day(x) weekday(x)",
+  "- column aggregates (whole-column constants, the basis for imputation): mean(`col`) median(`col`) mode(`col`) colmin(`col`) colmax(`col`) colsum(`col`) colcount(`col`) stdev(`col`) — each takes a column reference, e.g. mean(`age`).",
   "After the block, write at most ONE short sentence of context.",
   "",
   "## EXAMPLES (match this shape exactly)",
@@ -2437,7 +2449,8 @@ export function SoftDataWorkstation() {
       if (nameError) return { ok: false, error: nameError };
       let compiled: ReturnType<typeof compileFormula>;
       try {
-        compiled = compileFormula(formula, dataset.columns);
+        // rows → column aggregates (mean/colsum/...) fold to a constant.
+        compiled = compileFormula(formula, dataset.columns, { rows: dataset.rows });
       } catch (e) {
         return { ok: false, error: e instanceof Error ? e.message : String(e) };
       }
@@ -2675,11 +2688,11 @@ export function SoftDataWorkstation() {
           );
         }
         case "to-number": {
-          const { dataset: next, converted, nulled } = convertColumnToNumber(
-            dataset,
-            column,
-            intent.integer,
-          );
+          const {
+            dataset: next,
+            converted,
+            nulled,
+          } = convertColumnToNumber(dataset, column, intent.integer);
           if (converted === 0 && nulled === 0) {
             return `\`${column}\` is already fully numeric — nothing to convert.`;
           }
@@ -2698,7 +2711,11 @@ export function SoftDataWorkstation() {
         case "case": {
           const { dataset: next, changed } = transformColumnCase(dataset, column, intent.mode);
           const label =
-            intent.mode === "lower" ? "lowercase" : intent.mode === "upper" ? "UPPERCASE" : "Title Case";
+            intent.mode === "lower"
+              ? "lowercase"
+              : intent.mode === "upper"
+                ? "UPPERCASE"
+                : "Title Case";
           if (changed === 0) return `\`${column}\` is already ${label} — nothing to change.`;
           return commit(
             next,
@@ -2724,11 +2741,11 @@ export function SoftDataWorkstation() {
           );
         }
         case "fill-missing": {
-          const { dataset: next, filled, fillValue } = fillMissingInColumn(
-            dataset,
-            column,
-            intent.filler,
-          );
+          const {
+            dataset: next,
+            filled,
+            fillValue,
+          } = fillMissingInColumn(dataset, column, intent.filler);
           if (fillValue === null) {
             return `I can't compute a fill value for \`${column}\` — it has no usable non-missing cells to derive one from. Tell me the value: "fill missing with 0".`;
           }
@@ -2990,7 +3007,8 @@ export function SoftDataWorkstation() {
               cleaningPlan.ops.some((op) => op.key === k),
             ),
           );
-          if (wsOps.size === 0) return "No stray whitespace anywhere — the dataset is already tidy.";
+          if (wsOps.size === 0)
+            return "No stray whitespace anywhere — the dataset is already tidy.";
           const applied = applyCleaningOps(wsOps);
           return `Done — ${applied.join(" and ")}. The grid now shows the trimmed data.`;
         }

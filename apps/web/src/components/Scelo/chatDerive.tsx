@@ -28,9 +28,9 @@
 
 import { useEffect, useMemo, useState } from "react";
 
-import { useScelo } from "./sceloContext";
-import { compileFormula, validateColumnName } from "./formulaEvaluator";
 import { type CellValue, type Row, formatNumber } from "./SoftDataWorkstation";
+import { compileFormula, validateColumnName } from "./formulaEvaluator";
+import { useScelo } from "./sceloContext";
 
 // ─── shared parsing ─────────────────────────────────────────────────────────
 
@@ -346,7 +346,8 @@ export function ChatDerive({ raw }: { raw: string }) {
     }
     let compiled: ReturnType<typeof compileFormula>;
     try {
-      compiled = compileFormula(spec.formula, dataset.columns);
+      // rows → column aggregates (mean/colsum/...) fold to a constant.
+      compiled = compileFormula(spec.formula, dataset.columns, { rows: dataset.rows });
     } catch (e) {
       setOutcome({ kind: "error", message: e instanceof Error ? e.message : String(e) });
       return;
@@ -381,7 +382,8 @@ export function ChatDerive({ raw }: { raw: string }) {
         could not apply derived column: {outcome.message}
         {formula && (
           <div className="mt-1 break-words text-fg-mute">
-            <span className="text-fg-dim">formula:</span> <code className="break-all">{formula}</code>
+            <span className="text-fg-dim">formula:</span>{" "}
+            <code className="break-all">{formula}</code>
           </div>
         )}
       </CardShell>
@@ -394,7 +396,10 @@ export function ChatDerive({ raw }: { raw: string }) {
         <code className="break-all text-fg">{outcome.column}</code>{" "}
         <span className="text-primary">already in the columns list</span>
         {derivedColumns[outcome.column] && (
-          <span className="text-fg-mute"> · <code className="break-all">{derivedColumns[outcome.column]}</code></span>
+          <span className="text-fg-mute">
+            {" "}
+            · <code className="break-all">{derivedColumns[outcome.column]}</code>
+          </span>
         )}
         .
       </CardShell>
@@ -451,7 +456,11 @@ export function ChatTransform({ raw }: { raw: string }) {
     }
     let compiled: ReturnType<typeof compileFormula>;
     try {
-      compiled = compileFormula(spec.formula, dataset.columns);
+      // rows → aggregates; selfColumn lets the formula use `value` for this column.
+      compiled = compileFormula(spec.formula, dataset.columns, {
+        rows: dataset.rows,
+        selfColumn: spec.column,
+      });
     } catch (e) {
       setOutcome({ kind: "error", message: e instanceof Error ? e.message : String(e) });
       return;
@@ -491,7 +500,8 @@ export function ChatTransform({ raw }: { raw: string }) {
         could not transform column: {outcome.message}
         {formula && (
           <div className="mt-1 break-words text-fg-mute">
-            <span className="text-fg-dim">formula:</span> <code className="break-all">{formula}</code>
+            <span className="text-fg-dim">formula:</span>{" "}
+            <code className="break-all">{formula}</code>
           </div>
         )}
       </CardShell>

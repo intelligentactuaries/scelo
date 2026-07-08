@@ -20,6 +20,7 @@ import { remarkFencedMath } from "@/lib/remarkFencedMath";
 import type { Dataset } from "./SoftDataWorkstation";
 import { ChatDerive, ChatTransform } from "./chatDerive";
 import { ChatViz } from "./chatViz";
+import { ChatClean } from "./cleanAction";
 
 type Props = {
   children: string;
@@ -75,6 +76,13 @@ function SceloChatMarkdownImpl({ children, dataset, streaming = false, size = "s
             if (!isInline && lang === "transform") {
               const raw = String(codeChildren).replace(/\n$/, "");
               return <ChatTransform raw={raw} />;
+            }
+            // Fenced ```clean block → run the deterministic cleaning engine
+            // (the same ops the banner drives) against the active dataset.
+            // Idempotent on the raw block via the transformLog set.
+            if (!isInline && lang === "clean") {
+              const raw = String(codeChildren).replace(/\n$/, "");
+              return <ChatClean raw={raw} />;
             }
             return (
               <code className={className} {...rest}>

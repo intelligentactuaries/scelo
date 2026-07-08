@@ -36,13 +36,15 @@ export interface ChainladderPythonOutput {
 /** Common Python script — branches on the `method` argv to pick a runner.
  *  Reads `{origins:[…], devs:[…], cumByRow:[[…],[…]…]}` on stdin. */
 const SCRIPT = `
-import json, sys
+import json, sys, warnings
+warnings.filterwarnings("ignore")   # keep stdout clean JSON; warnings go nowhere
 try:
     payload = json.load(sys.stdin)
     method = payload.get("method", "chain-ladder")
     origins = payload["origins"]
     devs = payload["devs"]
     cum = payload["cumByRow"]   # rows in origin-order, dev-order
+    import numpy as np
     import pandas as pd
     import chainladder as cl
     # chainladder expects a long-format DataFrame keyed by origin + valuation.
@@ -55,36 +57,48 @@ try:
     df = pd.DataFrame(long)
     tri = cl.Triangle(df, origin="origin", development="valuation",
                       columns="values", cumulative=True)
+    # ibnr_.sum() totals only the filled cells; .values.sum() would hit the
+    # unfilled (NaN) upper-triangle and poison the total with NaN.
     if method == "mack":
         m = cl.MackChainladder().fit(tri)
         ult = m.ultimate_.values.flatten().tolist()
-        ibnr_total = float(m.ibnr_.values.sum())
-        se = float(m.full_std_err_.iloc[:, -1].sum())
+        ibnr_total = float(m.ibnr_.sum())
+        # total_mack_std_err_ is the reserve-level SE (a 1x1 frame in
+        # chainladder >=0.9). Summing per-origin mack_std_err_ is wrong —
+        # independent SEs don't add linearly.
+        se = float(np.nansum(m.total_mack_std_err_.values))
         cv = se / ibnr_total if ibnr_total else 0.0
         extra = {"se": se, "cv": cv}
     elif method == "bornhuetter-ferguson":
-        # Apriori = expected loss ratio × latest premium proxy = sum of latest diagonal.
-        apriori = float(tri.latest_diagonal.sum())
-        bf = cl.BornhuetterFerguson(apriori=apriori).fit(tri)
+        # No premium column here, so use each origin's latest cumulative as an
+        # exposure proxy (sample_weight) with apriori=1.0 — the a-priori
+        # ultimate equals paid-to-date. chainladder >=0.9 requires an explicit
+        # sample_weight rather than a single scalar apriori.
+        bf = cl.BornhuetterFerguson(apriori=1.0).fit(tri, sample_weight=tri.latest_diagonal)
         ult = bf.ultimate_.values.flatten().tolist()
-        ibnr_total = float(bf.ibnr_.values.sum())
+        ibnr_total = float(bf.ibnr_.sum())
         extra = {}
     elif method == "bootstrap":
-        bs = cl.BootstrapODPSample(n_sims=500).fit_transform(tri)
-        m = cl.MackChainladder().fit(bs)
-        ult = m.ultimate_.values.flatten().tolist()
-        ibnr_total = float(m.ibnr_.values.sum())
-        extra = {"se": float(m.full_std_err_.iloc[:, -1].sum())}
+        # ODP bootstrap: simulate N triangles, chain-ladder each, then take the
+        # mean/std of the total-IBNR distribution. (Feeding the sampled triangle
+        # straight into MackChainladder is invalid — shape mismatch.)
+        samples = cl.BootstrapODPSample(n_sims=500, random_state=42).fit_transform(tri)
+        boot = cl.Chainladder().fit(samples)
+        ult = np.nanmean(boot.ultimate_.values, axis=0).flatten().tolist()  # per-origin mean over sims
+        dist = np.array(boot.ibnr_.sum("origin").sum("development").values).flatten()
+        dist = dist[~np.isnan(dist)]
+        ibnr_total = float(dist.mean())
+        extra = {"se": float(dist.std())}
     else:
         # Vanilla volume-weighted chain-ladder.
         m = cl.Chainladder().fit(tri)
         ult = m.ultimate_.values.flatten().tolist()
-        ibnr_total = float(m.ibnr_.values.sum())
+        ibnr_total = float(m.ibnr_.sum())
         extra = {}
     latest_by_o = tri.latest_diagonal.values.flatten().tolist()
     by_origin = [
         {"origin": int(origins[i]), "latest": float(latest_by_o[i]),
-         "ultimate": float(ult[i]), "ibnr": float(ult[i] - latest_by_o[i])}
+         "ultimate": float(ult[i]), "ibnr": float(ult[i]) - float(latest_by_o[i])}
         for i in range(len(origins))
     ]
     print(json.dumps({
