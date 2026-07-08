@@ -1,13 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as echarts from 'echarts/core';
 import { GraphChart } from 'echarts/charts';
-import { LegendComponent, TooltipComponent, TitleComponent } from 'echarts/components';
+import { LegendComponent, TooltipComponent, TitleComponent, GridComponent, GraphicComponent } from 'echarts/components';
 import { CanvasRenderer } from 'echarts/renderers';
 import type { Run, CouncilAgentResult } from '../../shared/types';
 import { colorsForTheme, PROFESSIONS, PROFESSION_PALETTE, type Profession, type ThemeColors } from '../../shared/constants';
 import { useTheme } from '../lib/theme';
+import { layoutCells, forceClusterLayout, type Group, type FNode, type FEdge } from '../lib/groupLayout';
+import { installGroupHulls, type HullDatum } from '../lib/groupHulls';
 
-echarts.use([GraphChart, LegendComponent, TooltipComponent, TitleComponent, CanvasRenderer]);
+echarts.use([GraphChart, LegendComponent, TooltipComponent, TitleComponent, GridComponent, GraphicComponent, CanvasRenderer]);
 
 function stanceBorder(c: ThemeColors): Record<CouncilAgentResult['finalStance'], string> {
   return {
@@ -25,7 +27,7 @@ function stanceBorder(c: ThemeColors): Record<CouncilAgentResult['finalStance'],
  *  - `locked` distinguishes a sticky click-lock from an ephemeral hover.
  *            While locked, neither chart's hover listeners write state. */
 export type CrossHighlight = {
-  source: 'graph' | 'sankey';
+  source: 'graph' | 'sankey' | 'legend' | 'group';
   agentIds: string[];
   key: string;
   locked: boolean;
@@ -54,6 +56,9 @@ export function CouncilGraph({
   const chartRef = useRef<echarts.ECharts | null>(null);
   const { resolved } = useTheme();
   const colors = useMemo(() => colorsForTheme(resolved), [resolved]);
+  // Measured canvas size drives the labelled-region grid layout; it's remeasured
+  // on container resize so the region boxes always fill the panel.
+  const [size, setSize] = useState({ w: 0, h: 0 });
   // Keep the latest onCrossHighlight + crossHighlight in refs so the
   // chart.on(...) handlers (registered once on mount) always read the
   // live values without re-registering.
@@ -66,7 +71,44 @@ export function CouncilGraph({
     crossHighlightRef.current = crossHighlight;
   }, [crossHighlight]);
 
-  const option = useMemo(() => buildOption(run, colors), [run, colors]);
+  const built = useMemo(() => buildOption(run, colors, size), [run, colors, size]);
+  const option = built.option;
+
+  // Agents per profession — for legend → cross-highlight emission and for
+  // lighting the legend chips when a highlight (from anywhere) is active.
+  const profAgents = useMemo(() => {
+    const m = new Map<Profession, string[]>();
+    for (const r of run.councilResults) {
+      const a = m.get(r.agent.profession) ?? [];
+      a.push(r.agent.id);
+      m.set(r.agent.profession, a);
+    }
+    return m;
+  }, [run]);
+  const profAgentsRef = useRef(profAgents);
+  useEffect(() => {
+    profAgentsRef.current = profAgents;
+  }, [profAgents]);
+
+  // Which professions are represented in the current highlight (drives the chip
+  // glow, so a Sankey/graph selection lights the matching legend entries).
+  const activeProfs = useMemo(() => {
+    const s = new Set<string>();
+    if (crossHighlight && crossHighlight.agentIds.length) {
+      const byId = new Map(run.councilResults.map((r) => [r.agent.id, r.agent.profession] as const));
+      for (const id of crossHighlight.agentIds) {
+        const p = byId.get(id);
+        if (p) s.add(p);
+      }
+    }
+    return s;
+  }, [crossHighlight, run]);
+  const highlightActive = !!crossHighlight && crossHighlight.agentIds.length > 0;
+  // A *legend* hover should light only the hovered chip (the rest grey out); a
+  // graph / Sankey / group highlight lights every profession it represents.
+  const legendSrc = crossHighlight?.source === 'legend';
+  const chKey = crossHighlight?.key ?? '';
+  const chipActive = (p: Profession) => (legendSrc ? chKey === `legend:${p}` : activeProfs.has(p));
 
   useEffect(() => {
     if (!ref.current) return;
@@ -74,10 +116,23 @@ export function CouncilGraph({
     const chart = echarts.init(el, null, { renderer: 'canvas' });
     chartRef.current = chart;
     chart.setOption(option);
-    const handler = () => chart.resize();
-    window.addEventListener('resize', handler);
-    // Also reflow when the container itself changes width (panel drag, etc.)
-    const ro = new ResizeObserver(() => chart.resize());
+    // Reflow the canvas immediately on resize, but debounce the size *state*
+    // update — that rebuilds the option (which re-runs the force layout), so we
+    // only want it once the drag settles, not on every intermediate width.
+    const applySize = () => {
+      const w = el.clientWidth;
+      const h = el.clientHeight;
+      if (w > 0 && h > 0) setSize((s) => (s.w === w && s.h === h ? s : { w, h }));
+    };
+    let sizeTimer: ReturnType<typeof setTimeout> | undefined;
+    const onResize = () => {
+      chart.resize();
+      if (sizeTimer) clearTimeout(sizeTimer);
+      sizeTimer = setTimeout(applySize, 140);
+    };
+    applySize();
+    window.addEventListener('resize', onResize);
+    const ro = new ResizeObserver(onResize);
     ro.observe(el);
 
     // Click: select the agent for the decision sidebar, AND toggle a
@@ -116,13 +171,21 @@ export function CouncilGraph({
       if (cb && cur?.locked) cb(null);
     });
 
-    // Emit cross-chart hover (ephemeral). Skipped while a lock is
-    // active so the user's pinned focus is sacred. We deliberately do
-    // NOT clear on per-item mouseout — that causes a null→new flicker
-    // when the mouse moves between adjacent items. Instead we clear on
-    // container mouseleave below so the preview persists smoothly
-    // while the cursor stays inside the chart.
+    // Emit cross-chart hover (ephemeral). Skipped while a lock is active so the
+    // user's pinned focus is sacred. A short debounce on mouse-out clears the
+    // highlight promptly when the pointer leaves an item, while a new hover
+    // within the window cancels the pending clear — so moving between adjacent
+    // items doesn't flicker, but releasing resets fast. (We can't rely on the
+    // pointer reaching blank canvas anymore: the group hulls now cover it.)
+    let clearTimer: ReturnType<typeof setTimeout> | undefined;
+    const cancelClear = () => {
+      if (clearTimer) {
+        clearTimeout(clearTimer);
+        clearTimer = undefined;
+      }
+    };
     chart.on('mouseover', (params) => {
+      cancelClear();
       const cb = onCrossHighlightRef.current;
       if (!cb || crossHighlightRef.current?.locked) return;
       if (params.dataType === 'node' && params.data) {
@@ -132,6 +195,11 @@ export function CouncilGraph({
         const e = params.data as { source: string; target: string };
         cb({ source: 'graph', agentIds: [e.source, e.target], key: `edge:${e.source}|${e.target}`, locked: false });
       }
+    });
+    // Pointer left an item — schedule a quick clear (a new hover cancels it).
+    chart.on('mouseout', () => {
+      cancelClear();
+      clearTimer = setTimeout(() => clearEphemeralHover(), 60);
     });
     // Clear ephemeral hovers when the cursor leaves the chart. Locked
     // highlights and Sankey-originated highlights survive.
@@ -147,6 +215,7 @@ export function CouncilGraph({
     //   4. window `blur` — user switched tab / app while hovering.
     //   5. document `mouseleave` — pointer left the whole window.
     const clearEphemeralHover = () => {
+      cancelClear();
       const cb = onCrossHighlightRef.current;
       const cur = crossHighlightRef.current;
       if (cb && cur && !cur.locked && cur.source === 'graph') cb(null);
@@ -162,75 +231,18 @@ export function CouncilGraph({
     };
     document.addEventListener('mouseleave', onDocLeave);
 
-    // After the force layout has cooled, pin every node at its resting
-    // position with fixed:true so the simulation stops touching it.
-    // No ongoing drift — the graph settles and stays settled.
-    type Anchor = { id: string; x: number; y: number };
-    let anchors: Anchor[] = [];
-    let pinTimer: ReturnType<typeof setTimeout> | undefined;
-    let lastDataId: string | undefined;
-
-    const captureAndPin = () => {
-      const c = chartRef.current;
-      if (!c) return;
-      try {
-        const m = (c as unknown as { getModel: () => unknown }).getModel() as {
-          getSeriesByIndex: (i: number) => { getGraph: () => { eachNode: (cb: (n: { id: string; getLayout: () => [number, number] | null }) => void) => void } };
-        };
-        const series = m.getSeriesByIndex(0);
-        const graph = series.getGraph();
-        const next: Anchor[] = [];
-        graph.eachNode((node) => {
-          const layout = node.getLayout();
-          if (!layout) return;
-          next.push({ id: String(node.id), x: layout[0], y: layout[1] });
-        });
-        if (next.length === 0) return;
-        anchors = next;
-        lastDataId = next[0].id;
-
-        const opt = c.getOption() as {
-          series: Array<{ data: Array<Record<string, unknown> & { id: string }> }>;
-        };
-        const data = opt.series?.[0]?.data ?? [];
-        const byId = new Map(anchors.map((a) => [a.id, a] as const));
-        const nextData = data.map((d) => {
-          const a = byId.get(d.id);
-          if (!a) return d;
-          return { ...d, fixed: true, x: a.x, y: a.y };
-        });
-        c.setOption({ series: [{ data: nextData }] }, { lazyUpdate: true });
-      } catch {
-        /* model not ready */
-      }
-    };
-
-    // Re-check on a slow heartbeat so a new run (different data ids)
-    // re-captures and re-pins. We don't move anything per tick.
-    const tick = () => {
-      const c = chartRef.current;
-      if (c) {
-        const opt = c.getOption() as {
-          series: Array<{ data: Array<Record<string, unknown> & { id: string }> }>;
-        };
-        const data = opt.series?.[0]?.data ?? [];
-        if (data.length > 0 && (anchors.length === 0 || data[0].id !== lastDataId)) {
-          anchors = [];
-          captureAndPin();
-        }
-      }
-      pinTimer = setTimeout(tick, 4000);
-    };
-    pinTimer = setTimeout(tick, 8000); // give the force layout a full cool-down first
+    // Node positions are now deterministic (labelled-region grid, layout:'none'),
+    // so the old force-cooldown capture-and-pin heartbeat is gone.
 
     return () => {
-      window.removeEventListener('resize', handler);
+      window.removeEventListener('resize', onResize);
       window.removeEventListener('blur', clearEphemeralHover);
       el.removeEventListener('mouseleave', clearEphemeralHover);
       el.removeEventListener('pointerleave', clearEphemeralHover);
       document.removeEventListener('mouseleave', onDocLeave);
+      cancelClear();
+      if (sizeTimer) clearTimeout(sizeTimer);
       ro.disconnect();
-      if (pinTimer) clearTimeout(pinTimer);
       chart.dispose();
       chartRef.current = null;
     };
@@ -258,6 +270,25 @@ export function CouncilGraph({
     if (pinnedRef.current) applyLegendFocus(chart, pinnedRef.current);
   }, [option]);
 
+  // Draggable, hoverable group hulls. Reinstalled whenever the layout rebuilds
+  // (the effect owns the `graphic` component; the option-effect above no longer
+  // touches graphic, so the two don't fight). Runs after the option-effect.
+  useEffect(() => {
+    const chart = chartRef.current;
+    const el = ref.current;
+    if (!chart || !el) return;
+    return installGroupHulls(chart, el, built.hulls, built.basePos, resolved === 'dark', {
+      // Hovering a hull emits a group cross-highlight: the graph lights the
+      // group's nodes + all attached edges, and the Sankey + legend react too.
+      onHover: (memberIds, key) =>
+        onCrossHighlightRef.current?.({ source: 'group', agentIds: memberIds, key: `group:${key}`, locked: false }),
+      onLeave: () => {
+        const cur = crossHighlightRef.current;
+        if (cur && cur.source === 'group' && !cur.locked) onCrossHighlightRef.current?.(null);
+      },
+    });
+  }, [built, resolved]);
+
   useEffect(() => {
     const chart = chartRef.current;
     if (!chart) return;
@@ -282,32 +313,35 @@ export function CouncilGraph({
       else clearLegendFocus(chart);
       return;
     }
-    applyAgentFocus(chart, new Set(crossHighlight.agentIds));
+    applyAgentFocus(chart, new Set(crossHighlight.agentIds), crossHighlight.source === 'group' ? 'touch' : 'within');
   }, [crossHighlight]);
 
+  // Legend hover/click flow through the shared cross-highlight so the graph AND
+  // the Sankey react (and the chip lights via `activeProfs`). Hover is ephemeral;
+  // click pins (opens the group inspector) with a locked highlight.
   const onLegendEnter = useCallback((p: Profession) => {
     if (pinnedRef.current) return; // pin takes precedence
-    const chart = chartRef.current;
-    if (chart) applyLegendFocus(chart, p);
+    onCrossHighlightRef.current?.({ source: 'legend', agentIds: profAgentsRef.current.get(p) ?? [], key: `legend:${p}`, locked: false });
   }, []);
 
   const onLegendLeave = useCallback(() => {
     if (pinnedRef.current) return; // pin survives mouse-out
-    const chart = chartRef.current;
-    if (chart) clearLegendFocus(chart);
+    const cur = crossHighlightRef.current;
+    if (cur && cur.source === 'legend' && !cur.locked) onCrossHighlightRef.current?.(null);
   }, []);
 
-  const onLegendClick = useCallback((p: Profession): void => {
-    const chart = chartRef.current;
-    if (!chart) return;
-    if (pinnedRef.current === p) {
-      onPinnedProfessionChange(null);
-      clearLegendFocus(chart);
-    } else {
-      onPinnedProfessionChange(p);
-      applyLegendFocus(chart, p);
-    }
-  }, []);
+  const onLegendClick = useCallback(
+    (p: Profession): void => {
+      if (pinnedRef.current === p) {
+        onPinnedProfessionChange(null);
+        onCrossHighlightRef.current?.(null);
+      } else {
+        onPinnedProfessionChange(p);
+        onCrossHighlightRef.current?.({ source: 'legend', agentIds: profAgentsRef.current.get(p) ?? [], key: `legend:${p}`, locked: true });
+      }
+    },
+    [onPinnedProfessionChange],
+  );
 
   return (
     <>
@@ -316,7 +350,7 @@ export function CouncilGraph({
         {PROFESSIONS.map((p) => (
           <span
             key={p}
-            className={`graph-legend-item ${pinned === p ? 'is-pinned' : ''}`}
+            className={`graph-legend-item ${pinned === p ? 'is-pinned' : ''}${highlightActive ? (chipActive(p) ? ' is-active' : ' is-muted') : ''}`}
             onMouseEnter={() => onLegendEnter(p)}
             onClick={() => onLegendClick(p)}
             role="button"
@@ -331,10 +365,24 @@ export function CouncilGraph({
   );
 }
 
-function buildOption(run: Run, colors: ThemeColors): echarts.EChartsCoreOption {
+function buildOption(
+  run: Run,
+  colors: ThemeColors,
+  size: { w: number; h: number },
+): { option: echarts.EChartsCoreOption; hulls: HullDatum[]; basePos: Map<string, { x: number; y: number }> } {
   const STANCE_BORDER = stanceBorder(colors);
   const categories = PROFESSIONS.map((p) => ({ name: p, itemStyle: { color: PROFESSION_PALETTE[p] } }));
   const profIndex = new Map(PROFESSIONS.map((p, i) => [p, i] as const));
+
+  // ─── Group cells ─────────────────────────────────────────────────────
+  // One cell per profession present in this run, tiled across the canvas. Each
+  // cell centre becomes the anchor for that profession's clump (see below), so
+  // the graph reads as grouped shaded regions rather than a force-scattered cloud.
+  const present = PROFESSIONS.filter((p) => run.councilResults.some((r) => r.agent.profession === p));
+  const groups: Group[] = present.map((p) => ({ key: p, label: p, color: PROFESSION_PALETTE[p] }));
+  const W = size.w > 0 ? size.w : 900;
+  const H = size.h > 0 ? size.h : 600;
+  const cells = layoutCells(groups, W, H);
   // edge-tooltip needs to resolve each endpoint id to its full record so we
   // can render both agents' professions / MBTI / stance side by side.
   const byId = new Map(run.councilResults.map((r) => [r.agent.id, r] as const));
@@ -362,15 +410,61 @@ function buildOption(run: Run, colors: ThemeColors): echarts.EChartsCoreOption {
     return 6 + norm * 32;
   };
 
+  // ─── Force layout, clustered by profession ───────────────────────────
+  // A small force sim gives each profession an organic clump (connected agents
+  // drift together, no rigid rows) around its cell centre, then wraps each
+  // settled cluster in a soft translucent hull. Nodes/edges read as the original
+  // force graph; the hulls add the grouping.
+  const fnodes: FNode[] = run.councilResults.map((r) => ({ id: r.agent.id, group: r.agent.profession, r: sizeFor(r.agent.id) / 2 }));
+  const fedges: FEdge[] = run.councilEdges.map((e) => ({ source: e.source, target: e.target }));
+  const { pos: nodePos, groupCircle } = forceClusterLayout(fnodes, fedges, cells, W, H);
+
+  // Per-group edge statistics (shown when a hull is hovered).
+  const profOf = new Map(run.councilResults.map((r) => [r.agent.id, r.agent.profession]));
+  const stanceById = new Map(run.councilResults.map((r) => [r.agent.id, r.finalStance]));
+  const membersByProf = new Map<string, string[]>();
+  for (const r of run.councilResults) {
+    const a = membersByProf.get(r.agent.profession) ?? [];
+    a.push(r.agent.id);
+    membersByProf.set(r.agent.profession, a);
+  }
+  const stat = new Map<string, { internal: number; external: number; wSum: number }>();
+  const ensureStat = (p: string) => stat.get(p) ?? (stat.set(p, { internal: 0, external: 0, wSum: 0 }), stat.get(p)!);
+  for (const e of run.councilEdges) {
+    const pa = profOf.get(e.source), pb = profOf.get(e.target);
+    if (pa == null || pb == null) continue;
+    if (pa === pb) { const s = ensureStat(pa); s.internal++; s.wSum += e.value; }
+    else { ensureStat(pa).external++; ensureStat(pb).external++; }
+  }
+  const hulls: HullDatum[] = cells.map((c) => {
+    const g = groupCircle.get(c.key) ?? { cx: c.cx, cy: c.cy, r: 30 };
+    const ids = membersByProf.get(c.key) ?? [];
+    const s = stat.get(c.key) ?? { internal: 0, external: 0, wSum: 0 };
+    const counts: Record<string, number> = { support: 0, oppose: 0, abstain: 0 };
+    for (const id of ids) { const st = stanceById.get(id); if (st) counts[st]++; }
+    const domStance = Object.entries(counts).sort((a, b) => b[1] - a[1])[0][0];
+    const avg = s.internal ? s.wSum / s.internal : 0;
+    const statsHtml =
+      `<b style="color:${c.color}">${escapeHtml(c.label)}</b><br/>` +
+      `${ids.length} agent${ids.length === 1 ? '' : 's'} · dominant stance <b>${domStance}</b><br/>` +
+      `<span style="opacity:.7">shared-reasoning edges</span><br/>` +
+      `within group: <b>${s.internal}</b>${s.internal ? ` · avg agreement <b>${avg.toFixed(2)}</b>` : ''}<br/>` +
+      `to other groups: <b>${s.external}</b>`;
+    return { key: c.key, label: c.label, color: c.color, cx: g.cx, cy: g.cy, r: g.r, memberIds: ids, statsHtml };
+  });
+
   const nodes = run.councilResults.map((r) => {
     const size = sizeFor(r.agent.id);
+    const pos = nodePos.get(r.agent.id) ?? { x: W / 2, y: H / 2 };
     return {
       id: r.agent.id,
       name: `${r.agent.profession.slice(0, 4).toLowerCase()}/${r.agent.mbti}/${r.agent.gender}`,
       category: profIndex.get(r.agent.profession) ?? 0,
+      // On cartesian2d the node position comes from `value: [x, y]`.
+      value: [pos.x, pos.y],
+      // Headline confidence moved off `value` (now the coord) — tooltip reads `conf`.
+      conf: r.finalConfidence,
       symbolSize: size,
-      // Tooltip still reports confidence as the headline `value`; keep it.
-      value: r.finalConfidence,
       // `degree` is preserved for the inspector / debug overlays if we want
       // to surface "this hub talks to N other agents at average weight W".
       degree: weightedDegree.get(r.agent.id) ?? 0,
@@ -398,8 +492,14 @@ function buildOption(run: Run, colors: ThemeColors): echarts.EChartsCoreOption {
     lineStyle: { opacity: 0.7, width: Math.max(0.8, e.value * 1.8) },
   }));
 
-  return {
+  const option: echarts.EChartsCoreOption = {
     backgroundColor: 'transparent',
+    // Hidden cartesian grid fills the panel; the graph nodes and the hulls (drawn
+    // by installGroupHulls) share these axes, so they align exactly — no
+    // force-layout auto-fit to fight. yAxis inverted → pixel coords map 1:1.
+    grid: { left: 0, right: 0, top: 0, bottom: 0 },
+    xAxis: { type: 'value', min: 0, max: W, show: false, silent: true },
+    yAxis: { type: 'value', min: 0, max: H, inverse: true, show: false, silent: true },
     // Smooth motion on data updates (legend pin, breathing, run swap).
     animationDuration: 1500,
     animationDurationUpdate: 1500,
@@ -426,10 +526,10 @@ function buildOption(run: Run, colors: ThemeColors): echarts.EChartsCoreOption {
           const d = p.data as {
             agent: { id: string; profession: string; mbti: string; gender: string };
             stance: string;
-            value: number;
+            conf: number;
             keyRisk: string;
           };
-          return `${d.agent.id}<br/>${d.agent.profession} · ${d.agent.mbti} · ${d.agent.gender}<br/>stance: <b>${d.stance}</b> · conf: <b>${d.value}</b><br/>risk: ${escapeHtml(d.keyRisk).slice(0, 100)}`;
+          return `${d.agent.id}<br/>${d.agent.profession} · ${d.agent.mbti} · ${d.agent.gender}<br/>stance: <b>${d.stance}</b> · conf: <b>${d.conf}</b><br/>risk: ${escapeHtml(d.keyRisk).slice(0, 100)}`;
         }
         if (p.dataType === 'edge') {
           const e = p.data as { source: string; target: string; value: number };
@@ -460,12 +560,9 @@ function buildOption(run: Run, colors: ThemeColors): echarts.EChartsCoreOption {
     series: [
       {
         type: 'graph',
-        layout: 'force',
+        coordinateSystem: 'cartesian2d', // nodes positioned by value:[x,y]
+        z: 3,
         animation: false,
-        roam: true,
-        roamTrigger: 'global',          // pan/zoom anywhere in the viewport
-        scaleLimit: { min: 0.4, max: 8 },
-        draggable: true,
         legendHoverLink: false,         // custom legend chips handle hover focus
         label: {
           show: true,                   // labels visible by default; hideOverlap thins them
@@ -493,7 +590,6 @@ function buildOption(run: Run, colors: ThemeColors): echarts.EChartsCoreOption {
         categories,
         data: nodes,
         edges: links,
-        force: { edgeLength: 18, repulsion: 55, gravity: 0.12, layoutAnimation: true },
         // `color: 'source'` paints each edge with its source-node category colour —
         // a Finance→Investor edge reads as Finance-blue, etc. Curveness 0.2 keeps
         // the bend organic without spaghetti in the dense council layout.
@@ -501,6 +597,8 @@ function buildOption(run: Run, colors: ThemeColors): echarts.EChartsCoreOption {
       },
     ],
   };
+
+  return { option, hulls, basePos: nodePos };
 }
 
 function applyLegendFocus(chart: echarts.ECharts, profession: Profession) {
@@ -523,7 +621,7 @@ function applyLegendFocus(chart: echarts.ECharts, profession: Profession) {
 // Cross-highlight from the Sankey: dim every node NOT in the agent set,
 // dim every edge whose endpoints aren't both inside. Uses the same opacity
 // budget as the legend focus so the two paths can't fight each other.
-function applyAgentFocus(chart: echarts.ECharts, ids: Set<string>) {
+function applyAgentFocus(chart: echarts.ECharts, ids: Set<string>, edgeMode: 'within' | 'touch' = 'within') {
   const opt = chart.getOption() as { series: Array<{ data: Array<Record<string, unknown> & { id: string }>; edges: Array<Record<string, unknown> & { source: string; target: string }> }> };
   const series = opt.series?.[0];
   if (!series) return;
@@ -532,8 +630,11 @@ function applyAgentFocus(chart: echarts.ECharts, ids: Set<string>) {
     return { ...n, itemStyle: { ...(n.itemStyle as object | undefined), opacity: match ? 1 : 0.1 } };
   });
   const nextEdges = series.edges.map((e) => {
-    const touches = ids.has(e.source) && ids.has(e.target);
-    return { ...e, lineStyle: { ...(e.lineStyle as object | undefined), opacity: touches ? 0.85 : 0.04 } };
+    // 'within' = edge fully inside the set (default); 'touch' = at least one
+    // endpoint in the set — used for group-hull hover so EVERY edge attached to
+    // the group's members lights up, not just internal ones.
+    const on = edgeMode === 'touch' ? ids.has(e.source) || ids.has(e.target) : ids.has(e.source) && ids.has(e.target);
+    return { ...e, lineStyle: { ...(e.lineStyle as object | undefined), opacity: on ? 0.85 : 0.04 } };
   });
   chart.setOption({ series: [{ data: nextData, edges: nextEdges }] }, { lazyUpdate: true });
 }

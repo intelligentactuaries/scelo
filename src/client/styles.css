@@ -1760,13 +1760,13 @@ input[type='range']:focus::-moz-range-thumb {
   position: absolute;
   left: 12px;
   top: 12px;
-  /* Theme-aware glass — picks up the current bg-2 so the panel reads
-     on both cream and charcoal backgrounds. */
-  background: color-mix(in srgb, var(--bg-2) 88%, transparent);
-  -webkit-backdrop-filter: blur(8px) saturate(140%);
-  backdrop-filter: blur(8px) saturate(140%);
-  border: 1px solid var(--border);
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.18);
+  /* Frosted glass — translucent bg-2 + blur so the canvas reads through on
+     both cream and charcoal backgrounds; inset highlight gives the glass edge. */
+  background: color-mix(in srgb, var(--bg-2) 78%, transparent);
+  -webkit-backdrop-filter: saturate(150%);
+  backdrop-filter: saturate(150%);
+  border: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.22), inset 0 1px 0 color-mix(in srgb, #fff 16%, transparent);
   border-radius: var(--radius-lg);
   padding: 8px 10px;
   display: flex;
@@ -1811,13 +1811,13 @@ input[type='range']:focus::-moz-range-thumb {
   position: absolute;
   top: 10px;
   right: 14px;
-  /* Theme-aware glass — uses bg-2 so legend chips remain legible on
-     both cream and charcoal canvases. */
-  background: color-mix(in srgb, var(--bg-2) 88%, transparent);
-  -webkit-backdrop-filter: blur(8px) saturate(140%);
-  backdrop-filter: blur(8px) saturate(140%);
-  border: 1px solid var(--border);
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.18);
+  /* Frosted glass — translucent bg-2 + blur so legend chips stay legible while
+     the canvas reads through on both cream and charcoal; inset = glass edge. */
+  background: color-mix(in srgb, var(--bg-2) 78%, transparent);
+  -webkit-backdrop-filter: saturate(150%);
+  backdrop-filter: saturate(150%);
+  border: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.22), inset 0 1px 0 color-mix(in srgb, #fff 16%, transparent);
   border-radius: var(--radius-lg);
   padding: 6px 8px;
   font-size: 11px;
@@ -2120,6 +2120,23 @@ input[type='range']:focus::-moz-range-thumb {
 .sentiment-pip.is-pinned:hover {
   background: var(--accent-soft);
   filter: brightness(0.95);
+}
+
+/* Cross-highlight glow: when any selection is active, the legend entries whose
+   group is part of it brighten, and the rest fade — so a Sankey / graph / legend
+   selection lights up the matching legend entries and vice versa. */
+.graph-legend-item.is-active,
+.sentiment-pip.is-active {
+  background: color-mix(in srgb, var(--fg) 13%, transparent);
+  font-weight: 600;
+}
+.graph-legend-item.is-muted,
+.sentiment-pip.is-muted {
+  opacity: 0.3;
+}
+.graph-legend-item.is-muted:hover,
+.sentiment-pip.is-muted:hover {
+  opacity: 0.6;
 }
 
 .resize-handle {

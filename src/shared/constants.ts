@@ -119,10 +119,10 @@ export const COLORS: ThemeColors = LIGHT;
 export const PROFESSION_PALETTE: Record<Profession, string> = {
   Finance: '#4a9eff',
   Investor: '#00ff9d',
-  Accountant: '#e4e4e4',
+  Accountant: '#22d3ee',
   Actuary: '#b388ff',
   Psychologist: '#ffb000',
   ConspiracyTheorist: '#ff3b3b',
-  Lawyer: '#c084fc',
+  Lawyer: '#a3e635',
   SocialMediaInfluencer: '#f472b6',
 };
