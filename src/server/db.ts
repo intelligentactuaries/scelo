@@ -1,8 +1,9 @@
 import { Database } from 'bun:sqlite';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const DB_PATH = new URL('../../data/swarm.db', import.meta.url).pathname;
+const DB_PATH = fileURLToPath(new URL('../../data/swarm.db', import.meta.url));
 mkdirSync(dirname(DB_PATH), { recursive: true });
 
 export const db = new Database(DB_PATH, { create: true });

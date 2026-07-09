@@ -1,9 +1,10 @@
 import { db } from './db';
 import type { CanonWork } from '../shared/types';
 import { existsSync, writeFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 
 const SCHOLAR_URL = 'https://scholar.google.com/citations?user=LNmZYWgAAAAJ&hl=en';
-const STUB_PATH = new URL('../../data/iaai-works.json', import.meta.url).pathname;
+const STUB_PATH = fileURLToPath(new URL('../../data/iaai-works.json', import.meta.url));
 
 const UA =
   'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36';
