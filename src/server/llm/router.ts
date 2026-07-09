@@ -69,6 +69,37 @@ export interface RouteOpts {
   temperature?: number;
   maxTokens?: number;
   provider?: Provider;
+  /** Caller cancellation (merged with the per-request timeout). */
+  signal?: AbortSignal;
+  /** Per-request timeout in ms; defaults to DEFAULT_LLM_TIMEOUT_MS. */
+  timeoutMs?: number;
+}
+
+// A single stalled LLM request must never hang the whole run. Non-streaming
+// calls (council + society) previously had no timeout at all, so one wedged
+// Ollama request left the society's Promise.all pending forever and the run
+// stuck in `running`. Every non-streaming request now gets a bounded timeout
+// that aborts the underlying fetch; on timeout the caller's try/catch treats it
+// as an error result and the run completes. Override via SWARM_LLM_TIMEOUT_MS.
+const DEFAULT_LLM_TIMEOUT_MS = Number(process.env.SWARM_LLM_TIMEOUT_MS) || 180_000;
+
+function withTimeout<T>(p: Promise<T>, ms: number, onTimeout: () => void): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      onTimeout();
+      reject(new Error(`llm request timed out after ${ms}ms`));
+    }, ms);
+    p.then(
+      (v) => {
+        clearTimeout(timer);
+        resolve(v);
+      },
+      (e) => {
+        clearTimeout(timer);
+        reject(e);
+      },
+    );
+  });
 }
 
 class LLMRouter {
@@ -190,7 +221,16 @@ class LLMRouter {
       maxTokens: opts.maxTokens,
     };
     const sem = provider === 'ollama' ? this.ollamaSem : this.cloudSem;
-    const result = await sem.run(() => dispatch(provider, call));
+    const timeoutMs = opts.timeoutMs ?? DEFAULT_LLM_TIMEOUT_MS;
+    const result = await sem.run(() => {
+      // Start the timeout AFTER acquiring the semaphore so queue time doesn't
+      // count against it. The AbortController cancels the underlying fetch
+      // (Ollama honours c.signal); withTimeout also rejects so a provider that
+      // ignores the signal still can't hang the run.
+      const ac = new AbortController();
+      const signal = opts.signal ? AbortSignal.any([opts.signal, ac.signal]) : ac.signal;
+      return withTimeout(dispatch(provider, { ...call, signal }), timeoutMs, () => ac.abort());
+    });
     writeCache(key, provider, model, result);
     return { text: result, provider, model, cached: false };
   }
