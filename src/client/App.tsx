@@ -67,6 +67,7 @@ import { CanonPanel, useCanonState } from './components/CanonPanel';
 import { HelpOverlay } from './components/HelpOverlay';
 import { ResizeHandle } from './components/ResizeHandle';
 import { ForecastCanvas } from './components/ForecastCanvas';
+import { RunStatus } from './components/RunStatus';
 
 interface RoundProgress {
   round: 1 | 2 | 3;
@@ -212,6 +213,20 @@ export function App() {
   const [inspector, setInspector] = useState<CouncilAgentResult | null>(null);
   const esRef = useRef<EventSource | null>(null);
   const scenarioRef = useRef<HTMLTextAreaElement>(null);
+
+  // Stall detection — timestamp of the last stream event while a run is busy.
+  // A 2s ticker recomputes staleness so the graph can flag a hung run (a local
+  // model that dies mid-run otherwise leaves the canvas silent forever).
+  const lastActivityRef = useRef<number>(Date.now());
+  const [nowTick, setNowTick] = useState<number>(() => Date.now());
+  useEffect(() => {
+    if (!runBusy) return;
+    lastActivityRef.current = Date.now();
+    setNowTick(Date.now());
+    const id = setInterval(() => setNowTick(Date.now()), 2000);
+    return () => clearInterval(id);
+  }, [runBusy]);
+  const stalledSec = runBusy ? Math.max(0, (nowTick - lastActivityRef.current) / 1000) : null;
 
   const [scenario, setScenario] = useState<string>('');
   const [subset, setSubset] = useState<number>(32);
@@ -430,6 +445,7 @@ export function App() {
     setProgress([]);
     setSociety(null);
     setRunBusy(true);
+    lastActivityRef.current = Date.now();
     setJustifyAllBusy(false);
     setJustifyAllProgress(null);
     setTab('forecast');
@@ -481,6 +497,7 @@ export function App() {
   }, [runId, justifyAllBusy, legalJurisdiction]);
 
   const onStreamEvent = useCallback((id: string, e: StreamEvent) => {
+    lastActivityRef.current = Date.now();
     if (e.type === 'round_start') {
       setProgress((p) => {
         const next = p.filter((r) => r.round !== e.round);
@@ -1125,6 +1142,7 @@ export function App() {
                       esRef.current = null;
                       setRunId(newRunId);
                       setRunBusy(true);
+                      lastActivityRef.current = Date.now();
                       setRunError(null);
                       setProgress([]);
                       setSociety(null);
@@ -1145,6 +1163,16 @@ export function App() {
                         crossHighlight={crossHighlight}
                         onCrossHighlight={setCrossHighlight}
                       />
+                      <RunStatus
+                        phase="council"
+                        run={run}
+                        busy={runBusy}
+                        error={runError}
+                        stalledSec={stalledSec}
+                        progress={progress}
+                        society={society}
+                        onRetry={startRun}
+                      />
                     </div>
                     {run.councilResults.length > 0 && (
                       <div className="council-stack-sankey">
@@ -1160,10 +1188,10 @@ export function App() {
                     )}
                   </div>
                 )}
-                {tab === 'society' &&
-                  (run && run.societyResults.length > 0 ? (
-                    <div className="council-stack">
-                      <div className="council-stack-graph">
+                {tab === 'society' && (
+                  <div className="council-stack">
+                    <div className="council-stack-graph">
+                      {run && run.societyResults.length > 0 && (
                         <SocietyGraph
                           run={run}
                           pinned={societyPin}
@@ -1171,7 +1199,20 @@ export function App() {
                           crossHighlight={crossHighlight}
                           onCrossHighlight={setCrossHighlight}
                         />
-                      </div>
+                      )}
+                      <RunStatus
+                        phase="society"
+                        run={run}
+                        busy={runBusy}
+                        error={runError}
+                        stalledSec={stalledSec}
+                        progress={progress}
+                        society={society}
+                        societySize={societySize}
+                        onRetry={startRun}
+                      />
+                    </div>
+                    {run && run.societyResults.length > 0 && (
                       <div className="council-stack-sankey">
                         <div className="council-stack-sankey-label">
                           society reactions to the forecast · cluster → sentiment → intensity
@@ -1182,10 +1223,9 @@ export function App() {
                           onCrossHighlight={setCrossHighlight}
                         />
                       </div>
-                    </div>
-                  ) : (
-                    <SocietyEmpty busy={runBusy} society={society} societySize={societySize} />
-                  ))}
+                    )}
+                  </div>
+                )}
                 {tab === 'synthesis' && run && (
                   <SynthesisView run={run} onSelectAgent={setSelectedAgentId} />
                 )}

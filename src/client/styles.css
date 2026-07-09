@@ -4462,3 +4462,129 @@ body.is-resizing * {
   padding-top: 8px;
   border-top: 1px solid var(--grid);
 }
+
+/* ── Run status overlay — Council Reactions / Society Pulse ─────────────────
+   Answers the one thing an empty graph can't: is the swarm running, or broken?
+   Rendered inside .council-stack-graph, over the (possibly empty) graph. */
+.council-stack-graph { position: relative; }
+
+.run-status {
+  position: absolute;
+  inset: 0;
+  z-index: 8;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  padding: 24px;
+  text-align: center;
+  pointer-events: none;
+  background: radial-gradient(
+    120% 90% at 50% 45%,
+    color-mix(in srgb, var(--bg) 84%, transparent) 0%,
+    color-mix(in srgb, var(--bg) 42%, transparent) 55%,
+    transparent 78%
+  );
+  animation: run-status-in 240ms ease both;
+}
+@keyframes run-status-in { from { opacity: 0; } to { opacity: 1; } }
+
+.run-status-title { font-size: 15px; font-weight: 600; letter-spacing: 0.01em; color: var(--fg); }
+.run-status.is-stalled .run-status-title { color: var(--dissent); }
+.run-status.is-error .run-status-title,
+.run-status.is-broken .run-status-title { color: var(--adversarial); }
+.run-status-detail { max-width: 44ch; font-size: 12.5px; line-height: 1.5; color: var(--muted); }
+.run-status-sub { font-size: 11px; color: var(--muted); opacity: 0.72; }
+
+.run-status-retry {
+  pointer-events: auto;
+  margin-top: 4px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  padding: 5px 15px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--fg);
+}
+.run-status-retry:hover { border-color: var(--border-strong); }
+
+.run-status-emblem { display: grid; place-items: center; width: 62px; height: 62px; margin-bottom: 2px; }
+
+/* running: a comet-tail of dots orbiting a ring — reads as live swarm activity */
+.run-status-orbit { position: relative; display: block; width: 52px; height: 52px; }
+.run-status-orbit i {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 8px;
+  height: 8px;
+  margin: -4px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: run-orbit 1.5s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+}
+.run-status-orbit i:nth-child(2) { animation-delay: -0.18s; opacity: 0.85; }
+.run-status-orbit i:nth-child(3) { animation-delay: -0.36s; opacity: 0.70; }
+.run-status-orbit i:nth-child(4) { animation-delay: -0.54s; opacity: 0.58; }
+.run-status-orbit i:nth-child(5) { animation-delay: -0.72s; opacity: 0.45; }
+.run-status-orbit i:nth-child(6) { animation-delay: -0.90s; opacity: 0.32; }
+@keyframes run-orbit {
+  0%   { transform: rotate(0deg)   translateX(21px) scale(1); }
+  50%  { transform: rotate(180deg) translateX(21px) scale(0.55); }
+  100% { transform: rotate(360deg) translateX(21px) scale(1); }
+}
+
+/* non-running: three dots (blink for stalled/error) */
+.run-status-glyph { display: inline-flex; gap: 7px; }
+.run-status-glyph i { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); }
+.run-status.is-stalled .run-status-glyph i { background: var(--dissent); animation: run-blink 1.15s ease-in-out infinite; }
+.run-status.is-error .run-status-glyph i,
+.run-status.is-broken .run-status-glyph i { background: var(--adversarial); }
+.run-status.is-error .run-status-glyph i { animation: run-blink 0.95s ease-in-out infinite; }
+.run-status-glyph i:nth-child(2) { animation-delay: 0.15s; }
+.run-status-glyph i:nth-child(3) { animation-delay: 0.30s; }
+@keyframes run-blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.28; } }
+
+/* top chip — when results are already on the graph, stay unobtrusive */
+.run-status-chip {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 9;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px 5px 12px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border);
+  background: var(--bg);
+  font-size: 11.5px;
+  color: var(--fg);
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.09);
+  pointer-events: auto;
+}
+.run-status-chip-dot { width: 7px; height: 7px; border-radius: 50%; animation: run-blink 1.1s ease-in-out infinite; }
+.run-status-chip.is-stalled .run-status-chip-dot { background: var(--dissent); }
+.run-status-chip.is-error .run-status-chip-dot { background: var(--adversarial); }
+.run-status-chip-text { color: var(--muted); }
+.run-status-chip-btn {
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  padding: 2px 9px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--fg);
+}
+.run-status-chip-btn:hover { border-color: var(--border-strong); }
+
+@media (prefers-reduced-motion: reduce) {
+  .run-status-orbit i,
+  .run-status-glyph i,
+  .run-status-chip-dot { animation: none; }
+}
