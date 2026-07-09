@@ -80,4 +80,23 @@ db.exec(`
   }
 })();
 
+// Reconcile orphaned runs on startup. A run left 'running'/'pending' when the
+// server last stopped can never resume — the in-memory orchestration (and its
+// SSE listeners) are gone — so it would otherwise sit "running" forever and any
+// poller (e.g. Scelo's council CTA) would hang waiting for a terminal state.
+// Mark them failed at boot. (The root cause of a genuinely hung society step is
+// separately fixed by the per-request LLM timeout in llm/router.ts.)
+(() => {
+  const res = db
+    .prepare(
+      `UPDATE runs SET status = 'failed',
+         error = COALESCE(error, 'interrupted: server restarted before the run completed')
+       WHERE status IN ('running', 'pending')`,
+    )
+    .run();
+  if (res.changes > 0) {
+    console.log(`[db] reconciled ${res.changes} orphaned run(s) to failed on startup`);
+  }
+})();
+
 export type DB = typeof db;

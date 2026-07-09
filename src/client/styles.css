@@ -279,7 +279,10 @@ select:focus {
   transform: translateY(-50%);
   /* liquid-glass-dark */
   background: rgba(20, 22, 28, 0.58);
-  color: var(--bg);
+  /* The glass bubble is always dark in BOTH themes, so its text must be a fixed
+     light cream. Previously var(--bg) made it invisible in dark mode (--bg is
+     dark there). */
+  color: #f1ecdf;
   -webkit-backdrop-filter: blur(7px) saturate(130%);
   backdrop-filter: blur(7px) saturate(130%);
   border: 1px solid rgba(255, 255, 255, 0.10);
@@ -2508,7 +2511,10 @@ body.is-resizing * {
   transform: translateX(-50%);
   /* liquid-glass-dark */
   background: rgba(20, 22, 28, 0.58);
-  color: var(--bg);
+  /* The glass bubble is always dark in BOTH themes, so its text must be a fixed
+     light cream. Previously var(--bg) made it invisible in dark mode (--bg is
+     dark there). */
+  color: #f1ecdf;
   -webkit-backdrop-filter: blur(7px) saturate(130%);
   backdrop-filter: blur(7px) saturate(130%);
   border: 1px solid rgba(255, 255, 255, 0.10);
@@ -3207,7 +3213,10 @@ body.is-resizing * {
   left: 0;
   /* liquid-glass-dark */
   background: rgba(20, 22, 28, 0.58);
-  color: var(--bg);
+  /* The glass bubble is always dark in BOTH themes, so its text must be a fixed
+     light cream. Previously var(--bg) made it invisible in dark mode (--bg is
+     dark there). */
+  color: #f1ecdf;
   -webkit-backdrop-filter: blur(7px) saturate(130%);
   backdrop-filter: blur(7px) saturate(130%);
   border: 1px solid rgba(255, 255, 255, 0.10);
@@ -3263,7 +3272,10 @@ body.is-resizing * {
      the same blur + saturated glass-edge highlights as the light
      variant, so they feel like one design family. */
   background: rgba(20, 22, 28, 0.58);
-  color: var(--bg);
+  /* The glass bubble is always dark in BOTH themes, so its text must be a fixed
+     light cream. Previously var(--bg) made it invisible in dark mode (--bg is
+     dark there). */
+  color: #f1ecdf;
   -webkit-backdrop-filter: blur(7px) saturate(130%);
   backdrop-filter: blur(7px) saturate(130%);
   border: 1px solid rgba(255, 255, 255, 0.10);
