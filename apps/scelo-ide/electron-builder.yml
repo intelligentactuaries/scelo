@@ -6,6 +6,12 @@ executableName: scelo-ide
 copyright: Copyright © 2026 Intelligent Actuaries
 artifactName: ${productName}-${version}-${arch}.${ext}
 
+# Use the prebuilt native binaries already staged in node_modules (the ConPTY
+# node-pty build) instead of recompiling from source — node-gyp fails on this
+# deep, space-containing OneDrive path. Lets `electron-builder --win nsis` run
+# directly, without a fragile -c.npmRebuild=false CLI flag.
+npmRebuild: false
+
 # ─── Publish ───────────────────────────────────────────────────────────
 # Releases land on GitHub Releases under the PUBLIC source repo so anyone can
 # download them and electron-updater can poll for new versions. Tag format:
