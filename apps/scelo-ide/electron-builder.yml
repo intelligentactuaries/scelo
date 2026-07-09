@@ -7,13 +7,13 @@ copyright: Copyright © 2026 Intelligent Actuaries
 artifactName: ${productName}-${version}-${arch}.${ext}
 
 # ─── Publish ───────────────────────────────────────────────────────────
-# Releases land on GitHub Releases under the monorepo so electron-updater
-# can poll for new versions. Tag format expected by CI: scelo-ide-v0.1.0.
-# Channel control: latest = stable, beta = pre-release.
+# Releases land on GitHub Releases under the PUBLIC source repo so anyone can
+# download them and electron-updater can poll for new versions. Tag format:
+# scelo-ide-v0.1.1. Channel control: latest = stable, beta = pre-release.
 publish:
   - provider: github
     owner: intelligentactuaries
-    repo: intelligentactuaries
+    repo: scelo
     releaseType: release
     publishAutoUpdate: true
 
