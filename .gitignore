@@ -33,3 +33,6 @@ Thumbs.db
 coverage/
 playwright-report/
 test-results/
+
+# Private assets submodule (kept local; lives in a private repo)
+marketing/
