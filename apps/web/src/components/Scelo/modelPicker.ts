@@ -534,6 +534,7 @@ const VALID_FAMILIES: ReadonlySet<ModelFamily> = new Set([
   "pensions",
   "life",
   "forecast",
+  "workspace",
   "general",
 ]);
 

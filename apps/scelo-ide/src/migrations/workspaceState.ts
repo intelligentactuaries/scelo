@@ -23,7 +23,8 @@ export interface WorkspaceUIState {
     | "git"
     | "problems"
     | "tests"
-    | "swarm";
+    | "swarm"
+    | "workspace";
   /** Last sidebar pixel width. Clamped on render. */
   sidebarWidth?: number;
   /** P28: AI side-panel visibility + width. Both optional; defaults

@@ -20,21 +20,31 @@ import { useNavigate } from "react-router-dom";
 import type { PaletteCommand } from "../components/workspace/CommandPalette";
 import type { OutlineNode } from "../components/workspace/OutlinePanel";
 import { emitAiPrompt, subscribeOpenAiPanel } from "./aiPanelBus";
-// swarmBus events are no longer consumed here (/swarm is a dedicated
-// route); urlFor is only used to advertise the swarm address in the
-// palette so the shown port can't drift from the one SwarmPanel probes.
-import { urlFor } from "./swarmBus";
 import { resetDiagnostics } from "./diagnosticsBus";
 import { getEditorSelection } from "./editorSelectionBus";
 import { emitToggleViewer } from "./editorViewerBus";
 import { ensureGitPolling, refreshGit, resetGitStatus } from "./gitBus";
 import { clearAllDrafts } from "./inputDrafts";
 import { getLspClient } from "./lspClient";
+import { isDesktopIDE } from "./sceloIDE";
+// swarmBus events are no longer consumed here (/swarm is a dedicated
+// route); urlFor is only used to advertise the swarm address in the
+// palette so the shown port can't drift from the one SwarmPanel probes.
+import { urlFor } from "./swarmBus";
 import { enqueueTerminalCommand, shellQuote } from "./terminalBus";
 import { emitToast } from "./toastBus";
-import { isDesktopIDE } from "./sceloIDE";
 
-export type SidebarTab = "files" | "search" | "outline" | "git" | "problems" | "tests" | "swarm";
+export type SidebarTab =
+  | "files"
+  | "search"
+  | "outline"
+  | "git"
+  | "problems"
+  | "tests"
+  | "swarm"
+  // The IDE-wide global workspace: the small set of nameable, causally-validated
+  // facts currently in play across the pipeline (surfaced as "facts").
+  | "workspace";
 
 export const SIDEBAR_WIDTH_DEFAULT = 260;
 export const SIDEBAR_WIDTH_MIN = 180;
@@ -439,6 +449,12 @@ export function useWorkspaceShell(): WorkspaceShell {
         label: "View: Show Tests",
         detail: "pytest + testthat discovery, run via the terminal",
         run: () => setSidebarTab("tests"),
+      },
+      {
+        id: "view.workspace",
+        label: "View: Show Workspace Facts",
+        detail: "The global workspace: nameable, causally-validated facts in play",
+        run: () => setSidebarTab("workspace"),
       },
       {
         id: "reset.drafts",

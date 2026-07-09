@@ -282,6 +282,19 @@ export function generatePython(events: ActivityEvent[], stage: string): string {
         out.push("    # TODO: dispatch on model_id → fit the appropriate model.");
         out.push("    results[model_id] = None  # placeholder");
         break;
+      case "workspace.validate":
+        out.push(
+          `# Global-workspace validation of ${ev.payload.modelId} (readout: ${ev.payload.readout}).`,
+        );
+        out.push(
+          `#   participation ratio ${ev.payload.participationRatio.toFixed(2)}${ev.payload.swapR2 != null ? `, swap-consistency R2 ${ev.payload.swapR2.toFixed(2)}` : ""}.`,
+        );
+        out.push(`#   workspace directions: ${ev.payload.directions.join("; ") || "(none)"}.`);
+        out.push("# Reproduce: build the gradient covariance C = E[grad f grad f^T] of a");
+        out.push("# differentiable surrogate for the readout over the drivers, eigendecompose it");
+        out.push("# (the active subspace), then validate by swap + ablation. numpy.linalg.eigh on");
+        out.push("# the gradient covariance is the estimator; scikit-learn fits the surrogate.");
+        break;
     }
     out.push("");
   }
@@ -389,6 +402,18 @@ export function generateR(events: ActivityEvent[], stage: string): string {
         out.push("  # TODO: dispatch on m → fit the appropriate model.");
         out.push("  results[[m]] <- NULL");
         out.push("}");
+        break;
+      case "workspace.validate":
+        out.push(
+          `# Global-workspace validation of ${ev.payload.modelId} (readout: ${ev.payload.readout}).`,
+        );
+        out.push(
+          `#   participation ratio ${ev.payload.participationRatio.toFixed(2)}${ev.payload.swapR2 != null ? `, swap R2 ${ev.payload.swapR2.toFixed(2)}` : ""}; directions: ${ev.payload.directions.join("; ") || "(none)"}.`,
+        );
+        out.push(
+          "# Reproduce: eigendecompose the readout's gradient covariance (active subspace),",
+        );
+        out.push("# then validate by swap + ablation interventions.");
         break;
     }
     out.push("");
@@ -540,6 +565,17 @@ export function generateCpp(events: ActivityEvent[], stage: string): string {
         out.push("    //       library is widely available — consider linking against Python via");
         out.push("    //       pybind11 to reuse `chainladder` / `lifelib` / `statsmodels`.");
         break;
+      case "workspace.validate":
+        out.push(
+          `    // Global-workspace validation of ${ev.payload.modelId} (readout: ${ev.payload.readout}).`,
+        );
+        out.push(
+          `    //   participation ratio ${ev.payload.participationRatio.toFixed(2)}; directions: ${ev.payload.directions.join("; ") || "(none)"}.`,
+        );
+        out.push(
+          "    // TODO: gradient-covariance eigendecomposition (active subspace) + swap/ablate.",
+        );
+        break;
     }
     out.push("");
   }
@@ -647,6 +683,11 @@ export function generatePrompt(events: ActivityEvent[], stage: string): string {
       case "runs.execute":
         out.push(
           `${n}. Ran all enabled models (${ev.payload.models.join(", ")}). In your reproduction, fit them against the dataset as prepared by the steps above (filters/cleaning applied). Note: Scelo's in-app quick-run numbers were computed on the unfiltered in-memory dataset, so your results may legitimately differ.`,
+        );
+        break;
+      case "workspace.validate":
+        out.push(
+          `${n}. Validated the global workspace of \`${ev.payload.modelId}\` against the readout \`${ev.payload.readout}\`: participation ratio ${ev.payload.participationRatio.toFixed(2)}${ev.payload.swapR2 != null ? `, swap-consistency R2 ${ev.payload.swapR2.toFixed(2)}` : ""}. The decision-relevant directions were: ${ev.payload.directions.join("; ") || "(none)"}. Reproduce by building the active subspace (eigenvectors of the gradient covariance E[grad f grad f^T]) of a differentiable surrogate for the readout, then validating with swap and ablation interventions.`,
         );
         break;
     }

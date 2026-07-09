@@ -144,6 +144,21 @@ export type ActivityEvent =
       stage: "hard";
       kind: "runs.execute";
       payload: { models: string[] };
+    }
+  | {
+      ts: number;
+      stage: "hard";
+      kind: "workspace.validate";
+      // The global-workspace validation of a result: which readout it was taken
+      // against, the effective dimension, the swap-consistency R2, and the
+      // named directions. Reproducible from the exported script.
+      payload: {
+        modelId: string;
+        readout: string;
+        participationRatio: number;
+        swapR2: number | null;
+        directions: string[];
+      };
     };
 
 // Returns true when the new event is the same kind as the most recent

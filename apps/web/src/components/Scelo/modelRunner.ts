@@ -10,10 +10,11 @@
 
 import { isDesktopIDE } from "../../lib/sceloIDE";
 import type { Dataset, Row } from "./SoftDataWorkstation";
-import type { ModelFamily } from "./modelCatalog";
-import { runBasicTermProjection, parseModelPoints } from "./lifelibBasicTerm";
 import { runForecast, runSensitivity } from "./forecast/runner";
 import { DEFAULT_WMTR_SINGLE_PARAMS, type WmtrSingleParams } from "./forecast/wmtr";
+import { parseModelPoints, runBasicTermProjection } from "./lifelibBasicTerm";
+import type { ModelFamily } from "./modelCatalog";
+import { fitBottleneck, numericColumns } from "./workspace";
 
 export type RunStatus = "idle" | "running" | "done" | "error";
 
@@ -284,7 +285,7 @@ function buildTriangle(dataset: Dataset): {
   // stay NaN instead of accreting zero into chain-ladder's lastC.
   const cells = new Map<string, number>();
   const cumByRow = new Map<number, number[]>();
-  const latestCalPeriod = pairs.reduce((m, p) => Math.max(m, p.o + p.d), -Infinity);
+  const latestCalPeriod = pairs.reduce((m, p) => Math.max(m, p.o + p.d), Number.NEGATIVE_INFINITY);
   for (const o of origins) {
     const row: number[] = [];
     let acc = 0;
@@ -1245,7 +1246,7 @@ function runSolvency2Life({ dataset }: Args): RunResult {
 
 function dominantOf(obj: Record<string, number>): string {
   let best = "";
-  let bestV = -Infinity;
+  let bestV = Number.NEGATIVE_INFINITY;
   for (const [k, v] of Object.entries(obj))
     if (v > bestV) {
       best = k;
@@ -1548,6 +1549,63 @@ function runWmtrSensitivityRunner({ dataset }: Args): RunResult {
 
 // ── dispatcher ──────────────────────────────────────────────────────────────
 
+// Interpretable-by-design bottleneck: a few sparse, non-negative, nameable
+// codes broadcast to the numeric report heads (generalizes Lee-Carter / NMF).
+function runWorkspaceBottleneck({ dataset }: Args): RunResult {
+  const cols = numericColumns(dataset);
+  const startedAt = Date.now();
+  if (cols.length < 3) {
+    return {
+      modelId: "workspace-bottleneck",
+      family: "workspace",
+      status: "error",
+      startedAt,
+      finishedAt: Date.now(),
+      headline: { label: "—", value: 0 },
+      secondary: [{ label: "reason", value: "need >= 3 numeric columns" }],
+      blurb: "The workspace bottleneck needs at least three numeric columns to compress.",
+      error: "too few numeric columns",
+    };
+  }
+  const r = Math.min(3, cols.length - 1);
+  const fit = fitBottleneck(dataset.rows, cols, { r });
+  // For each code, the two report heads it broadcasts to most strongly.
+  const topHeads = (k: number): string =>
+    fit.heads
+      .map((h, i) => ({ h, b: fit.broadcast[i]?.[k] ?? 0 }))
+      .sort((a, b) => b.b - a.b)
+      .slice(0, 2)
+      .filter((x) => x.b > 1e-6)
+      .map((x) => x.h)
+      .join(", ") || "(diffuse)";
+  return {
+    modelId: "workspace-bottleneck",
+    family: "workspace",
+    status: "done",
+    startedAt,
+    finishedAt: Date.now(),
+    headline: { label: "participation ratio", value: fit.participationRatio, precision: 2 },
+    secondary: [
+      { label: "codes", value: String(fit.codeNames.length) },
+      { label: "reconstruction R²", value: pct(fit.reconstructionR2) },
+      { label: "causal alignment", value: pct(fit.causalAlignment) },
+      { label: "broadcast sparsity", value: pct(fit.sparsity) },
+    ],
+    tableSpec: {
+      headers: ["code", "broadcasts to"],
+      rows: fit.codeNames.map((n, k) => [n, topHeads(k)]),
+    },
+    blurb: `Compressed ${cols.length} drivers into ${fit.codeNames.length} nameable codes; the non-negative broadcast rebuilds ${pct(fit.reconstructionR2)} of the heads with ${pct(fit.causalAlignment)} causal alignment.`,
+    detail: {
+      codes: fit.codeNames,
+      reconstructionR2: fit.reconstructionR2,
+      causalAlignment: fit.causalAlignment,
+      sparsity: fit.sparsity,
+      participationRatio: fit.participationRatio,
+    },
+  };
+}
+
 const RUNNERS: Record<string, (args: Args) => RunResult> = {
   "chain-ladder": runChainLadder,
   mack: runMack,
@@ -1579,6 +1637,8 @@ const RUNNERS: Record<string, (args: Args) => RunResult> = {
   // forecast (WMTR)
   "wmtr-projection": runWmtrProjection,
   "wmtr-sensitivity": runWmtrSensitivityRunner,
+  // workspace (interpretable bottleneck)
+  "workspace-bottleneck": runWorkspaceBottleneck,
 };
 
 export function runModel(modelId: string, dataset: Dataset): RunResult {
@@ -1639,6 +1699,7 @@ export const BRIDGED_MODEL_IDS: ReadonlySet<string> = new Set([
   "lee-carter",
   "ifrs17-csm",
   "basicterm-projection",
+  "workspace-bottleneck",
 ]);
 
 // A bridge that returned null did so either because we're outside the
@@ -2088,6 +2149,48 @@ export async function runModelAsync(modelId: string, dataset: Dataset): Promise<
         };
       }
       bridgeError = bridgeReturnedNothing("lifelib BasicTerm");
+    } catch (e) {
+      bridgeError = bridgeErrorMessage(e);
+    }
+  }
+  // Workspace family — the interpretable bottleneck's canonical numbers come
+  // from the bundled numpy (same estimator as the in-browser engine).
+  if (modelId === "workspace-bottleneck") {
+    try {
+      const { runBottleneckPython } = await import("./bridges/bottleneckPython");
+      const py = await runBottleneckPython(dataset);
+      if (py) {
+        const topHeads = (k: number): string =>
+          py.heads
+            .map((h, i) => ({ h, b: py.broadcast[i]?.[k] ?? 0 }))
+            .sort((a, b) => b.b - a.b)
+            .slice(0, 2)
+            .filter((x) => x.b > 1e-6)
+            .map((x) => x.h)
+            .join(", ") || "(diffuse)";
+        return {
+          modelId,
+          family: "workspace",
+          status: "done",
+          startedAt: Date.now(),
+          finishedAt: Date.now(),
+          headline: { label: "participation ratio", value: py.participationRatio, precision: 2 },
+          secondary: [
+            { label: "codes", value: String(py.codeNames.length) },
+            { label: "reconstruction R²", value: pct(py.reconstructionR2) },
+            { label: "causal alignment", value: pct(py.causalAlignment) },
+            { label: "runtime", value: "bundled CPython (numpy)" },
+          ],
+          tableSpec: {
+            headers: ["code", "broadcasts to"],
+            rows: py.codeNames.map((n, k) => [n, topHeads(k)]),
+          },
+          blurb: `Bundled-CPython bottleneck compressed ${py.heads.length} columns into ${py.codeNames.length} nameable codes; the non-negative broadcast rebuilds ${pct(py.reconstructionR2)} of them (causal alignment ${pct(py.causalAlignment)}).`,
+          detail: { ...py },
+          source: "python-bridge",
+        };
+      }
+      bridgeError = bridgeReturnedNothing("workspace bottleneck");
     } catch (e) {
       bridgeError = bridgeErrorMessage(e);
     }

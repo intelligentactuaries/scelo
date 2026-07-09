@@ -10,6 +10,22 @@
 // tight — every line gets rendered into a small column inside the modal.
 
 export const MODEL_THEORY: Record<string, string> = {
+  "workspace-bottleneck": `
+**Workspace bottleneck** is interpretable by design: a wide encoder compresses many drivers into a few sparse, non-negative, nameable codes \`z\`, and a non-negative broadcast matrix \`B\` fans them out to the report heads. The narrow, constrained middle is the audited object, not the whole model. Generalizes the actuarial classics: Lee-Carter is the linear rank-1 case, and the linear non-negative case is exactly NMF, whose sparsity and non-negativity are what make its factors read as causes.
+
+**Assumptions**
+- The report heads are well approximated by a low-rank, non-negative combination of a few codes.
+- The codes are decision-relevant, not merely high-variance (the reason a bottleneck beats a plain PCA compression).
+
+**Formula**
+$$
+\\mathbf{z} = \\phi_\\theta(\\mathbf{x}) \\in \\mathbb{R}^r, \\qquad f(\\mathbf{x}) = h\\big(\\mathbf{B}\\,\\mathbf{z}\\big), \\qquad \\mathbf{B} \\ge 0.
+$$
+A code is only allowed to *claim* a broadcast \`B[:,j]\` it can be shown to *cause*: swapping code \`j\` must move the heads by that column (the causal-alignment check).
+
+**Caveat** — decision-relevance is relative to the chosen heads; a different readout yields a different bottleneck. Validate the codes by intervention (swap / ablate) before trusting the names. After Denewade (2026), after Gurnee et al. (2026).
+`.trim(),
+
   "chain-ladder": `
 **Chain Ladder** projects an incomplete triangle of cumulative paid (or incurred) losses to ultimate by multiplying the latest diagonal forward with age-to-age (ATA) factors estimated from prior development.
 
