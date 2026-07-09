@@ -856,7 +856,84 @@ apps/web/src/
 
 ---
 
-## 15. Update protocol
+## 15. The global-workspace layer (verbalizable, causally validated)
+
+> After Gurnee et al., *Verbalizable Representations Form a Global Workspace in
+> Language Models* (transformer-circuits.pub/2026/workspace), and Denewade,
+> *A Global Workspace for Actuarial Models* (2026).
+
+Scelo's soft -> tools -> hard axis IS a global workspace: many specialist
+drivers feed a small, privileged, nameable, causally-load-bearing bottleneck
+that broadcasts to many report channels. This layer makes that literal: *the
+workspace* is the small set of decision-relevant directions a model is poised to
+report along, extracted, validated by intervention, and broadcast.
+
+### The engine (`components/Scelo/workspace/`)
+
+Pure, browser-native TypeScript (no native deps), mirrored optionally by a numpy
+Python bridge. The Case-A recipe: fit a smooth differentiable surrogate over the
+drivers, then read the workspace off its gradient.
+
+- `surrogate.ts` — ridge + random-Fourier-feature surrogate. Public
+  `predict`/`gradient` are in RAW driver space so the input-variance share
+  matches the paper (nuisance carries large variance, signals small).
+- `activeSubspace.ts` — the workspace operator `C_f = E[J^T J]`, its
+  eigendecomposition, participation ratio, PCA contrast, variance fraction, and
+  the workspace-vs-PCA reduction curve.
+- `causal.ts` — swap-consistency `R^2` (with the tail-curvature diagnostic),
+  ablation, retention, and the selectivity double-dissociation.
+- `credibility.ts` — Buhlmann shrinkage of thin-segment gradients.
+- `fairness.ts` — the protected-direction readout (Case C).
+- `bottleneck.ts` — the sparse non-negative NMF-form bottleneck.
+- `engine.ts` — `computeWorkspace(dataset, opts)` (extract + validate) and
+  `columnRelevance(dataset, target)` (the Soft preview scorer). Barrel: `index.ts`.
+- `*.test.ts` reproduce a mini Case A / Case C and assert the paper's headline
+  claims (rank-3 recovery, tiny variance share, swap `R^2`, dissociation).
+
+### Per surface
+
+- **Soft** — the `◈ workspace` toolbar button opens `WorkspacePreviewModal`
+  (`SoftDataWorkstation.tsx`): a relevance-vs-variance scatter over a chosen
+  readout, flagging decision-relevant drivers and warning when a low-variance
+  driver would be discarded by a variance-based reduction. Sample `workspace-demo`
+  (`workspaceSampleData.ts`) reproduces Case A in-app.
+- **Tools** — the `workspace` model family + the `workspace-bottleneck` catalog
+  model (`runWorkspaceBottleneck` in `modelRunner.ts`, optional
+  `bridges/bottleneckPython.ts`). A few sparse, non-negative, nameable codes and
+  a broadcast `B`; the linear special case is Lee-Carter / NMF.
+- **Hard** — `WorkspaceValidateCta` (`◈ extract + validate`) on any result:
+  workspace-vs-PCA spectra, swap-consistency scatter, selectivity grid; writes
+  the `WorkspaceReport` into `RunResult.detail.workspace` (persisted, rendered by
+  `ModelDiagnostics` and the board-pack governance section). `FairnessAuditCta`
+  for pricing. A `workspace.validate` `ActivityEvent` makes it reproducible via
+  the script exporters.
+- **Swarm** — the council synthesis broadcasts an "ignited coalition" fact;
+  `BlackboardCta` (no-focus panel) convenes every result as a specialist into a
+  capacity-limited shared workspace and broadcasts. Server-free; the external
+  swarm at :3010 is untouched.
+- **IDE-wide** — `lib/workspaceFactsBus.ts` + the `workspace` sidebar tab
+  (labelled "facts") rendering `components/workspace/WorkspacePanel.tsx`: the
+  small, capacity-limited set of nameable, causally-validated facts in play, each
+  sendable to the AI panel. `view.workspace` palette command opens it.
+
+### Honesty rails (from the paper's own limitations)
+
+- The workspace is **readout-relative**: the UI always names the chosen readout;
+  never claim decision-relevance in the abstract.
+- First-order/gradient: **weakest in the tail**; the swap view always shows the
+  curvature diagnostic and labels itself an interpretation/validation tool, not a
+  tail-estimation tool.
+- A name earns trust only by **surviving the swap test**; validation is the
+  default, not optional (a labelled-but-unvalidated direction is a re-badged
+  principal component).
+
+### Not yet
+
+- Facts persist in-memory for the session (the module-level bus), not to disk.
+- The Soft preview's readout defaults heuristically; multi-channel readout
+  picking is Hard-only.
+
+## 16. Update protocol
 
 This file is the single source of truth for the Scelo skill.
 

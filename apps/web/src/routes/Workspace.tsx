@@ -28,6 +28,7 @@ import SymbolPalette from "../components/workspace/SymbolPalette";
 import TerminalPanel from "../components/workspace/TerminalPanel";
 import TestsPanel from "../components/workspace/TestsPanel";
 import ToastTray from "../components/workspace/ToastTray";
+import WorkspacePanel from "../components/workspace/WorkspacePanel";
 import { isDesktopIDE } from "../lib/sceloIDE";
 import { type SidebarTab, useWorkspaceShell } from "../lib/useWorkspaceShell";
 
@@ -90,22 +91,30 @@ export default function Workspace() {
           style={{ gridTemplateRows: "auto 1fr" }}
         >
           <div className="flex border-b border-border bg-bg-2">
-            {(["files", "search", "outline", "git", "problems", "tests"] as SidebarTab[]).map(
-              (t) => (
-                <button
-                  key={t}
-                  type="button"
-                  onClick={() => workspace.setSidebarTab(t)}
-                  className={`flex-1 px-2 py-1 text-[10px] uppercase tracking-wider ${
-                    workspace.sidebarTab === t
-                      ? "border-b border-fg text-fg"
-                      : "text-fg-mute hover:text-fg"
-                  }`}
-                >
-                  {t}
-                </button>
-              ),
-            )}
+            {(
+              [
+                "files",
+                "search",
+                "outline",
+                "git",
+                "problems",
+                "tests",
+                "workspace",
+              ] as SidebarTab[]
+            ).map((t) => (
+              <button
+                key={t}
+                type="button"
+                onClick={() => workspace.setSidebarTab(t)}
+                className={`flex-1 px-2 py-1 text-[10px] uppercase tracking-wider ${
+                  workspace.sidebarTab === t
+                    ? "border-b border-fg text-fg"
+                    : "text-fg-mute hover:text-fg"
+                }`}
+              >
+                {t === "workspace" ? "facts" : t}
+              </button>
+            ))}
           </div>
           {workspace.sidebarTab === "files" && (
             <FileBrowser
@@ -145,6 +154,7 @@ export default function Workspace() {
             />
           )}
           {workspace.sidebarTab === "tests" && <TestsPanel workspacePath={workspace.path} />}
+          {workspace.sidebarTab === "workspace" && <WorkspacePanel />}
         </aside>
 
         <SidebarResizer width={workspace.sidebarWidth} onChange={workspace.setSidebarWidth} />

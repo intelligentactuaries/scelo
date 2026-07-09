@@ -94,11 +94,7 @@ export interface FsListEntry {
 interface ExecBridge {
   start(req: StreamExecRequest): Promise<{ sessionId: string } | { error: string }>;
   write(sessionId: string, data: string): Promise<{ ok: boolean; error?: string }>;
-  resize(
-    sessionId: string,
-    cols: number,
-    rows: number,
-  ): Promise<{ ok: boolean; error?: string }>;
+  resize(sessionId: string, cols: number, rows: number): Promise<{ ok: boolean; error?: string }>;
   cancel(sessionId: string): Promise<{ ok: boolean; error?: string }>;
   onChunk(cb: (chunk: ExecChunk) => void): () => void;
   onEnd(cb: (end: ExecEnd) => void): () => void;
@@ -116,7 +112,8 @@ export interface WorkspaceState {
     | "git"
     | "problems"
     | "tests"
-    | "swarm";
+    | "swarm"
+    | "workspace";
   /** Whether the right-side AI panel is visible. Added in P28; opt-in
    *  via Cmd-Shift-A so existing installs default to false. */
   aiPanelVisible?: boolean;
@@ -140,15 +137,11 @@ interface WorkspaceBridge {
   pick(): Promise<{ path: string | null; id: string | null }>;
   list(rel?: string): Promise<{ entries: FsListEntry[]; error?: string }>;
   registry(): Promise<{ workspaces: WorkspaceRecord[] }>;
-  switch(
-    id: string,
-  ): Promise<{ ok: boolean; path?: string; id?: string; error?: string }>;
+  switch(id: string): Promise<{ ok: boolean; path?: string; id?: string; error?: string }>;
   /** Pin THIS window to the given workspace id without changing the
    *  global most-recently-active. Used when a window mounts so the
    *  per-window override is set before any fs / lsp / state IPC fires. */
-  setForWindow(
-    id: string,
-  ): Promise<{ ok: boolean; path?: string; id?: string; error?: string }>;
+  setForWindow(id: string): Promise<{ ok: boolean; path?: string; id?: string; error?: string }>;
   remove(id: string): Promise<{ ok: boolean }>;
   /** Scaffold one of the bundled sample workspaces under a user-chosen
    *  parent directory, pin this window to it, and register it. Returns
@@ -181,9 +174,7 @@ export interface RLintDiagnostic {
 }
 
 interface FsBridge {
-  read(
-    rel: string,
-  ): Promise<{ ok: boolean; content?: string; size?: number; error?: string }>;
+  read(rel: string): Promise<{ ok: boolean; content?: string; size?: number; error?: string }>;
   write(rel: string, content: string): Promise<{ ok: boolean; error?: string }>;
   /** Apply a literal-string replacement to every (lineNumber, start, end)
    *  triple. Sorted server-side so out-of-order offsets don't corrupt
@@ -197,17 +188,13 @@ interface FsBridge {
     }>,
     replacement: string,
   ): Promise<{ ok: boolean; filesWritten: number; matchesReplaced: number; error?: string }>;
-  lintPython(
-    rel: string,
-  ): Promise<{
+  lintPython(rel: string): Promise<{
     ok: boolean;
     diagnostics: PyrightDiagnostic[];
     error?: string;
     note?: string;
   }>;
-  lintR(
-    rel: string,
-  ): Promise<{
+  lintR(rel: string): Promise<{
     ok: boolean;
     diagnostics: RLintDiagnostic[];
     error?: string;
@@ -335,9 +322,7 @@ interface GitBridge {
   /** `git show HEAD:<path>` — returns the blob at HEAD so the diff
    *  viewer can render against the in-memory buffer. Empty string when
    *  the file is new (no HEAD entry). */
-  show(
-    relPath: string,
-  ): Promise<{ ok: boolean; content?: string; sha?: string; error?: string }>;
+  show(relPath: string): Promise<{ ok: boolean; content?: string; sha?: string; error?: string }>;
 }
 
 export interface LlmChatRequest {

@@ -23,6 +23,11 @@ export type ModelFamily =
   // book stress, pension covenant resilience, reserve inflation forecasts,
   // etc. The Hard Data card relabels M/T/R per source family.
   | "forecast"
+  // `workspace` is the interpretable-by-design bottleneck: a few sparse,
+  // non-negative, nameable codes broadcast to many report heads (generalizing
+  // Lee-Carter and NMF). Distinct from the post-hoc "validate workspace" action
+  // on Hard Data (which is model-agnostic and not a catalog model).
+  | "workspace"
   | "general";
 
 export type CatalogModel = {
@@ -222,8 +227,7 @@ export const MODEL_CATALOG: CatalogModel[] = [
     id: "smithwilson-curve",
     name: "Smith-Wilson · curve fit",
     family: "life",
-    description:
-      "Risk-free curve extrapolation to the UFR (EIOPA / SAM). Lifelib → smithwilson.",
+    description: "Risk-free curve extrapolation to the UFR (EIOPA / SAM). Lifelib → smithwilson.",
     applicableTo: ["life", "capital", "yield_curve", "rates", "ufr", "smith-wilson"],
   },
   {
@@ -274,6 +278,23 @@ export const MODEL_CATALOG: CatalogModel[] = [
       "Sweep shock severity (mild / moderate / severe) across the same WMTR projection and report how the outcome distribution shifts.",
     applicableTo: ["forecast", "sensitivity", "stress-test", "wmtr", "shock"],
   },
+  // ── workspace · interpretable-by-design bottleneck ────────────────────────
+  {
+    id: "workspace-bottleneck",
+    name: "Workspace bottleneck",
+    family: "workspace",
+    description:
+      "Compresses many drivers into a few sparse, non-negative, nameable codes and a broadcast matrix B to the report heads. Generalizes Lee-Carter (rank-1) and NMF; validated by causal alignment.",
+    applicableTo: [
+      "workspace",
+      "bottleneck",
+      "interpretable",
+      "nmf",
+      "active-subspace",
+      "decision-relevant",
+      "dimension-reduction",
+    ],
+  },
   // ── general ───────────────────────────────────────────────────────────────
   {
     id: "descriptive",
@@ -300,6 +321,9 @@ export const FAMILY_COLOR_DARK: Record<ModelFamily, string> = {
   // existing family (no greens / blues / purples / pinks / orange / red
   // is near it) so projection nodes read as "different kind of artefact".
   forecast: "#5dd6c8",
+  // `workspace` is a warm gold — the "small precious object" the validator
+  // audits. Distinct from climate's orange (more yellow, less saturated).
+  workspace: "#e0b13c",
   general: "#9a9a9a",
 };
 export const FAMILY_COLOR_LIGHT: Record<ModelFamily, string> = {
@@ -311,5 +335,6 @@ export const FAMILY_COLOR_LIGHT: Record<ModelFamily, string> = {
   pensions: "#0d8e7f",
   life: "#b73a73",
   forecast: "#117a72",
+  workspace: "#9a7413",
   general: "#5c5c5a",
 };

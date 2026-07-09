@@ -19,6 +19,7 @@ import { delimiterFor } from "@/lib/csvParse";
 import { streamParseCsv } from "@/lib/csvStream";
 import { useTheme } from "@/lib/theme";
 import { emitToast } from "@/lib/toastBus";
+import { emitWorkspaceFact } from "@/lib/workspaceFactsBus";
 import ReactECharts from "echarts-for-react";
 import { BarChart, BoxplotChart, ScatterChart } from "echarts/charts";
 import { GridComponent, TitleComponent, TooltipComponent } from "echarts/components";
@@ -86,6 +87,8 @@ import { type ExportFormat, exportDataset } from "./exportDataset";
 import { compileFormula, previewFormula, validateColumnName } from "./formulaEvaluator";
 import { useScelo } from "./sceloContext";
 import { useNodeChat } from "./useNodeChat";
+import { columnRelevance, numericColumns as workspaceNumericColumns } from "./workspace";
+import { buildWorkspaceDemo } from "./workspaceSampleData";
 
 echarts.use([
   TitleComponent,
@@ -368,7 +371,13 @@ function syntheticClimate(): Dataset {
 // Registry of the in-app sample datasets the "load sample" picker offers.
 // Adding a new sample is one entry here — the picker modal renders cards
 // from this list and the load action dispatches by key.
-export type SampleKey = "claims" | "climate" | "dirty" | "lifelib-mp" | "wmtr-scenarios";
+export type SampleKey =
+  | "claims"
+  | "climate"
+  | "dirty"
+  | "lifelib-mp"
+  | "wmtr-scenarios"
+  | "workspace-demo";
 
 export type SampleOption = {
   key: SampleKey;
@@ -454,6 +463,18 @@ const SAMPLE_OPTIONS: Array<{
     cols: 7,
     accent: "accent-3",
     badge: "lifelib",
+  },
+  {
+    key: "workspace-demo",
+    build: () => buildWorkspaceDemo(),
+    title: "Workspace demo",
+    subtitle: "decision-relevant is not max-variance · global workspace",
+    blurb:
+      "2,000-policy synthetic annuity book with three genuine low-variance drivers (mortality trend, cohort, smoking) acting through nonlinear channels on annuity_60 / life_exp_60 / survival_to_80, a directly readable crude_rate level, and ten high-variance but irrelevant operational columns (premium band, web logins, survey score, ...). Run a model, then the Hard-Data 'validate workspace' action to watch the active subspace recover the three real drivers while PCA chases the noise.",
+    rows: 2000,
+    cols: 17,
+    accent: "accent-2",
+    badge: "workspace",
   },
 ];
 
@@ -3117,6 +3138,7 @@ export function SoftDataWorkstation() {
 
   const [samplePickerOpen, setSamplePickerOpen] = useState(false);
   const [simulateOpen, setSimulateOpen] = useState(false);
+  const [workspacePreviewOpen, setWorkspacePreviewOpen] = useState(false);
   const loadSample = useCallback(
     (key: SampleKey) => {
       const opt = SAMPLE_OPTIONS.find((o) => o.key === key);
@@ -3599,6 +3621,16 @@ export function SoftDataWorkstation() {
             ▷ simulate
           </button>
           {dataset && (
+            <button
+              type="button"
+              onClick={() => setWorkspacePreviewOpen(true)}
+              title="preview which columns are decision-relevant vs merely high-variance (the workspace idea, at the data stage)"
+              className="rounded border border-border bg-bg-2 px-2 py-1 font-mono text-[11px] text-fg-mute hover:border-primary hover:text-primary"
+            >
+              ◈ workspace
+            </button>
+          )}
+          {dataset && (
             <DerivedColumnButton
               dataset={dataset}
               onAdd={addDerivedColumn}
@@ -3899,7 +3931,237 @@ export function SoftDataWorkstation() {
           setFilters([]);
         }}
       />
+      {workspacePreviewOpen && dataset && (
+        <WorkspacePreviewModal dataset={dataset} onClose={() => setWorkspacePreviewOpen(false)} />
+      )}
     </div>
+  );
+}
+
+// ── WorkspacePreviewModal · decision-relevant vs max-variance, at the data
+// stage. Before any model, previews which columns a chosen readout actually
+// turns on (gradient-sensitivity share) versus which merely carry the most
+// input variance. The guardrail: dropping a low-variance column that is
+// decision-relevant discards signal PCA would have thrown away too.
+
+function WorkspacePreviewModal({
+  dataset,
+  onClose,
+}: {
+  dataset: Dataset;
+  onClose: () => void;
+}) {
+  const { resolved } = useTheme();
+  const numeric = useMemo(() => workspaceNumericColumns(dataset), [dataset]);
+  const [target, setTarget] = useState<string>(() => numeric[numeric.length - 1] ?? "");
+  const [scores, setScores] = useState<Record<string, { relevance: number; variance: number }>>({});
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (!target) return;
+    let cancelled = false;
+    setBusy(true);
+    // Defer so the modal paints before the synchronous fit blocks the thread.
+    const t = setTimeout(() => {
+      try {
+        const s = columnRelevance(dataset, target, { seed: 7 });
+        if (!cancelled) setScores(s);
+      } finally {
+        if (!cancelled) setBusy(false);
+      }
+    }, 0);
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
+  }, [dataset, target]);
+
+  const rows = useMemo(
+    () =>
+      Object.entries(scores)
+        .map(([col, s]) => ({ col, ...s }))
+        .sort((a, b) => b.relevance - a.relevance),
+    [scores],
+  );
+  // Low-variance but decision-relevant columns: exactly what a variance-based
+  // reduction (PCA, "keep the big components") would wrongly discard.
+  const atRisk = useMemo(
+    () => rows.filter((r) => r.relevance > 0.08 && r.variance < 0.5 / Math.max(rows.length, 1)),
+    [rows],
+  );
+
+  // Broadcast the dominant decision-relevant driver to the IDE-wide workspace
+  // panel (a preview, so not yet causally validated).
+  useEffect(() => {
+    const top = rows[0];
+    if (!top || top.relevance < 0.05 || !target) return;
+    emitWorkspaceFact({
+      id: `soft:relevance:${target}`,
+      label: `${target} turns on ${top.col}`,
+      surface: "soft",
+      validated: false,
+      detail: `decision-relevant drivers: ${rows
+        .slice(0, 3)
+        .map((r) => r.col)
+        .join(", ")}`,
+      createdAt: Date.now(),
+    });
+  }, [rows, target]);
+
+  useEffect(() => {
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  const light = resolved === "light";
+  const accent = light ? "#3760cc" : "#7aa2f7";
+  const warn = light ? "#ae6614" : "#ffb454";
+  const ink = light ? "#6b6a67" : "#a8a29e";
+  const grid = light ? "rgba(0,0,0,0.10)" : "rgba(255,255,255,0.12)";
+
+  const option = useMemo(
+    () => ({
+      animation: false,
+      grid: { left: 8, right: 12, top: 14, bottom: 30, containLabel: true },
+      tooltip: {
+        trigger: "item",
+        formatter: (p: { data: { name: string; value: [number, number] } }) =>
+          `${p.data.name}<br/>relevance ${(p.data.value[1] * 100).toFixed(0)}% · variance ${(p.data.value[0] * 100).toFixed(0)}%`,
+      },
+      xAxis: {
+        type: "value",
+        name: "input-variance share",
+        nameLocation: "middle",
+        nameGap: 20,
+        nameTextStyle: { color: ink, fontSize: 10 },
+        axisLabel: {
+          color: ink,
+          fontSize: 9,
+          formatter: (v: number) => `${(v * 100).toFixed(0)}%`,
+        },
+        axisLine: { lineStyle: { color: grid } },
+        splitLine: { show: false },
+      },
+      yAxis: {
+        type: "value",
+        name: "decision relevance",
+        nameGap: 8,
+        nameTextStyle: { color: ink, fontSize: 10 },
+        axisLabel: {
+          color: ink,
+          fontSize: 9,
+          formatter: (v: number) => `${(v * 100).toFixed(0)}%`,
+        },
+        axisLine: { lineStyle: { color: grid } },
+        splitLine: { lineStyle: { color: grid } },
+      },
+      series: [
+        {
+          type: "scatter",
+          symbolSize: 9,
+          data: rows.map((r) => ({
+            name: r.col,
+            value: [r.variance, r.relevance],
+            itemStyle: { color: r.relevance >= r.variance ? accent : warn, opacity: 0.85 },
+          })),
+          label: {
+            show: true,
+            position: "right",
+            fontSize: 8,
+            color: ink,
+            formatter: (p: { data: { name: string } }) => p.data.name,
+          },
+        },
+      ],
+    }),
+    [rows, accent, warn, ink, grid],
+  );
+
+  return (
+    <ChatModalBackdrop onDismiss={onClose}>
+      {/* biome-ignore lint/a11y/useKeyWithClickEvents: stopPropagation only; Escape is handled at the document level above. */}
+      <div
+        className="flex max-h-[86vh] w-full max-w-2xl flex-col overflow-hidden rounded-lg border border-border bg-bg shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <header className="flex shrink-0 items-center justify-between border-b border-border px-4 py-2.5">
+          <div>
+            <div className="font-mono text-[10px] uppercase tracking-wider text-fg-dim">
+              workspace preview · decision-relevant vs max-variance
+            </div>
+            <p className="mt-0.5 text-[11px] text-fg-mute">
+              Which columns a readout actually turns on, versus which merely carry the most
+              variance.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded border border-border px-2 py-0.5 font-mono text-[11px] text-fg-mute hover:border-primary hover:text-primary"
+          >
+            esc
+          </button>
+        </header>
+        <div className="min-h-0 flex-1 overflow-auto p-4">
+          <div className="mb-3 flex items-center gap-2">
+            <span className="font-mono text-[10px] uppercase tracking-wider text-fg-dim">
+              readout
+            </span>
+            <select
+              value={target}
+              onChange={(e) => setTarget(e.target.value)}
+              className="rounded border border-border bg-bg-2 px-2 py-1 font-mono text-[11px] text-fg"
+            >
+              {numeric.map((c) => (
+                <option key={c} value={c}>
+                  {c}
+                </option>
+              ))}
+            </select>
+            {busy && <span className="text-[10px] italic text-fg-dim">scoring…</span>}
+          </div>
+          <div style={{ height: 260 }}>
+            {rows.length > 0 && (
+              <ReactECharts
+                echarts={echarts}
+                option={option}
+                notMerge
+                lazyUpdate
+                style={{ height: "100%", width: "100%" }}
+              />
+            )}
+          </div>
+          <div className="mt-3 flex flex-col gap-2 text-[11px]">
+            <div>
+              <span
+                className="font-mono text-[9px] uppercase tracking-wider"
+                style={{ color: accent }}
+              >
+                decision-relevant
+              </span>{" "}
+              <span className="text-fg-mute">
+                {rows
+                  .filter((r) => r.relevance >= r.variance && r.relevance > 0.05)
+                  .slice(0, 6)
+                  .map((r) => r.col)
+                  .join(", ") || "none stand out"}
+              </span>
+            </div>
+            {atRisk.length > 0 && (
+              <div className="rounded border border-warn/40 bg-warn/10 px-2.5 py-1.5 text-fg-mute">
+                <span className="font-medium text-warn">Guardrail:</span>{" "}
+                {atRisk.map((r) => r.col).join(", ")} {atRisk.length === 1 ? "carries" : "carry"}{" "}
+                little variance but drive the readout. A variance-based reduction (PCA, "keep the
+                big components") would discard {atRisk.length === 1 ? "it" : "them"}.
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </ChatModalBackdrop>
   );
 }
 

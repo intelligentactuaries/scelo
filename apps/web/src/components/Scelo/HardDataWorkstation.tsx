@@ -24,7 +24,7 @@ import { BarChart, BoxplotChart, LineChart, ScatterChart } from "echarts/charts"
 import { GridComponent, TooltipComponent } from "echarts/components";
 import * as echarts from "echarts/core";
 import { CanvasRenderer, SVGRenderer } from "echarts/renderers";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import ReactFlow, {
   Background,
@@ -39,6 +39,8 @@ import ReactFlow, {
   useNodesState,
 } from "reactflow";
 import "reactflow/dist/style.css";
+import { emitWorkspaceFact } from "@/lib/workspaceFactsBus";
+import { useSwarmProbe } from "../SwarmStatus";
 import { SWARM_DOCS_URL, swarmStartCommand } from "../workspace/SwarmPanel";
 import { ChatInputPill } from "./ChatInputPill";
 import { ClimateDataPanel, isClimateFamilyModel } from "./ClimateDataPanel";
@@ -51,7 +53,6 @@ import { ScrollFade } from "./ScrollFade";
 import { type Dataset, formatNumber } from "./SoftDataWorkstation";
 import { StageChatPanel } from "./StageChatPanel";
 import { UploadIndicator, nextPaint } from "./UploadIndicator";
-import { useSwarmProbe } from "../SwarmStatus";
 import { type CouncilSynthesis, conveneCouncil } from "./forecast/councilClient";
 import { forecastConfigFor } from "./forecast/derive";
 import { hasForecastDomain } from "./forecast/domainLabels";
@@ -68,10 +69,27 @@ import {
   MODEL_BY_ID,
   type ModelFamily,
 } from "./modelCatalog";
-import { BRIDGED_MODEL_IDS, type RunResult, runModel, runModelAsync } from "./modelRunner";
+import {
+  BRIDGED_MODEL_IDS,
+  type RunResult,
+  detectFrequencyTarget,
+  detectMonetaryColumn,
+  runModel,
+  runModelAsync,
+} from "./modelRunner";
 import { modelTheoryFor } from "./modelTheory";
 import { type SelectedModel, useScelo } from "./sceloContext";
 import { useNodeChat } from "./useNodeChat";
+import {
+  type FairnessReadout,
+  type SelectivityRow,
+  type SwapResult,
+  type WorkspaceReport,
+  computeWorkspace,
+  numericColumns,
+  protectedReadout,
+} from "./workspace";
+import { WORKSPACE_DEMO_READOUTS, WORKSPACE_DEMO_REFLEXIVE } from "./workspaceSampleData";
 
 echarts.use([
   TooltipComponent,
@@ -1394,6 +1412,14 @@ function ResultDetailsPanel({
       .slice()
       .sort((a, b) => Math.abs(b.headline.value) - Math.abs(a.headline.value))[0];
   }, [doneRuns]);
+  // The workspace action is model-agnostic, so its default target is the most
+  // consequential completed run regardless of family (not gated on forecast).
+  const dominantDone = useMemo<RunResult | null>(() => {
+    if (doneRuns.length === 0) return null;
+    return doneRuns
+      .slice()
+      .sort((a, b) => Math.abs(b.headline.value) - Math.abs(a.headline.value))[0];
+  }, [doneRuns]);
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="border-b border-border px-3 py-1.5 font-mono text-[10px] uppercase tracking-wider text-fg-dim">
@@ -1429,6 +1455,8 @@ function ResultDetailsPanel({
             {isLifelibModel(focused.modelId) && (
               <LifelibNotebookCta modelId={focused.modelId} dataset={dataset} />
             )}
+            <WorkspaceValidateCta focused={focused} />
+            {focused.family === "pricing" && <FairnessAuditCta focused={focused} />}
             {hasForecastDomain(focused.family) &&
               focused.modelId !== "wmtr-projection" &&
               focused.modelId !== "wmtr-sensitivity" && <ForecastAttachCta focused={focused} />}
@@ -1453,6 +1481,15 @@ function ResultDetailsPanel({
                 Couldn't reach the model; using a local stitched-together fallback. Try rerun.
               </p>
             )}
+            {dominantDone && (
+              <>
+                <div className="mt-1 border-t border-border pt-2 font-mono text-[9px] uppercase tracking-wider text-fg-dim">
+                  workspace · on the dominant run
+                </div>
+                <WorkspaceValidateCta focused={dominantDone} />
+              </>
+            )}
+            <BlackboardCta doneRuns={doneRuns} />
             {defaultTarget && (
               <>
                 <div className="mt-1 border-t border-border pt-2 font-mono text-[9px] uppercase tracking-wider text-fg-dim">
@@ -1518,6 +1555,534 @@ function LifelibNotebookCta({
           <code>pd.read_csv(...)</code> on load.
         </div>
       )}
+    </div>
+  );
+}
+
+// ── WorkspaceValidateCta · per-result "validate workspace" meta-action ────
+//
+// The single most valuable borrow of the global-workspace method: rather than
+// only reporting a number, recover the model's decision-relevant subspace (the
+// active subspace of a differentiable surrogate over the drivers, relative to a
+// chosen readout), contrast it with PCA, and CERTIFY the named directions by
+// swap consistency and the selectivity double dissociation. Model-agnostic.
+
+function guessReadouts(dataset: Dataset): { readouts: string[]; reflexive?: string } {
+  const cols = new Set(dataset.columns);
+  if (WORKSPACE_DEMO_READOUTS.every((c) => cols.has(c))) {
+    return {
+      readouts: [...WORKSPACE_DEMO_READOUTS],
+      reflexive: cols.has(WORKSPACE_DEMO_REFLEXIVE) ? WORKSPACE_DEMO_REFLEXIVE : undefined,
+    };
+  }
+  const guess = detectMonetaryColumn(dataset) ?? detectFrequencyTarget(dataset);
+  const numeric = numericColumns(dataset);
+  return { readouts: guess ? [guess] : numeric.slice(-1) };
+}
+
+function pctStr(x: number): string {
+  return `${(100 * x).toFixed(x < 0.1 ? 1 : 0)}%`;
+}
+
+function WorkspaceValidateCta({ focused }: { focused: RunResult }) {
+  const { dataset, setRuns, logEvent } = useScelo();
+  const [report, setReport] = useState<WorkspaceReport | null>(
+    () => (focused.detail?.workspace as WorkspaceReport | undefined) ?? null,
+  );
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const numeric = useMemo(() => (dataset ? numericColumns(dataset) : []), [dataset]);
+  const guess = useMemo(
+    () => (dataset ? guessReadouts(dataset) : { readouts: [] as string[] }),
+    [dataset],
+  );
+  const [readout, setReadout] = useState<string>(() => guess.readouts[0] ?? "");
+  useEffect(() => {
+    setReadout(guess.readouts[0] ?? "");
+  }, [guess]);
+
+  const run = useCallback(async () => {
+    if (!dataset || !readout) return;
+    setBusy(true);
+    setError(null);
+    // Paint "extracting…" before the synchronous engine blocks the thread.
+    await nextPaint();
+    try {
+      // When the chosen readout is one of a detected multi-channel set, use them
+      // all (a richer workspace); otherwise the single chosen column.
+      const readouts =
+        guess.readouts.length > 1 && guess.readouts.includes(readout) ? guess.readouts : [readout];
+      const rep = computeWorkspace(dataset, {
+        readouts,
+        reflexiveReadout: guess.reflexive,
+        seed: 7,
+      });
+      setReport(rep);
+      // Persist the workspace onto the run so it survives reload and reaches the
+      // board pack and the model-detail diagnostics.
+      setRuns((prev) => {
+        const existing = prev[focused.modelId];
+        if (!existing) return prev;
+        return {
+          ...prev,
+          [focused.modelId]: {
+            ...existing,
+            detail: { ...(existing.detail ?? {}), workspace: rep },
+          },
+        };
+      });
+      logEvent({
+        stage: "hard",
+        kind: "workspace.validate",
+        payload: {
+          modelId: focused.modelId,
+          readout: rep.readout,
+          participationRatio: rep.participationRatio,
+          swapR2: rep.swap?.r2InBand ?? null,
+          directions: rep.directions.slice(0, 3).map((dir) => dir.name),
+        },
+      });
+      const top = rep.directions[0];
+      emitWorkspaceFact({
+        id: `hard:${focused.modelId}:workspace`,
+        label: `${MODEL_BY_ID.get(focused.modelId)?.name ?? focused.modelId}: ${top?.name ?? "mixed"}`,
+        surface: "hard",
+        validated: (rep.swap?.r2InBand ?? 0) > 0.8,
+        detail: `readout ${rep.readout} · PR ${rep.participationRatio.toFixed(2)} · swap R2 ${(rep.swap?.r2InBand ?? 0).toFixed(2)}`,
+        createdAt: Date.now(),
+      });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "workspace extraction failed");
+    } finally {
+      setBusy(false);
+    }
+  }, [dataset, readout, guess, focused.modelId, setRuns, logEvent]);
+
+  if (!dataset || numeric.length < 2) return null;
+
+  return (
+    <div className="rounded border border-border bg-bg-1 p-2.5">
+      <div className="font-mono text-[9px] uppercase tracking-wider text-fg-dim">
+        validate workspace · swap · ablate
+      </div>
+      <p className="mt-1 text-[11px] text-fg-mute">
+        Recover the decision-relevant subspace this result turns on, contrast it with PCA, and
+        certify the named directions by intervention.
+      </p>
+      <div className="mt-2 flex items-center gap-1.5">
+        <span className="font-mono text-[9px] uppercase tracking-wider text-fg-dim">readout</span>
+        <select
+          value={readout}
+          onChange={(e) => {
+            setReadout(e.target.value);
+            setReport(null);
+          }}
+          className="min-w-0 flex-1 rounded border border-border bg-bg px-1.5 py-1 font-mono text-[10px] text-fg"
+        >
+          {numeric.map((c) => (
+            <option key={c} value={c}>
+              {c}
+            </option>
+          ))}
+        </select>
+      </div>
+      <button
+        type="button"
+        onClick={run}
+        disabled={busy || !readout}
+        className="mt-2 inline-flex items-center gap-1.5 rounded border border-border bg-bg px-2.5 py-1 font-mono text-[10px] uppercase tracking-wider text-fg transition hover:border-fg-dim hover:text-fg disabled:opacity-50"
+      >
+        {busy ? "extracting…" : report ? "↻ re-run" : "◈ extract + validate"}
+      </button>
+      {error && <div className="mt-1.5 text-[10px] text-error">{error}</div>}
+      {report && <WorkspaceInline report={report} />}
+    </div>
+  );
+}
+
+function MiniStat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded border border-border bg-bg px-2 py-1">
+      <div className="font-mono text-[8px] uppercase text-fg-dim">{label}</div>
+      <div className="font-mono font-medium text-fg">{value}</div>
+    </div>
+  );
+}
+
+function WorkspaceInline({ report }: { report: WorkspaceReport }) {
+  const kEval = Math.min(3, report.reduction.length);
+  const red =
+    report.reduction.find((p) => p.k === kEval) ?? report.reduction[report.reduction.length - 1];
+  return (
+    <div className="mt-2.5 flex flex-col gap-2">
+      <div className="font-mono text-[9px] italic text-fg-dim">
+        decision-relevant for: <span className="text-fg-mute">{report.readout}</span>
+      </div>
+      <div className="grid grid-cols-2 gap-1 text-[10px]">
+        <MiniStat label="participation ratio" value={report.participationRatio.toFixed(2)} />
+        <MiniStat label="effective rank" value={String(report.rank)} />
+        <MiniStat label="input-variance share" value={pctStr(report.varianceFraction)} />
+        <MiniStat label="surrogate fit" value={pctStr(report.surrogateR2)} />
+      </div>
+
+      <div className="flex flex-col gap-1">
+        <div className="font-mono text-[9px] uppercase tracking-wider text-fg-dim">
+          workspace directions
+        </div>
+        {report.directions.slice(0, 3).map((d) => (
+          <div key={d.index} className="grid grid-cols-[1fr_36px] items-center gap-1.5 text-[10px]">
+            <div className="min-w-0">
+              <div className="truncate text-fg-mute">{d.name}</div>
+              <span className="mt-0.5 block h-1 overflow-hidden rounded-full bg-bg-2">
+                <span
+                  className="block h-full"
+                  style={{
+                    width: `${Math.max(2, d.sensitivityShare * 100)}%`,
+                    background: "rgb(var(--rgb-accent-2))",
+                  }}
+                />
+              </span>
+            </div>
+            <span className="text-right font-mono tabular-nums text-fg-mute">
+              {pctStr(d.sensitivityShare)}
+            </span>
+          </div>
+        ))}
+      </div>
+
+      {red && (
+        <div className="rounded border border-border bg-bg px-2 py-1.5 text-[10px] text-fg-mute">
+          {red.k} workspace {red.k === 1 ? "dim rebuilds" : "dims rebuild"}{" "}
+          <span className="font-medium text-fg">{pctStr(red.active)}</span> of the readout; {red.k}{" "}
+          PCA {red.k === 1 ? "dim rebuilds" : "dims rebuild"} only{" "}
+          <span className="font-medium text-fg">{pctStr(red.pca)}</span>.
+        </div>
+      )}
+
+      {report.swap && (
+        <div className="flex flex-col gap-1">
+          <div className="font-mono text-[9px] uppercase tracking-wider text-fg-dim">
+            swap consistency · R² {report.swap.r2InBand.toFixed(2)} in-band
+          </div>
+          <SwapScatter swap={report.swap} />
+          {Math.abs(report.swap.tailCurvature) > 0.05 && (
+            <div className="text-[9px] italic text-fg-dim">
+              First-order only: the prediction droops in the tail (curvature{" "}
+              {report.swap.tailCurvature.toFixed(2)}), exactly where capital is decided.
+            </div>
+          )}
+        </div>
+      )}
+
+      {report.selectivity && <SelectivityGrid rows={report.selectivity} />}
+    </div>
+  );
+}
+
+function SwapScatter({ swap }: { swap: SwapResult }) {
+  const { resolved } = useTheme();
+  const light = resolved === "light";
+  const ink = light ? "#6b6a67" : "#a8a29e";
+  const grid = light ? "rgba(0,0,0,0.10)" : "rgba(255,255,255,0.12)";
+  const accent = light ? "#3760cc" : "#7aa2f7";
+  const vals = swap.points.flatMap((p) => [p.predicted, p.realized]);
+  const lo = Math.min(...vals);
+  const hi = Math.max(...vals);
+  const option = {
+    animation: false,
+    grid: { left: 6, right: 8, top: 6, bottom: 18, containLabel: true },
+    xAxis: {
+      type: "value",
+      name: "predicted",
+      nameLocation: "middle",
+      nameGap: 16,
+      nameTextStyle: { color: ink, fontSize: 9 },
+      axisLabel: { color: ink, fontSize: 8 },
+      axisLine: { lineStyle: { color: grid } },
+      splitLine: { show: false },
+    },
+    yAxis: {
+      type: "value",
+      name: "realized",
+      nameGap: 4,
+      nameTextStyle: { color: ink, fontSize: 9 },
+      axisLabel: { color: ink, fontSize: 8 },
+      axisLine: { lineStyle: { color: grid } },
+      splitLine: { lineStyle: { color: grid } },
+    },
+    series: [
+      {
+        type: "line",
+        data: [
+          [lo, lo],
+          [hi, hi],
+        ],
+        showSymbol: false,
+        silent: true,
+        lineStyle: { type: "dashed", color: ink, width: 1 },
+      },
+      {
+        type: "scatter",
+        data: swap.points.map((p) => [p.predicted, p.realized]),
+        symbolSize: 5,
+        itemStyle: { color: accent, opacity: 0.75 },
+      },
+    ],
+  };
+  return (
+    <ReactECharts
+      echarts={echarts}
+      option={option}
+      notMerge
+      lazyUpdate
+      style={{ height: 130, width: "100%" }}
+    />
+  );
+}
+
+function SelectivityGrid({ rows }: { rows: SelectivityRow[] }) {
+  const cell = (v: number) => (
+    <span
+      className="font-mono tabular-nums"
+      style={{
+        color:
+          v < 0.3
+            ? "rgb(var(--rgb-error))"
+            : v > 0.7
+              ? "rgb(var(--rgb-primary))"
+              : "rgb(var(--rgb-warn))",
+      }}
+    >
+      {(v * 100).toFixed(0)}%
+    </span>
+  );
+  return (
+    <div className="flex flex-col gap-1">
+      <div className="font-mono text-[9px] uppercase tracking-wider text-fg-dim">
+        selectivity · capability retained after ablation
+      </div>
+      <div className="grid grid-cols-[68px_1fr_1fr_1fr] items-center gap-x-1 gap-y-0.5 text-[10px]">
+        <span />
+        <span className="text-center font-mono text-[8px] uppercase text-fg-dim">workspace</span>
+        <span className="text-center font-mono text-[8px] uppercase text-fg-dim">level</span>
+        <span className="text-center font-mono text-[8px] uppercase text-fg-dim">control</span>
+        {rows.map((r) => (
+          <Fragment key={r.readout}>
+            <span className="text-fg-mute">{r.readout}</span>
+            <span className="text-center">{cell(r.workspace)}</span>
+            <span className="text-center">{cell(r.level)}</span>
+            <span className="text-center">{cell(r.nuisance)}</span>
+          </Fragment>
+        ))}
+      </div>
+      <div className="text-[9px] italic text-fg-dim">
+        Ablating the workspace destroys the flexible output while sparing the reflexive level; the
+        control harms neither.
+      </div>
+    </div>
+  );
+}
+
+// ── FairnessAuditCta · protected-direction (indirect-discrimination) audit ─
+//
+// For pricing results: reads the model's sensitivity onto the protected
+// direction (the share of non-legitimate variation aligned with a protected
+// attribute, visible even when the attribute is not an input), then residualises
+// the proxy against it and reports the disparity before and after (Case C).
+
+function FairnessAuditCta({ focused: _focused }: { focused: RunResult }) {
+  const { dataset } = useScelo();
+  const numeric = useMemo(() => (dataset ? numericColumns(dataset) : []), [dataset]);
+  const [protectedCol, setProtectedCol] = useState("");
+  const [targetCol, setTargetCol] = useState("");
+  const [legitCol, setLegitCol] = useState("");
+  const [audit, setAudit] = useState<FairnessReadout | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (numeric.length >= 3) {
+      setProtectedCol((p) => p || numeric[0]);
+      setLegitCol((l) => l || numeric[1]);
+      setTargetCol((t) => t || numeric[numeric.length - 1]);
+    }
+  }, [numeric]);
+
+  const run = useCallback(async () => {
+    if (!dataset || !protectedCol || !targetCol || !legitCol) return;
+    setBusy(true);
+    setError(null);
+    await nextPaint();
+    try {
+      const proxies = numeric.filter((c) => c !== protectedCol && c !== targetCol);
+      const a = protectedReadout({
+        rows: dataset.rows,
+        protectedCol,
+        targetCol,
+        legitimateCols: [legitCol],
+        proxyCols: proxies,
+      });
+      setAudit(a);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "fairness audit failed");
+    } finally {
+      setBusy(false);
+    }
+  }, [dataset, protectedCol, targetCol, legitCol, numeric]);
+
+  if (!dataset || numeric.length < 3) return null;
+
+  const pick = (label: string, value: string, set: (v: string) => void, cols: string[]) => (
+    <label className="flex items-center gap-1.5">
+      <span className="w-14 shrink-0 font-mono text-[9px] uppercase tracking-wider text-fg-dim">
+        {label}
+      </span>
+      <select
+        value={value}
+        onChange={(e) => {
+          set(e.target.value);
+          setAudit(null);
+        }}
+        className="min-w-0 flex-1 rounded border border-border bg-bg px-1.5 py-0.5 font-mono text-[10px] text-fg"
+      >
+        {cols.map((c) => (
+          <option key={c} value={c}>
+            {c}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+
+  return (
+    <div className="rounded border border-border bg-bg-1 p-2.5">
+      <div className="font-mono text-[9px] uppercase tracking-wider text-fg-dim">
+        fairness audit · protected-direction readout
+      </div>
+      <p className="mt-1 text-[11px] text-fg-mute">
+        Surface a protected attribute laundered through a proxy, then residualise it out and measure
+        the disparity before and after.
+      </p>
+      <div className="mt-2 flex flex-col gap-1">
+        {pick("protected", protectedCol, setProtectedCol, numeric)}
+        {pick("legitimate", legitCol, setLegitCol, numeric)}
+        {pick("target", targetCol, setTargetCol, numeric)}
+      </div>
+      <button
+        type="button"
+        onClick={run}
+        disabled={busy}
+        className="mt-2 inline-flex items-center gap-1.5 rounded border border-border bg-bg px-2.5 py-1 font-mono text-[10px] uppercase tracking-wider text-fg transition hover:border-fg-dim hover:text-fg disabled:opacity-50"
+      >
+        {busy ? "auditing…" : audit ? "↻ re-run" : "◈ run audit"}
+      </button>
+      {error && <div className="mt-1.5 text-[10px] text-error">{error}</div>}
+      {audit && (
+        <div className="mt-2.5 grid grid-cols-[80px_1fr_1fr] gap-x-1 gap-y-0.5 text-[10px]">
+          <span />
+          <span className="text-center font-mono text-[8px] uppercase text-fg-dim">before</span>
+          <span className="text-center font-mono text-[8px] uppercase text-fg-dim">after</span>
+          <span className="text-fg-mute">protected share</span>
+          <span className="text-center font-mono tabular-nums text-error">
+            {pctStr(audit.alignmentBefore)}
+          </span>
+          <span className="text-center font-mono tabular-nums text-primary">
+            {pctStr(audit.alignmentAfter)}
+          </span>
+          <span className="text-fg-mute">group gap</span>
+          <span className="text-center font-mono tabular-nums text-fg">
+            {audit.disparityBefore.toFixed(2)}
+          </span>
+          <span className="text-center font-mono tabular-nums text-fg">
+            {audit.disparityAfter.toFixed(2)}
+          </span>
+          <span className="text-fg-mute">fair-target fit</span>
+          <span className="text-center font-mono tabular-nums text-fg">
+            {pctStr(audit.fitBefore)}
+          </span>
+          <span className="text-center font-mono tabular-nums text-fg">
+            {pctStr(audit.fitAfter)}
+          </span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── BlackboardCta · the Scelo-native global-workspace blackboard ──────────
+//
+// The Swarm's coordination idea, server-free: every completed result is a
+// specialist posting a claim; the most salient (validated workspace first,
+// then any workspace, then the rest) "ignite" into a capacity-limited shared
+// workspace and broadcast to the IDE-wide facts panel.
+
+function BlackboardCta({ doneRuns }: { doneRuns: RunResult[] }) {
+  const CAP = 7; // the global workspace is small on purpose (GWT ceiling)
+  const [broadcast, setBroadcast] = useState(false);
+  const claims = useMemo(() => {
+    const scored = doneRuns.map((r) => {
+      const ws = (r.detail as { workspace?: WorkspaceReport } | undefined)?.workspace;
+      const validated = ws?.swap ? ws.swap.r2InBand > 0.8 : false;
+      const rank = (validated ? 2 : 0) + (ws ? 1 : 0);
+      return { r, ws, validated, rank };
+    });
+    return scored.sort((a, b) => b.rank - a.rank).slice(0, CAP);
+  }, [doneRuns]);
+
+  const convene = () => {
+    for (const c of claims) {
+      const dir = c.ws?.directions[0]?.name;
+      emitWorkspaceFact({
+        id: `swarm:blackboard:${c.r.modelId}`,
+        label: `${MODEL_BY_ID.get(c.r.modelId)?.name ?? c.r.modelId}: ${c.r.headline.label} = ${formatHeadline(c.r.headline)}${dir ? ` · ${dir}` : ""}`,
+        surface: "swarm",
+        validated: c.validated,
+        detail: c.ws
+          ? `workspace PR ${c.ws.participationRatio.toFixed(2)}${c.ws.swap ? `, swap R² ${c.ws.swap.r2InBand.toFixed(2)}` : ""}`
+          : c.r.blurb,
+        createdAt: Date.now(),
+      });
+    }
+    setBroadcast(true);
+  };
+
+  if (doneRuns.length < 2) return null;
+  return (
+    <div className="rounded border border-border bg-bg-1 p-2.5">
+      <div className="font-mono text-[9px] uppercase tracking-wider text-fg-dim">
+        blackboard · global workspace across results
+      </div>
+      <p className="mt-1 text-[11px] text-fg-mute">
+        Convene every result as a specialist; the most salient claims ignite into a capacity-limited
+        shared workspace ({claims.length} of {doneRuns.length}) and broadcast to the facts panel.
+      </p>
+      <ul className="mt-2 flex flex-col gap-1">
+        {claims.map((c) => (
+          <li key={c.r.modelId} className="flex items-baseline justify-between gap-2 text-[10px]">
+            <span className="min-w-0 truncate text-fg">
+              {MODEL_BY_ID.get(c.r.modelId)?.name ?? c.r.modelId}
+              {c.ws?.directions[0] && (
+                <span className="text-fg-mute"> · {c.ws.directions[0].name}</span>
+              )}
+            </span>
+            <span
+              className="shrink-0 font-mono"
+              style={{
+                color: c.validated ? "rgb(var(--rgb-primary))" : "rgb(var(--rgb-fg-dim))",
+              }}
+            >
+              {c.validated ? "● validated" : c.ws ? "◐ workspace" : "○ claim"}
+            </span>
+          </li>
+        ))}
+      </ul>
+      <button
+        type="button"
+        onClick={convene}
+        className="mt-2 inline-flex items-center gap-1.5 rounded border border-border bg-bg px-2.5 py-1 font-mono text-[10px] uppercase tracking-wider text-fg transition hover:border-fg-dim hover:text-fg"
+      >
+        {broadcast ? "✓ broadcast" : "◉ convene + broadcast"}
+      </button>
     </div>
   );
 }
@@ -1702,7 +2267,22 @@ function CouncilAttachCta({ focused }: { focused: RunResult }) {
       skipSociety,
       onStart: (id) => setProgressId(id),
     })
-      .then((s) => setSynth(s))
+      .then((s) => {
+        setSynth(s);
+        // The council's dominant coalition "ignites" into the global workspace
+        // and is broadcast to the IDE-wide facts panel.
+        const iv = s.dominantIntervention;
+        emitWorkspaceFact({
+          id: `swarm:council:${focused.modelId}`,
+          label: `Council: ${s.trustPct}% trust on ${labelName}${
+            iv ? ` · ${iv.direction === "increase" ? "↑" : "↓"} ${iv.param}` : ""
+          }`,
+          surface: "swarm",
+          validated: s.trustPct > s.distrustPct,
+          detail: `${s.trustPct}% trust · ${s.distrustPct}% distrust · ${s.uncertainPct}% uncertain across ${s.total} agents`,
+          createdAt: Date.now(),
+        });
+      })
       .catch((e) => setError(e instanceof Error ? e.message : "council failed"))
       .finally(() => setBusy(false));
   }, [focused, dataset, subset, skipSociety]);
@@ -1855,6 +2435,9 @@ function CouncilAttachCta({ focused }: { focused: RunResult }) {
 function CouncilSynthesisCard({ synth }: { synth: CouncilSynthesis }) {
   return (
     <div className="mt-2 flex flex-col gap-1.5">
+      <div className="font-mono text-[8px] uppercase tracking-wider text-fg-dim">
+        ignited coalition · broadcast across {synth.total} agents
+      </div>
       <div className="grid grid-cols-3 gap-1 text-[10px]">
         <div className="rounded border border-border bg-bg px-2 py-1">
           <div className="font-mono text-[8px] uppercase text-fg-dim">trust</div>
@@ -2806,6 +3389,71 @@ function ReportPreviewModal({
               )}
             </section>
 
+            {done.some((r) => (r.detail as { workspace?: unknown } | undefined)?.workspace) && (
+              <section className="mb-6">
+                <h2
+                  data-print-muted
+                  className="mb-2 font-mono text-[10px] uppercase tracking-wider text-fg-dim"
+                >
+                  workspace validation
+                </h2>
+                <p data-print-muted className="mb-3 text-[11px] italic text-fg-dim">
+                  The decision-relevant, causally-validated directions each model turns on: the
+                  small object a validator audits instead of the weights (Solvency II use test; IFRS
+                  17 movement narrative).
+                </p>
+                <ul className="flex flex-col gap-3">
+                  {done
+                    .map((r) => ({
+                      r,
+                      w: (r.detail as { workspace?: WorkspaceReport } | undefined)?.workspace,
+                    }))
+                    .filter((x): x is { r: RunResult; w: WorkspaceReport } => Boolean(x.w))
+                    .map(({ r, w }) => {
+                      const meta = MODEL_BY_ID.get(r.modelId);
+                      const flex = w.selectivity?.find((s) => s.readout === "flexible");
+                      const refl = w.selectivity?.find((s) => s.readout === "reflexive");
+                      return (
+                        <li
+                          key={r.modelId}
+                          data-print-card
+                          className="rounded border border-border p-3"
+                        >
+                          <div className="flex items-baseline justify-between gap-3">
+                            <div className="text-sm text-fg">{meta?.name ?? r.modelId}</div>
+                            <div data-print-muted className="font-mono text-[10px] text-fg-dim">
+                              readout: {w.readout} · PR {w.participationRatio.toFixed(2)}
+                              {w.swap ? ` · swap R² ${w.swap.r2InBand.toFixed(2)}` : ""}
+                            </div>
+                          </div>
+                          <ul className="mt-2 flex flex-col gap-1 font-mono text-[11px]">
+                            {w.directions.slice(0, 3).map((d) => (
+                              <li
+                                key={d.index}
+                                className="flex items-baseline justify-between gap-2"
+                              >
+                                <span className="text-fg">{d.name}</span>
+                                <span data-print-muted className="text-fg-dim">
+                                  {(d.sensitivityShare * 100).toFixed(0)}% sensitivity ·{" "}
+                                  {(d.varianceShare * 100).toFixed(1)}% variance
+                                </span>
+                              </li>
+                            ))}
+                          </ul>
+                          {flex && refl && (
+                            <div data-print-muted className="mt-2 text-[10px] text-fg-dim">
+                              Selective: ablating the workspace retains{" "}
+                              {(flex.workspace * 100).toFixed(0)}% of the flexible output while
+                              sparing the reflexive level ({(refl.workspace * 100).toFixed(0)}%).
+                            </div>
+                          )}
+                        </li>
+                      );
+                    })}
+                </ul>
+              </section>
+            )}
+
             <footer
               data-print-muted
               className="mt-8 border-t border-border pt-3 font-mono text-[10px] uppercase tracking-wider text-fg-dim"
@@ -3029,6 +3677,12 @@ function ModelDiagnostics({ run, color }: { run: RunResult; color: string }) {
         No diagnostic blob produced — runner returned status `{run.status}`.
       </p>
     );
+  }
+
+  // A validated workspace (from the "validate workspace" action) renders its
+  // spectra, swap consistency, and selectivity inline.
+  if (d.workspace && typeof d.workspace === "object") {
+    return <WorkspaceInline report={d.workspace as WorkspaceReport} />;
   }
 
   // Chain-ladder / Mack / Bootstrap all carry ATA factors → render as a
