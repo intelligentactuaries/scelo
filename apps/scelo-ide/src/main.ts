@@ -25,7 +25,7 @@ import {
 import log from "electron-log/main";
 import { autoUpdater } from "electron-updater";
 import { type ChildProcess, execFileSync, spawn } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { cp, mkdir, open, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { join, normalize, sep } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -120,6 +120,18 @@ function rBinary(): string | null {
     : isMac
       ? join(root, "Resources", "bin", "R")
       : join(root, "bin", "R");
+  return existsSync(candidate) ? candidate : null;
+}
+
+/** Path to the bundled Rscript front-end (the non-interactive runner).
+ *  Used on Windows to run R scripts from a temp file — see execRScript(). */
+function rscriptBinary(): string | null {
+  const root = join(resourceDir(), "runtime", "r");
+  const candidate = isWin
+    ? join(root, "bin", "Rscript.exe")
+    : isMac
+      ? join(root, "Resources", "bin", "Rscript")
+      : join(root, "bin", "Rscript");
   return existsSync(candidate) ? candidate : null;
 }
 
@@ -520,11 +532,89 @@ function execRuntime(
   });
 }
 
+/** Run an R script and buffer its output (drop-in for execRuntime for R).
+ *
+ *  macOS/Linux: unchanged — `R [--vanilla] -e <script> [--args …]` (the shell
+ *  wrapper execs the interpreter cleanly). **Windows:** the `R.exe` front-end
+ *  silently mangles any multi-line / quoted `-e` payload — it drops into an
+ *  interactive Rterm and never runs the script (banner-only stdout, exit 0
+ *  or non-zero) — so we write the script to a temp `.R` file and run it with
+ *  `Rscript.exe`, the only invocation that survives Windows argument handling.
+ *  Trailing `args` reach the script as commandArgs(trailingOnly = TRUE) on
+ *  both paths. */
+function execRScript(
+  script: string,
+  opts: {
+    args?: string[];
+    vanilla?: boolean;
+    slave?: boolean;
+    stdin?: string;
+    env?: NodeJS.ProcessEnv;
+    cwd?: string;
+  } = {},
+): Promise<ExecResult> {
+  return new Promise((resolve) => {
+    const args = opts.args ?? [];
+    const flags = [
+      ...(opts.vanilla ? ["--vanilla"] : []),
+      ...(opts.slave ? ["--slave"] : []),
+    ];
+    let bin: string | null;
+    let argv: string[] = [];
+    let cleanup = (): void => {};
+    if (isWin) {
+      bin = rscriptBinary();
+      if (bin) {
+        const dir = mkdtempSync(join(app.getPath("temp"), "scelo-r-"));
+        const file = join(dir, "script.R");
+        writeFileSync(file, script, "utf8");
+        argv = [...flags, file, ...args];
+        cleanup = () => {
+          try {
+            rmSync(dir, { recursive: true, force: true });
+          } catch {
+            /* best effort — temp dir */
+          }
+        };
+      }
+    } else {
+      bin = rBinary();
+      argv = [...flags, "-e", script, ...(args.length ? ["--args", ...args] : [])];
+    }
+    if (!bin) {
+      resolve({ ok: false, stdout: "", stderr: "bundled r runtime not installed", exitCode: null });
+      return;
+    }
+    const child = spawn(bin, argv, { env: opts.env ?? process.env, cwd: opts.cwd });
+    let stdout = "";
+    let stderr = "";
+    guardStdin(child, (err) => {
+      stderr += `[stdin] ${String(err)}\n`;
+    });
+    child.stdout.on("data", (chunk) => (stdout += chunk.toString()));
+    child.stderr.on("data", (chunk) => (stderr += chunk.toString()));
+    const finish = (res: ExecResult) => {
+      cleanup();
+      resolve(res);
+    };
+    child.on("close", (code) => finish({ ok: code === 0, stdout, stderr, exitCode: code }));
+    child.on("error", (err) =>
+      finish({ ok: false, stdout, stderr: stderr + String(err), exitCode: null }),
+    );
+    if (opts.stdin !== undefined && child.stdin) {
+      child.stdin.write(opts.stdin);
+      child.stdin.end();
+    }
+  });
+}
+
 ipcMain.handle("scelo:runPython", (_event, req: ExecRequest) =>
   execRuntime(pythonBinary(), "-c", req),
 );
 
-ipcMain.handle("scelo:runR", (_event, req: ExecRequest) => execRuntime(rBinary(), "-e", req));
+ipcMain.handle("scelo:runR", (_event, req: ExecRequest) =>
+  execRScript(req.script, { args: req.argv, stdin: req.stdin }),
+);
 
 // ─── LLM bridge ─────────────────────────────────────────────────────────
 //
@@ -1092,14 +1182,35 @@ ipcMain.handle(
   ): { sessionId: string } | { error: string } => {
     let binary: string | null = null;
     let argv: string[] = [];
+    // Set when the R script was staged to a temp file (Windows path below);
+    // invoked once the child exits so we don't leak temp dirs.
+    let rTempCleanup: (() => void) | null = null;
     if (req.runtime === "python") {
       binary = pythonBinary();
       if (!binary) return { error: "bundled python runtime not installed" };
       argv = ["-c", req.script ?? "", ...(req.argv ?? [])];
     } else if (req.runtime === "r") {
-      binary = rBinary();
-      if (!binary) return { error: "bundled r runtime not installed" };
-      argv = ["-e", req.script ?? "", ...(req.argv ?? [])];
+      // `R.exe -e <script>` is mangled on Windows (see execRScript): on Windows
+      // run the script from a temp .R file via Rscript; keep `R -e` elsewhere.
+      if (isWin) {
+        binary = rscriptBinary();
+        if (!binary) return { error: "bundled r runtime not installed" };
+        const dir = mkdtempSync(join(app.getPath("temp"), "scelo-r-"));
+        const file = join(dir, "script.R");
+        writeFileSync(file, req.script ?? "", "utf8");
+        argv = [file, ...(req.argv ?? [])];
+        rTempCleanup = () => {
+          try {
+            rmSync(dir, { recursive: true, force: true });
+          } catch {
+            /* best effort — temp dir */
+          }
+        };
+      } else {
+        binary = rBinary();
+        if (!binary) return { error: "bundled r runtime not installed" };
+        argv = ["-e", req.script ?? "", ...(req.argv ?? [])];
+      }
     } else if (req.runtime === "shell") {
       // Real PTY when node-pty loaded, falling back to spawn otherwise.
       // PTY path enables full readline / curses (ipython, R interactive
@@ -1191,12 +1302,14 @@ ipcMain.handle(
     });
     child.on("close", (code) => {
       _execSessions.delete(sessionId);
+      rTempCleanup?.();
       if (!wc.isDestroyed()) {
         wc.send("scelo:exec:end", { sessionId, exitCode: code, error: null });
       }
     });
     child.on("error", (err) => {
       _execSessions.delete(sessionId);
+      rTempCleanup?.();
       if (!wc.isDestroyed()) {
         wc.send("scelo:exec:end", { sessionId, exitCode: null, error: String(err) });
       }
@@ -1893,29 +2006,18 @@ ipcMain.handle("scelo:tests:discover", async (event): Promise<DiscoverResult> =>
   // testthat discovery : the standard layout is tests/testthat/test-*.R.
   // We list those files directly; running a file invokes its test_that()
   // calls together.
-  const r = rBinary();
-  if (r) {
-    await new Promise<void>((resolve) => {
-      const child = spawn(
-        r,
-        [
-          "--vanilla",
-          "--slave",
-          "-e",
-          'cat(list.files("tests/testthat", pattern="test-.*\\\\.R$", full.names=TRUE), sep="\\n")',
-        ],
-        { cwd: ws, env: process.env },
-      );
-      let stdout = "";
-      child.stdout.on("data", (c) => {
-        stdout += c.toString();
-      });
-      child.on("error", (err) => errors.push({ framework: "testthat", message: String(err) }));
-      child.on("close", () => {
-        tests.push(..._parseTestthatFiles(stdout));
-        resolve();
-      });
-    });
+  // `R.exe -e <script>` is mangled on Windows (see execRScript); execRScript
+  // runs the discovery script from a temp file via Rscript there, `R -e` else.
+  const rAvailable = isWin ? rscriptBinary() : rBinary();
+  if (rAvailable) {
+    const rres = await execRScript(
+      'cat(list.files("tests/testthat", pattern="test-.*\\\\.R$", full.names=TRUE), sep="\\n")',
+      { vanilla: true, slave: true, cwd: ws },
+    );
+    tests.push(..._parseTestthatFiles(rres.stdout));
+    if (rres.exitCode !== 0 && rres.stderr) {
+      errors.push({ framework: "testthat", message: rres.stderr.slice(0, 200) });
+    }
   } else {
     errors.push({ framework: "testthat", message: "bundled R runtime missing" });
   }
@@ -2808,23 +2910,13 @@ ipcMain.handle("scelo:fs:lintR", async (event, rel: string) => {
         note: "bundled R not installed; skipping lint",
       };
     }
-    const res = await new Promise<{ stdout: string; stderr: string; exitCode: number | null }>(
-      (resolve) => {
-        const child = spawn(r, ["--vanilla", "-e", R_LINT_SCRIPT, "--args", abs], {
-          env: _augmentedEnv(),
-        });
-        let stdout = "";
-        let stderr = "";
-        child.stdout?.on("data", (c: Buffer) => {
-          stdout += c.toString();
-        });
-        child.stderr?.on("data", (c: Buffer) => {
-          stderr += c.toString();
-        });
-        child.on("close", (code) => resolve({ stdout, stderr, exitCode: code }));
-        child.on("error", (e) => resolve({ stdout, stderr: String(e), exitCode: null }));
-      },
-    );
+    // `R.exe -e <R_LINT_SCRIPT>` is mangled on Windows (see execRScript); run
+    // the lint script from a temp file via Rscript there, `R -e` elsewhere.
+    const res = await execRScript(R_LINT_SCRIPT, {
+      vanilla: true,
+      args: [abs],
+      env: _augmentedEnv(),
+    });
     try {
       const parsed = JSON.parse(res.stdout.trim() || "[]") as RLintDiagnostic[] | { error: string };
       if (!Array.isArray(parsed)) {
@@ -3157,7 +3249,7 @@ ipcMain.handle("scelo:secrets:status", () => ({
 
 ipcMain.handle("scelo:stackProbe", async () => {
   const py = await execRuntime(pythonBinary(), "-c", { script: PY_STACK_PROBE });
-  const r = await execRuntime(rBinary(), "-e", { script: R_STACK_PROBE });
+  const r = await execRScript(R_STACK_PROBE);
   function parse(stdout: string): unknown {
     try {
       return JSON.parse(stdout.trim());
@@ -3181,9 +3273,49 @@ ipcMain.handle("scelo:stackProbe", async () => {
 // unsigned macOS builds also short-circuit. Linux AppImage updates work
 // without signing, and Windows nsis builds work without an EV cert but
 // SmartScreen will complain.
+/** Best-effort: is this packaged build code-signed? An unsigned build's
+ *  autoUpdater just errors against the (private, auth-gated) GitHub release
+ *  feed on every launch, so we skip update polling when unsigned — honouring
+ *  the "signed only" contract above. Linux AppImages self-update without
+ *  signing, so they're always treated as eligible. The check is a one-shot
+ *  at startup; any failure is treated as "unsigned" (fail safe → skip). */
+function isCodeSigned(): boolean {
+  try {
+    if (isWin) {
+      const p = process.execPath.replace(/'/g, "''");
+      const status = execFileSync(
+        "powershell.exe",
+        [
+          "-NoProfile",
+          "-NonInteractive",
+          "-Command",
+          `(Get-AuthenticodeSignature -LiteralPath '${p}').Status`,
+        ],
+        { encoding: "utf8", timeout: 8000, windowsHide: true },
+      );
+      return status.trim() === "Valid";
+    }
+    if (isMac) {
+      // codesign exits 0 only when the bundle has a valid signature.
+      execFileSync("codesign", ["--verify", "--strict", process.execPath], { timeout: 8000 });
+      return true;
+    }
+    return true; // Linux AppImage updates don't require signing
+  } catch {
+    return false;
+  }
+}
+
 function maybeScheduleUpdateCheck(): void {
   if (!app.isPackaged) {
     log.info("autoUpdater: skipped (not packaged)");
+    return;
+  }
+  // Unsigned builds have no usable release feed (the private GitHub releases
+  // 404 for unauthenticated clients), so the updater only throws on launch —
+  // skip it entirely unless this build is actually code-signed.
+  if (!isCodeSigned()) {
+    log.info("autoUpdater: skipped (unsigned build)");
     return;
   }
   // Apply the user's selected channel before the first check.
