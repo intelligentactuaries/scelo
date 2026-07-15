@@ -5,7 +5,7 @@ board-pack-ready results in one place, with a bundled Python and R runtime, the
 actuarial stack (lifelib, chainladder, climada, and more), and AI co-pilots
 scoped to each stage of the work. It runs **fully offline** once installed.
 
-![The Scelo pipeline — Soft Data → Tools → Hard Data](assets/img/pipeline-macro.png){ .shadow }
+<div class="scelo-demo" data-scelo-demo="macro"><p class="sd-fallback">The Scelo macro canvas: Soft Data, Tools and Hard Data as three wired stage cards. The animated illustration needs JavaScript.</p></div>
 
 <div class="grid cards" markdown>
 

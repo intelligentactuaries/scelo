@@ -3,7 +3,7 @@
 The readout desk. Scelo runs every selected model and lays the results out on a
 canvas, with a board pack you can print and a bridge to the swarm.
 
-![Hard Data — result nodes on the canvas with a board-pack hub](../assets/img/hard-data.png){ .shadow }
+<div class="scelo-demo" data-scelo-demo="hard"><p class="sd-fallback">The Hard Data workstation: result nodes on the canvas with a board-pack hub. The animated illustration needs JavaScript.</p></div>
 
 ## The results canvas
 

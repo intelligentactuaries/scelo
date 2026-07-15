@@ -1,0 +1,1890 @@
+/* ===========================================================================
+   Scelo demos — the animated stand-ins for the pipeline screenshots.
+
+   A hand-port of the /scelo marketing demos (website_v2, React + Tailwind)
+   into plain CSS, so the docs carry no build step and no React runtime.
+   The React originals are the design source of truth; see
+   website_v2/src/components/scelo/ in the intelligentactuaries monorepo.
+
+   Two things this buys over the PNGs it replaced:
+
+     - It follows the palette toggle. The screenshots were dark-only and
+       sat wrong on the cream default; everything below is written against
+       the --ia-* vars in extra.css, so both schemes are truthful. The
+       product really does have a light and a dark mode.
+     - It weighs ~12KB instead of ~1.2MB.
+
+   Sizing is deliberately tiny (8.5px–13px). These are scale models of a
+   desktop workbench squeezed into a docs column, and the type has to hold
+   the same proportions as the real chrome or the mock stops reading as
+   the product.
+
+   THREE THINGS THAT WILL BITE YOU HERE, all learned the hard way:
+
+     1. NO rem. Material sets `html { font-size: 125% }`, so 1rem is 20px
+        here against Tailwind's 16px. Porting the React sizes as rem
+        inflated every width and gap by 25%, which starved the canvas
+        (model nodes got 120px instead of 233px). Geometry is in px so it
+        means the same thing on both surfaces.
+     2. Don't put `font-size` in the `.md-typeset` reset below. It outranks
+        the `.scelo-demo .sd-*` classes and silently renders everything at
+        docs body size. See the note on the reset.
+     3. Layout switches on a CONTAINER query, not a viewport one: the docs
+        column is ~688px on a 1440px screen, so a viewport breakpoint puts
+        every demo in its stacked phone layout on desktop.
+   =========================================================================== */
+
+.scelo-demo {
+  container-type: inline-size;
+  margin: 22.4px 0 28.8px;
+}
+
+/* The no-JS floor. Each host ships a one-line description of the figure it
+   would have drawn, and boot() clears it on mount. Without this a reader
+   with JS off gets nothing at all where a screenshot used to be. */
+.md-typeset .scelo-demo .sd-fallback {
+  margin: 0;
+  border: 1px solid var(--ia-border);
+  border-left: 2px solid var(--ia-warn);
+  border-radius: 4px;
+  padding: 12px 16px;
+  font-size: 0.72rem;
+  color: var(--ia-fg-mute);
+}
+
+/* Material styles bare elements inside .md-typeset. Everything we draw is
+   classed, which dodges its `:not([class])` selectors, but p/pre/table
+   still pick up its block margins, so flatten those.
+
+   Reset MARGIN ONLY. An earlier cut also set `font-size: inherit` here,
+   which outranked every `.scelo-demo .sd-*` size rule below it (0,2,1
+   beats 0,2,0) and silently rendered every reply and caption at the docs
+   body size. Sizes belong to the classes; don't reintroduce them here. */
+.md-typeset .scelo-demo p,
+.md-typeset .scelo-demo pre,
+.md-typeset .scelo-demo table {
+  margin: 0;
+}
+
+.md-typeset .scelo-demo pre {
+  padding: 0;
+  background: none;
+  border-radius: 0;
+}
+
+.md-typeset .scelo-demo button {
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.scelo-demo .sd-mono {
+  font-family: var(--md-code-font-family, "JetBrains Mono", monospace);
+}
+
+/* ── the window ────────────────────────────────────────────────────────
+   Scelo is not a mac-styled app: the title is centred and the controls
+   sit RIGHT. No traffic lights. */
+
+.scelo-demo .sd-window {
+  overflow: hidden;
+  border: 1px solid var(--ia-border);
+  border-radius: 10px;
+  background: var(--ia-bg);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.18);
+  opacity: 0;
+  transform: scale(0.985);
+  transition:
+    opacity 700ms cubic-bezier(0.16, 1, 0.3, 1),
+    transform 700ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+[data-md-color-scheme="slate"] .scelo-demo .sd-window {
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.5);
+}
+
+.scelo-demo .sd-window.sd-booted {
+  opacity: 1;
+  transform: none;
+}
+
+.scelo-demo .sd-titlebar {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6.4px 9.6px;
+  border-bottom: 1px solid var(--ia-border);
+  background: var(--ia-bg-1);
+}
+
+.scelo-demo .sd-titlebar span {
+  font-size: 11px;
+  color: var(--ia-fg-mute);
+}
+
+.scelo-demo .sd-wincontrols {
+  position: absolute;
+  right: 6.4px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--ia-fg-dim);
+}
+
+.scelo-demo .sd-backstrip {
+  padding: 4.8px 9.6px;
+  border-bottom: 1px solid var(--ia-border);
+  background: var(--ia-bg);
+  font-size: 10.5px;
+  color: var(--ia-fg-dim);
+}
+
+/* ── stage header ─────────────────────────────────────────────────────
+   Crumbs left, stage identity, toolbar right. Stage accents are fixed:
+   soft = blue, tools = green, hard = violet. */
+
+.scelo-demo .sd-stagehead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  padding: 8px 9.6px;
+  border-bottom: 1px solid var(--ia-border);
+  background: var(--ia-bg);
+}
+
+.scelo-demo .sd-crumbs {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 10.5px;
+  color: var(--ia-fg-dim);
+}
+
+.scelo-demo .sd-stage-tag {
+  display: flex;
+  align-items: center;
+  gap: 5.6px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+}
+
+.scelo-demo .sd-stage-tag::before {
+  content: "";
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.7;
+}
+
+.scelo-demo .sd-soft { color: var(--ia-accent2); }
+.scelo-demo .sd-tools { color: var(--ia-primary); }
+.scelo-demo .sd-hard { color: var(--ia-accent3); }
+
+.scelo-demo .sd-stage-id {
+  min-width: 0;
+}
+
+.scelo-demo .sd-stage-title {
+  margin-top: 1.6px;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.scelo-demo .sd-stage-title b {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--ia-fg);
+}
+
+.scelo-demo .sd-stage-title i {
+  flex-shrink: 0;
+  font-style: normal;
+  font-size: 10px;
+  color: var(--ia-fg-dim);
+}
+
+.scelo-demo .sd-toolbar {
+  display: none;
+  margin-left: auto;
+  align-items: center;
+  gap: 5.6px;
+}
+
+@container (min-width: 600px) {
+  .scelo-demo .sd-toolbar {
+    display: flex;
+  }
+}
+
+.scelo-demo .sd-tool {
+  border: 1px solid var(--ia-border);
+  border-radius: 3px;
+  padding: 4px 8px;
+  font-size: 10px;
+  color: var(--ia-fg-mute);
+}
+
+.scelo-demo .sd-tool-next {
+  border-color: color-mix(in srgb, var(--ia-primary) 40%, transparent);
+  background: color-mix(in srgb, var(--ia-primary) 10%, transparent);
+  color: var(--ia-fg);
+}
+
+/* ── panels + chat rail ──────────────────────────────────────────────── */
+
+.scelo-demo .sd-split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+@container (min-width: 600px) {
+  .scelo-demo .sd-split-soft {
+    grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr);
+  }
+  .scelo-demo .sd-split-rail {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 216px);
+  }
+}
+
+/* The stage-accent classes (.sd-soft/.sd-tools/.sd-hard) are declared
+   above at the same specificity, so this rule must NOT set `color`: a
+   panel title composed as `sd-paneltitle sd-stage-tag sd-soft` would take
+   the fg-dim from here (later in the file wins) and lose its accent. A
+   title is accented OR dim, never both, so the dim default hangs off
+   :not() and an accented title simply doesn't match it. */
+.scelo-demo .sd-paneltitle {
+  display: flex;
+  align-items: center;
+  gap: 5.6px;
+  padding: 6.4px 9.6px;
+  border-bottom: 1px solid var(--ia-border);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+}
+
+.scelo-demo .sd-paneltitle:not(.sd-stage-tag) {
+  color: var(--ia-fg-dim);
+}
+
+.scelo-demo .sd-rail {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  background: color-mix(in srgb, var(--ia-bg-1) 40%, transparent);
+}
+
+.scelo-demo .sd-chatlog {
+  flex: 1;
+  overflow: hidden;
+  padding: 9.6px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* Statuses live in their own slot so they can be appended to without
+   landing underneath the reply and the action block, which is what
+   happens if the log itself is the append target. */
+.scelo-demo .sd-statuses {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.scelo-demo .sd-statuses:empty {
+  display: none;
+}
+
+.md-typeset .scelo-demo .sd-say {
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: var(--ia-fg-mute);
+}
+
+.md-typeset .scelo-demo .sd-say:empty {
+  display: none;
+}
+
+.scelo-demo .sd-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 10.5px;
+  color: var(--ia-fg-mute);
+  animation: sd-fade-up 380ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.scelo-demo .sd-status .sd-dot {
+  flex-shrink: 0;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--ia-fg-dim);
+}
+
+.scelo-demo .sd-status .sd-tick {
+  flex-shrink: 0;
+  color: var(--ia-primary);
+}
+
+.scelo-demo .sd-status span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── the composer pill ───────────────────────────────────────────────
+   Read-only by design: these demos are click-only, so the pill renders
+   the scripted prompt rather than accepting input. */
+
+.scelo-demo .sd-composer {
+  border-top: 1px solid var(--ia-border);
+  padding: 8px;
+}
+
+.scelo-demo .sd-pill {
+  border: 1px solid var(--ia-border);
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--ia-bg) 60%, transparent);
+  padding: 8px 9.6px;
+}
+
+.scelo-demo .sd-pill-text {
+  min-height: 20px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--ia-fg);
+}
+
+.scelo-demo .sd-pill-text.sd-placeholder {
+  font-style: italic;
+  color: var(--ia-fg-dim);
+}
+
+.scelo-demo .sd-caret {
+  display: inline-block;
+  width: 1.5px;
+  height: 12px;
+  margin-left: 1px;
+  transform: translateY(2px);
+  background: var(--ia-fg);
+  animation: sd-blink 1s steps(2, start) infinite;
+}
+
+.scelo-demo .sd-pill-foot {
+  margin-top: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 9.5px;
+  color: var(--ia-fg-dim);
+}
+
+/* ── chips + replay ──────────────────────────────────────────────────── */
+
+.scelo-demo .sd-controls {
+  margin-top: 12.8px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.scelo-demo .sd-chips {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding: 0 4px 4px;
+  margin: 0 -4px;
+  scrollbar-width: none;
+}
+
+.scelo-demo .sd-chips::-webkit-scrollbar {
+  display: none;
+}
+
+.scelo-demo .sd-chip,
+.scelo-demo .sd-replay {
+  flex-shrink: 0;
+  min-height: 44px; /* touch target */
+  border: 1px solid var(--ia-border);
+  border-radius: 999px;
+  background: transparent;
+  padding: 0 16px;
+  font-size: 13px;
+  color: var(--ia-fg-mute);
+  transition: color 120ms, border-color 120ms, background-color 120ms;
+}
+
+.scelo-demo .sd-chip:hover,
+.scelo-demo .sd-replay:hover {
+  border-color: var(--ia-fg-dim);
+  color: var(--ia-fg);
+}
+
+.scelo-demo .sd-chip[aria-pressed="true"] {
+  border-color: var(--ia-fg);
+  background: var(--ia-fg);
+  color: var(--ia-bg);
+}
+
+.scelo-demo .sd-replay {
+  display: none;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+}
+
+.scelo-demo .sd-replay.sd-on {
+  display: inline-flex;
+}
+
+.md-typeset .scelo-demo .sd-caption {
+  margin-top: 12.8px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--ia-fg-dim);
+}
+
+/* ── cards ───────────────────────────────────────────────────────────
+   .sd-glass is Scelo's .glass-card: solid bg-1 fill, hairline border,
+   inset highlight + drop shadow. The name is a leftover from the
+   product; there is no backdrop blur (it was retired because React
+   Flow's fractional transforms made it render soft). */
+
+.scelo-demo .sd-glass {
+  border: 1px solid var(--ia-border);
+  background: var(--ia-bg-1);
+  box-shadow:
+    0 1px 0 rgb(255 255 255 / 0.06) inset,
+    0 8px 24px -10px rgb(0 0 0 / 0.5);
+}
+
+/* ── macro demo ──────────────────────────────────────────────────────── */
+
+.scelo-demo .sd-brainhead {
+  padding: 16px;
+  border-bottom: 1px solid var(--ia-border);
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.scelo-demo .sd-brainhead h3 {
+  margin: 8px 0 0;
+  font-size: clamp(17.6px, 2.2vw, 24px);
+  font-weight: 400;
+  line-height: 1.2;
+  color: var(--ia-fg);
+}
+
+.scelo-demo .sd-brainhead .sd-kicker {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  color: var(--ia-fg-dim);
+}
+
+.scelo-demo .sd-brainhead p {
+  margin-top: 6.4px;
+  max-width: 52ch;
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: var(--ia-fg-mute);
+}
+
+.scelo-demo .sd-quickstrip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 6.4px 16px;
+  border-bottom: 1px solid var(--ia-border);
+  background: color-mix(in srgb, var(--ia-bg-1) 40%, transparent);
+  font-size: 9.5px;
+  color: var(--ia-fg-dim);
+}
+
+.scelo-demo .sd-quickstrip .sd-livedot {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--ia-primary);
+}
+
+/* Three tiers, because the marketing hero this came from had ~1000px to
+   play with and a docs column has ~688px:
+     < 600px   stacked, edges become horizontal ticks between cards
+     600-899   three across, compact: no connector wires, tighter padding
+     >= 900    the full treatment, as /scelo draws it
+   The middle tier is the one the docs actually hit on a desktop. Without
+   it every card was ~112px of content and the copy shredded into one word
+   per line. */
+.scelo-demo .sd-canvas {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: stretch;
+  gap: 12px;
+  padding: 16px;
+}
+
+/* minmax(0, 1fr), never a bare 1fr: a bare `1fr` is really
+   minmax(auto, 1fr), and that auto floor pins each column to its
+   content's min-content width, so the cards overflow their track
+   instead of shrinking into it. */
+@container (min-width: 600px) {
+  .scelo-demo .sd-canvas {
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto minmax(0, 1fr);
+    gap: 0;
+    padding: 12px;
+  }
+}
+
+@container (min-width: 900px) {
+  .scelo-demo .sd-canvas {
+    padding: 20px;
+  }
+}
+
+.scelo-demo .sd-stagecard {
+  display: block;
+  min-width: 0;
+  width: 100%;
+  border-radius: 16px;
+  padding: 12px;
+  text-align: left;
+  opacity: 0.45;
+  transition: opacity 500ms, border-color 120ms;
+}
+
+@container (min-width: 900px) {
+  .scelo-demo .sd-stagecard {
+    padding: 16px;
+  }
+}
+
+.scelo-demo .sd-stagecard.sd-reached {
+  opacity: 1;
+}
+
+.scelo-demo .sd-stagecard:hover {
+  border-color: var(--ia-fg-dim);
+}
+
+.scelo-demo .sd-stagecard h4 {
+  margin: 12px 0 0;
+  font-size: 15px;
+  font-weight: 500;
+  line-height: 1.2;
+  color: var(--ia-fg);
+}
+
+.md-typeset .scelo-demo .sd-stagecard p {
+  margin-top: 6.4px;
+  font-size: 11px;
+  line-height: 1.55;
+  color: var(--ia-fg-mute);
+}
+
+.scelo-demo .sd-stagefoot {
+  margin-top: 14.4px;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.scelo-demo .sd-stagefoot .sd-summary {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 9.5px;
+  letter-spacing: 0.05em;
+  color: var(--ia-fg-dim);
+}
+
+.scelo-demo .sd-stagefoot .sd-open {
+  flex-shrink: 0;
+  font-size: 10px;
+  color: var(--ia-fg-dim);
+}
+
+.scelo-demo .sd-stagecard:hover .sd-open {
+  color: var(--ia-fg);
+}
+
+/* The scoped chat every node carries. */
+.scelo-demo .sd-nodechat {
+  margin-top: 16px;
+  border: 1px solid var(--ia-border);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--ia-bg) 60%, transparent);
+  padding: 8px 9.6px;
+}
+
+/* Clamped, not truncated: the placeholder is flavour, and letting it run
+   to six one-word lines was most of what made the compact cards unreadable. */
+.scelo-demo .sd-nodechat .sd-ph {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+  font-size: 9.5px;
+  line-height: 1.45;
+  font-style: italic;
+  color: var(--ia-fg-dim);
+}
+
+@container (min-width: 900px) {
+  .scelo-demo .sd-nodechat .sd-ph {
+    -webkit-line-clamp: 3;
+    line-clamp: 3;
+  }
+}
+
+.scelo-demo .sd-nodechat .sd-send {
+  margin-top: 5.6px;
+  font-size: 8.5px;
+  color: color-mix(in srgb, var(--ia-fg-dim) 70%, transparent);
+}
+
+.scelo-demo .sd-edge {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5.6px;
+  padding: 4px 0;
+}
+
+@container (min-width: 600px) {
+  .scelo-demo .sd-edge {
+    padding: 0 4px;
+  }
+}
+
+@container (min-width: 900px) {
+  .scelo-demo .sd-edge {
+    padding: 0 8px;
+  }
+}
+
+/* The connector wires are the first thing to go when the column is tight:
+   they cost ~32px per edge and the label plus arrow already carry the
+   direction. */
+.scelo-demo .sd-edge .sd-wire {
+  display: none;
+  width: 16px;
+  height: 1px;
+  background: var(--ia-border);
+}
+
+@container (min-width: 900px) {
+  .scelo-demo .sd-edge .sd-wire {
+    display: block;
+  }
+}
+
+.scelo-demo .sd-edge .sd-edgelabel {
+  border: 1px solid var(--ia-border);
+  border-radius: 3px;
+  background: var(--ia-bg-1);
+  padding: 1.6px 5.6px;
+  font-size: 9px;
+  color: color-mix(in srgb, var(--ia-fg-dim) 40%, transparent);
+  transition: color 500ms;
+}
+
+.scelo-demo .sd-edge .sd-arrow {
+  font-size: 10px;
+  color: color-mix(in srgb, var(--ia-fg-dim) 40%, transparent);
+  transition: color 500ms;
+}
+
+.scelo-demo .sd-edge.sd-on .sd-edgelabel,
+.scelo-demo .sd-edge.sd-on .sd-arrow {
+  color: var(--ia-fg-mute);
+}
+
+/* ── soft demo · grid ────────────────────────────────────────────────── */
+
+.scelo-demo .sd-gridwrap {
+  min-width: 0;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--ia-border);
+}
+
+@container (min-width: 600px) {
+  .scelo-demo .sd-gridwrap {
+    border-bottom: 0;
+    border-right: 1px solid var(--ia-border);
+  }
+}
+
+.scelo-demo table.sd-grid {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+}
+
+.scelo-demo table.sd-grid th {
+  padding: 5.6px 8px;
+  border-bottom: 1px solid var(--ia-border);
+  white-space: nowrap;
+  font-size: 9.5px;
+  font-weight: 400;
+  color: var(--ia-fg-mute);
+}
+
+.scelo-demo table.sd-grid td {
+  padding: 5.6px 8px;
+  border-bottom: 1px solid color-mix(in srgb, var(--ia-border) 50%, transparent);
+  white-space: nowrap;
+  font-size: 10px;
+  color: var(--ia-fg-mute);
+  transition: color 400ms;
+}
+
+.scelo-demo table.sd-grid tr:last-child td {
+  border-bottom: 0;
+}
+
+.scelo-demo table.sd-grid .sd-rownum {
+  width: 28px;
+  font-size: 9px;
+  color: color-mix(in srgb, var(--ia-fg-dim) 60%, transparent);
+}
+
+.scelo-demo table.sd-grid td.sd-bad {
+  color: color-mix(in srgb, var(--ia-error) 80%, transparent);
+}
+
+.scelo-demo table.sd-grid td.sd-fixed {
+  color: var(--ia-primary);
+}
+
+.scelo-demo .sd-gridfoot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 5.6px 8px;
+  border-top: 1px solid var(--ia-border);
+  font-size: 9px;
+  color: var(--ia-fg-dim);
+}
+
+/* The cleaning banner only ever appears because a block applied. */
+.scelo-demo .sd-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5.6px 9.6px;
+  border-bottom: 1px solid color-mix(in srgb, var(--ia-primary) 30%, transparent);
+  background: color-mix(in srgb, var(--ia-primary) 10%, transparent);
+  animation: sd-fade-up 380ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.scelo-demo .sd-banner .sd-dot {
+  flex-shrink: 0;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--ia-primary);
+}
+
+.scelo-demo .sd-banner span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10px;
+  color: var(--ia-fg);
+}
+
+/* The fenced block. This is the thing that acts. */
+.scelo-demo .sd-block {
+  overflow: hidden;
+  border: 1px solid var(--ia-border);
+  border-radius: 8px;
+  background: var(--ia-bg);
+  animation: sd-fade-up 380ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.scelo-demo .sd-block .sd-blockhead {
+  padding: 3.2px 8px;
+  border-bottom: 1px solid var(--ia-border);
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--ia-primary);
+}
+
+.scelo-demo .sd-block pre {
+  overflow-x: auto;
+  padding: 5.6px 8px;
+  font-size: 9.5px;
+  line-height: 1.6;
+  color: var(--ia-fg-mute);
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+/* No block, no change. Said plainly. */
+.scelo-demo .sd-unchanged {
+  display: flex;
+  align-items: center;
+  gap: 5.6px;
+  font-size: 9.5px;
+  color: var(--ia-fg-dim);
+  animation: sd-fade-up 380ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.scelo-demo .sd-unchanged::before {
+  content: "";
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--ia-fg-dim);
+}
+
+/* ── tools + hard demos · canvas ─────────────────────────────────────── */
+
+.scelo-demo .sd-flow {
+  min-width: 0;
+  border-bottom: 1px solid var(--ia-border);
+  padding: 12px;
+}
+
+@container (min-width: 600px) {
+  .scelo-demo .sd-flow {
+    border-bottom: 0;
+    border-right: 1px solid var(--ia-border);
+    padding: 16px;
+  }
+}
+
+.scelo-demo .sd-flowrow {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 12px;
+}
+
+@container (min-width: 600px) {
+  .scelo-demo .sd-flowrow {
+    flex-direction: row;
+    align-items: center;
+  }
+}
+
+.scelo-demo .sd-hub {
+  min-width: 0;
+  flex-shrink: 0;
+  border-radius: 16px;
+  padding: 12px;
+}
+
+@container (min-width: 600px) {
+  .scelo-demo .sd-hub-dataset { width: 160px; }
+  .scelo-demo .sd-hub-pack { width: 184px; }
+}
+
+.scelo-demo .sd-hub .sd-hubtag {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+}
+
+.scelo-demo .sd-hub .sd-hubname {
+  margin-top: 6.4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11.5px;
+  color: var(--ia-fg);
+}
+
+.scelo-demo .sd-hub .sd-hubmeta {
+  margin-top: 3.2px;
+  font-size: 9px;
+  color: var(--ia-fg-dim);
+}
+
+.scelo-demo .sd-hub .sd-narrative {
+  margin-top: 8px;
+  max-height: 120px;
+  overflow: hidden;
+  font-size: 9.5px;
+  line-height: 1.6;
+  color: var(--ia-fg-mute);
+}
+
+.scelo-demo .sd-dash {
+  display: none;
+  flex-shrink: 0;
+  width: 20px;
+  border-top: 1px dashed color-mix(in srgb, var(--ia-fg-dim) 50%, transparent);
+}
+
+.scelo-demo .sd-dash-error {
+  border-top-color: color-mix(in srgb, var(--ia-error) 50%, transparent);
+}
+
+@container (min-width: 600px) {
+  .scelo-demo .sd-dash {
+    display: block;
+  }
+}
+
+/* minmax(0, 1fr), never the default `auto` track: an auto track floors at
+   its items' min-content width, so on a docs column (~688px, narrower than
+   the marketing page these came from) the nodes sized to their longest
+   model name, ignored the shrunk container, and painted straight through
+   the catalog rail. The 0-floor plus min-width on the item is what makes
+   the names wrap instead. */
+.scelo-demo .sd-nodes {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  min-width: 0;
+  flex: 1;
+  gap: 8px;
+}
+
+.scelo-demo .sd-node {
+  min-width: 0;
+  border: 1px solid var(--ia-border);
+  border-radius: 12px;
+  background: var(--ia-bg-1);
+  padding: 9.6px;
+  animation: sd-slide-in 340ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.scelo-demo .sd-node .sd-family {
+  font-size: 8.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+}
+
+.scelo-demo .sd-node .sd-nodename {
+  margin-top: 4px;
+  font-size: 11.5px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+  color: var(--ia-fg);
+}
+
+.scelo-demo .sd-node .sd-note {
+  margin-top: 1.6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 9.5px;
+  color: var(--ia-fg-mute);
+}
+
+/* Empty slots before anything attaches. */
+.scelo-demo .sd-ghost {
+  border: 1px dashed var(--ia-border);
+  border-radius: 12px;
+  padding: 9.6px;
+}
+
+.scelo-demo .sd-ghost i {
+  display: block;
+  height: 8px;
+  width: 56px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--ia-border) 60%, transparent);
+}
+
+.scelo-demo .sd-ghost i + i {
+  margin-top: 8px;
+  height: 9px;
+  width: 128px;
+  background: color-mix(in srgb, var(--ia-border) 40%, transparent);
+}
+
+/* Family tones, verbatim from modelCatalog.ts. */
+.scelo-demo .sd-fam-reserving { color: var(--ia-primary); }
+.scelo-demo .sd-fam-mortality { color: var(--ia-accent2); }
+.scelo-demo .sd-fam-pricing { color: var(--ia-accent3); }
+.scelo-demo .sd-fam-life { color: var(--ia-error); }
+
+.scelo-demo .sd-node.sd-bord-reserving { border-color: color-mix(in srgb, var(--ia-primary) 50%, transparent); }
+.scelo-demo .sd-node.sd-bord-mortality { border-color: color-mix(in srgb, var(--ia-accent2) 50%, transparent); }
+.scelo-demo .sd-node.sd-bord-pricing { border-color: color-mix(in srgb, var(--ia-accent3) 50%, transparent); }
+.scelo-demo .sd-node.sd-bord-life { border-color: color-mix(in srgb, var(--ia-error) 50%, transparent); }
+
+/* ── tools demo · catalog rail ───────────────────────────────────────── */
+
+.scelo-demo .sd-catalog {
+  max-height: 144px;
+  overflow-y: auto;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.scelo-demo .sd-catalog .sd-famhead {
+  font-size: 8.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+}
+
+.scelo-demo .sd-catalog .sd-model {
+  margin-top: 2.4px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.scelo-demo .sd-catalog .sd-model span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10px;
+  color: var(--ia-fg-mute);
+}
+
+.scelo-demo .sd-catalog .sd-model i {
+  flex-shrink: 0;
+  font-style: normal;
+  font-size: 10px;
+  color: var(--ia-fg-dim);
+}
+
+/* ── hard demo · result nodes ────────────────────────────────────────── */
+
+.scelo-demo .sd-result .sd-resultname {
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--ia-fg-mute);
+}
+
+.scelo-demo .sd-result .sd-metric {
+  margin-top: 4px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2.4px 5.6px;
+}
+
+/* cqw, not vw: the React original scales this off the viewport because it
+   spans a wide marketing page, but here the demo lives in a ~688px docs
+   column on a 1440px screen, so a vw-scaled number rendered at 26px inside
+   a ~190px node and shoved the label into a one-word-per-line stack. */
+.scelo-demo .sd-result .sd-value {
+  font-size: clamp(15.2px, 2.5cqw, 20px);
+  line-height: 1.2;
+  color: var(--ia-fg);
+}
+
+.scelo-demo .sd-result .sd-label {
+  font-size: 8.5px;
+  color: var(--ia-fg-dim);
+}
+
+.scelo-demo .sd-forecast {
+  border: 1px solid var(--ia-border);
+  border-radius: 8px;
+  background: var(--ia-bg);
+  padding: 8px;
+  animation: sd-fade-up 380ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.scelo-demo .sd-forecast .sd-fhead {
+  font-size: 8.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--ia-fg-dim);
+}
+
+.scelo-demo .sd-forecast .sd-frun {
+  margin-top: 5.6px;
+  border: 1px solid var(--ia-border);
+  border-radius: 3px;
+  padding: 3.2px 8px;
+  text-align: center;
+  font-size: 9px;
+  color: var(--ia-fg-mute);
+}
+
+/* ── keyframes ───────────────────────────────────────────────────────── */
+
+@keyframes sd-fade-up {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes sd-slide-in {
+  from { opacity: 0; transform: translateX(-6px); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes sd-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+/* Reduced motion is not "faster animation", it is no animation. The
+   player jumps to each scenario's end state; this kills the CSS half. */
+@media (prefers-reduced-motion: reduce) {
+  .scelo-demo .sd-window,
+  .scelo-demo .sd-stagecard,
+  .scelo-demo table.sd-grid td,
+  .scelo-demo .sd-edge .sd-edgelabel,
+  .scelo-demo .sd-edge .sd-arrow {
+    transition: none;
+  }
+
+  .scelo-demo .sd-status,
+  .scelo-demo .sd-banner,
+  .scelo-demo .sd-block,
+  .scelo-demo .sd-unchanged,
+  .scelo-demo .sd-node,
+  .scelo-demo .sd-forecast,
+  .scelo-demo .sd-caret {
+    animation: none !important;
+  }
+
+  .scelo-demo .sd-caret {
+    opacity: 1;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   The swarm demos
+
+   The swarm is a separate app that Scelo embeds, so it gets its own
+   chrome: a wordmark, six tabs, a live status cluster, and a decision
+   sidebar pinned right.
+
+   Its palette is, by design, the same warm cream/charcoal as these docs
+   (swarms/styles.css:1-61 and extra.css agree token for token: #E8E4D8 /
+   #1B1815 / #309061 ...), because both read the shared `ia.theme` key. So
+   these rules use the docs' --ia-* vars and land on the swarm's real
+   colours in both schemes. Two deliberate exceptions, both hard-coded hex
+   in the product that does NOT flip with the theme:
+     - PROFESSION_PALETTE (constants.ts:119-128), set inline in JS.
+     - the stance colours, which DO flip, so they use tokens.
+
+   CASING: the swarm writes these strings lowercase and uppercases them in
+   CSS. Reproduced faithfully below, including the trap that
+   `button { text-transform: none }` beats the cluster's inherited
+   uppercase, so auto/?/settings stay lowercase.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+.scelo-demo .sd-swarmwin {
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── the embed strip ─────────────────────────────────────────────────── */
+
+.scelo-demo .sd-swarmtop {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6.4px 9.6px;
+  border-bottom: 1px solid var(--ia-border);
+  background: var(--ia-bg-1);
+}
+
+.scelo-demo .sd-backchip {
+  border: 1px solid var(--ia-border);
+  border-radius: 3px;
+  padding: 3.2px 8px;
+  font-size: 9.5px;
+  color: var(--ia-fg-mute);
+}
+
+.scelo-demo .sd-swarmcrumb {
+  font-size: 9.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--ia-fg-dim);
+}
+
+.scelo-demo .sd-swarmlive {
+  display: flex;
+  align-items: center;
+  gap: 5.6px;
+  margin-left: auto;
+  font-size: 9.5px;
+  color: var(--ia-fg-dim);
+}
+
+/* ── the swarm bar ───────────────────────────────────────────────────── */
+
+.scelo-demo .sd-swarmbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  padding: 8px 9.6px;
+  border-bottom: 1px solid var(--ia-border);
+  background: var(--ia-bg);
+}
+
+.scelo-demo .sd-wordmark {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--ia-fg);
+}
+
+.scelo-demo .sd-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.scelo-demo .sd-tab {
+  padding-bottom: 3.2px;
+  border-bottom: 1px solid transparent;
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--ia-fg-dim);
+  transition: color 200ms, border-color 200ms;
+}
+
+.scelo-demo .sd-tab-on {
+  border-bottom-color: var(--ia-fg);
+  color: var(--ia-fg);
+}
+
+/* Wraps to its own row rather than hiding: at a 688px docs column an
+   earlier 760px gate meant the status cluster never rendered at all, and
+   it is the part that shows the swarm is talking to a local Ollama. */
+.scelo-demo .sd-statuscluster {
+  display: none;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5.6px;
+  margin-left: auto;
+  font-size: 8.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-family: var(--md-code-font-family, "JetBrains Mono", monospace);
+}
+
+@container (min-width: 560px) {
+  .scelo-demo .sd-statuscluster {
+    display: flex;
+  }
+}
+
+.scelo-demo .sd-muted { color: var(--ia-fg-dim); }
+.scelo-demo .sd-statusok { color: var(--ia-primary); }
+.scelo-demo .sd-ollama { max-width: 15em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Lowercase: see the casing note above. */
+.scelo-demo .sd-swarmbtn {
+  border: 1px solid var(--ia-border);
+  border-radius: 999px;
+  padding: 1.6px 8px;
+  font-size: 8.5px;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--ia-fg-mute);
+}
+
+/* ── panes ───────────────────────────────────────────────────────────── */
+
+.scelo-demo .sd-swarmmain {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.scelo-demo .sd-pane {
+  display: none;
+  min-width: 0;
+  flex-direction: column;
+  gap: 9.6px;
+  animation: sd-fade-up 380ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.scelo-demo .sd-pane.sd-on {
+  display: flex;
+}
+
+.scelo-demo .sd-centerhead {
+  margin: 4px 0 0;
+  text-align: center;
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--ia-primary);
+}
+
+.scelo-demo .sd-paneleyebrow {
+  font-size: 8.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  color: var(--ia-fg-dim);
+}
+
+/* ── forecast face ───────────────────────────────────────────────────── */
+
+.scelo-demo .sd-scenariocard {
+  border: 1px solid var(--ia-border-strong, var(--ia-fg-dim));
+  border-radius: 8px;
+  padding: 9.6px;
+}
+
+.md-typeset .scelo-demo .sd-scentext {
+  min-height: 2.4em;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--ia-fg);
+}
+
+.scelo-demo .sd-scenariofoot {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--ia-border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 9px;
+}
+
+.scelo-demo .sd-swarmcta {
+  border: 1px solid var(--ia-border);
+  border-radius: 999px;
+  padding: 3.2px 12px;
+  font-size: 9.5px;
+  color: var(--ia-fg);
+  white-space: nowrap;
+}
+
+.scelo-demo .sd-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5.6px;
+  justify-content: center;
+}
+
+.scelo-demo .sd-preset {
+  border: 1px solid var(--ia-border);
+  border-radius: 999px;
+  padding: 3.2px 9.6px;
+  font-size: 9.5px;
+  color: var(--ia-fg-mute);
+}
+
+.scelo-demo .sd-preset-on {
+  border-color: var(--ia-fg);
+  color: var(--ia-fg);
+}
+
+/* ── council face ────────────────────────────────────────────────────── */
+
+/* The product draws this as a force graph. A force layout does not survive
+   a docs column, so the eight agents are laid out as a grid: same
+   professions, same palette, same stances, honest about being a still. */
+.scelo-demo .sd-agents {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 4px;
+}
+
+@container (min-width: 620px) {
+  .scelo-demo .sd-agents {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+}
+
+.scelo-demo .sd-agent {
+  display: flex;
+  align-items: center;
+  gap: 5.6px;
+  min-width: 0;
+  border: 1px solid var(--ia-border);
+  border-left-width: 2px;
+  border-radius: 4px;
+  padding: 4px 8px;
+  animation: sd-slide-in 340ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+/* Stance colours DO flip with the theme (colorsForTheme), unlike the
+   profession palette, so they are tokens. */
+.scelo-demo .sd-st-support { border-left-color: var(--ia-primary); }
+.scelo-demo .sd-st-oppose { border-left-color: var(--ia-error); }
+.scelo-demo .sd-st-abstain { border-left-color: var(--ia-fg-dim); }
+
+.scelo-demo .sd-agentdot {
+  flex-shrink: 0;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+
+.scelo-demo .sd-agentname {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10px;
+  color: var(--ia-fg);
+}
+
+.scelo-demo .sd-stance {
+  margin-left: auto;
+  flex-shrink: 0;
+  font-size: 8.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+.scelo-demo .sd-st-support .sd-stance { color: var(--ia-primary); }
+.scelo-demo .sd-st-oppose .sd-stance { color: var(--ia-error); }
+.scelo-demo .sd-st-abstain .sd-stance { color: var(--ia-fg-dim); }
+
+.scelo-demo .sd-readback {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 5.6px;
+}
+
+@container (min-width: 620px) {
+  .scelo-demo .sd-readback {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+.scelo-demo .sd-rbtile {
+  border: 1px solid var(--ia-border);
+  border-radius: 4px;
+  padding: 6.4px 8px;
+  animation: sd-fade-up 380ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.scelo-demo .sd-rbvalue {
+  font-size: 16px;
+  line-height: 1.2;
+  color: var(--ia-fg);
+}
+
+.scelo-demo .sd-rblabel {
+  margin-top: 1.6px;
+  font-size: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--ia-fg-mute);
+}
+
+.scelo-demo .sd-rbsub {
+  margin-top: 1.6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 8px;
+  color: var(--ia-fg-dim);
+}
+
+.scelo-demo .sd-intervbox {
+  border: 1px solid var(--ia-border);
+  border-radius: 8px;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: flex-start;
+  animation: sd-fade-up 380ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.scelo-demo .sd-intervsub { font-size: 8.5px; }
+
+/* Four separate spans with a plain gap, exactly as the product lays it
+   out: `×4 ↑ αM LARGE`, no middot. */
+.scelo-demo .sd-intervchip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--ia-border);
+  border-radius: 3px;
+  padding: 3.2px 8px;
+  font-size: 10px;
+  color: var(--ia-fg);
+}
+
+.scelo-demo .sd-ivcount { color: var(--ia-fg-dim); }
+.scelo-demo .sd-ivdir { color: var(--ia-primary); }
+.scelo-demo .sd-ivmag {
+  text-transform: uppercase;
+  font-size: 8.5px;
+  color: var(--ia-fg-mute);
+}
+
+.md-typeset .scelo-demo .sd-rationale {
+  font-size: 9.5px;
+  font-style: italic;
+  line-height: 1.5;
+  color: var(--ia-fg-mute);
+}
+
+/* ── simulation ──────────────────────────────────────────────────────── */
+
+.md-typeset .scelo-demo .sd-simbody {
+  min-height: 0;
+  font-size: 10px;
+  line-height: 1.55;
+  color: var(--ia-fg-mute);
+}
+
+.scelo-demo .sd-simcontrols {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: end;
+  gap: 8px;
+}
+
+/* Two up, then four: squeezing four controls into the ~470px the main pane
+   gets at docs width wrapped every slider label onto two lines. */
+@container (min-width: 620px) {
+  .scelo-demo .sd-simcontrols {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+  .scelo-demo .sd-runbtn {
+    grid-column: 1 / -1;
+    justify-self: end;
+  }
+}
+
+@container (min-width: 900px) {
+  .scelo-demo .sd-simcontrols {
+    grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) minmax(0, 1fr) auto;
+  }
+  .scelo-demo .sd-runbtn {
+    grid-column: auto;
+    justify-self: auto;
+  }
+}
+
+.scelo-demo .sd-simfield {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.scelo-demo .sd-siminput {
+  border: 1px solid var(--ia-border);
+  border-radius: 3px;
+  padding: 4.8px 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 9.5px;
+  color: var(--ia-fg);
+}
+
+.scelo-demo .sd-slider {
+  position: relative;
+  height: 14px;
+}
+
+.scelo-demo .sd-slider::before {
+  content: "";
+  position: absolute;
+  top: 6px;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: var(--ia-border);
+}
+
+.scelo-demo .sd-knob {
+  position: absolute;
+  top: 3px;
+  width: 7px;
+  height: 7px;
+  margin-left: -3.5px;
+  border: 1px solid var(--ia-fg-dim);
+  background: var(--ia-bg-1);
+}
+
+.scelo-demo .sd-runbtn { align-self: end; }
+
+.scelo-demo .sd-simprogress {
+  display: none;
+  flex-direction: column;
+  gap: 4px;
+  border: 1px solid var(--ia-border);
+  border-radius: 4px;
+  padding: 8px;
+  animation: sd-fade-up 380ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.scelo-demo .sd-simprogress.sd-on { display: flex; }
+
+.scelo-demo .sd-phase {
+  display: flex;
+  align-items: center;
+  gap: 5.6px;
+  font-size: 9.5px;
+  transition: color 300ms, opacity 300ms;
+}
+
+.scelo-demo .sd-phasedot {
+  flex-shrink: 0;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.scelo-demo .sd-phasehint {
+  margin-left: auto;
+  font-size: 8px;
+  color: var(--ia-fg-dim);
+}
+
+.scelo-demo .sd-phase-pending { color: var(--ia-fg-dim); opacity: 0.5; }
+.scelo-demo .sd-phase-active { color: var(--ia-fg); }
+.scelo-demo .sd-phase-done { color: var(--ia-primary); }
+
+.scelo-demo .sd-macrogrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 5.6px;
+}
+
+@container (min-width: 620px) {
+  .scelo-demo .sd-macrogrid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+.scelo-demo .sd-macrotile {
+  min-width: 0;
+  border: 1px solid var(--ia-border);
+  border-radius: 4px;
+  padding: 6.4px;
+  animation: sd-fade-up 380ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.scelo-demo .sd-macrovalue {
+  margin-top: 1.6px;
+  font-size: 14px;
+  line-height: 1.2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The tile subs carry the unit and the derivation ("admissions × R18.5k
+   avg"), which is the part worth reading, so they wrap instead of
+   clipping to an ellipsis like the council readback subs do. */
+.scelo-demo .sd-macrotile .sd-rbsub {
+  overflow: visible;
+  white-space: normal;
+  line-height: 1.4;
+}
+
+.scelo-demo .sd-tone-warn { color: var(--ia-warn); }
+.scelo-demo .sd-tone-err { color: var(--ia-error); }
+.scelo-demo .sd-tone-ok { color: var(--ia-primary); }
+
+.scelo-demo .sd-simresults {
+  display: flex;
+  flex-direction: column;
+  gap: 5.6px;
+}
+
+/* ── canon ───────────────────────────────────────────────────────────── */
+
+.scelo-demo .sd-canonnote {
+  border-left: 2px solid var(--ia-primary);
+  padding: 3.2px 0 3.2px 8px;
+  font-size: 9.5px;
+  line-height: 1.6;
+  color: var(--ia-fg-mute);
+}
+
+.md-typeset .scelo-demo .sd-canonnote code,
+.md-typeset .scelo-demo .sd-accepts code {
+  background: var(--ia-bg-2);
+  border-radius: 2px;
+  padding: 0 3.2px;
+  font-size: 8.5px;
+  color: var(--ia-fg);
+}
+
+.scelo-demo .sd-canonhead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.scelo-demo .sd-canonacts {
+  display: flex;
+  align-items: center;
+  gap: 5.6px;
+}
+
+.scelo-demo .sd-canonrows {
+  display: flex;
+  flex-direction: column;
+  gap: 5.6px;
+}
+
+.scelo-demo .sd-canonempty {
+  font-size: 9.5px;
+  color: var(--ia-fg-dim);
+}
+
+.scelo-demo .sd-canonrow {
+  border: 1px solid var(--ia-border);
+  border-radius: 4px;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  animation: sd-fade-up 380ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.scelo-demo .sd-canonrowtop {
+  display: flex;
+  align-items: center;
+  gap: 5.6px;
+}
+
+.scelo-demo .sd-canontitle {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border: 1px solid var(--ia-border);
+  border-radius: 3px;
+  padding: 3.2px 6.4px;
+  font-size: 9.5px;
+  color: var(--ia-fg);
+}
+
+.scelo-demo .sd-canonyear {
+  flex-shrink: 0;
+  border: 1px solid var(--ia-border);
+  border-radius: 3px;
+  padding: 3.2px 6.4px;
+  font-size: 9.5px;
+  color: var(--ia-fg);
+}
+
+.scelo-demo .sd-canonurl,
+.scelo-demo .sd-canontakeaway {
+  border: 1px solid var(--ia-border);
+  border-radius: 3px;
+  padding: 4.8px 6.4px;
+  font-size: 9px;
+  color: var(--ia-primary);
+}
+
+.scelo-demo .sd-canonurl { color: var(--ia-fg-dim); }
+.scelo-demo .sd-canonph { color: var(--ia-fg-dim); }
+
+.scelo-demo .sd-toast {
+  display: inline-block;
+  border: 1px solid color-mix(in srgb, var(--ia-primary) 40%, transparent);
+  background: color-mix(in srgb, var(--ia-primary) 10%, transparent);
+  border-radius: 3px;
+  padding: 3.2px 8px;
+  font-size: 9px;
+  color: var(--ia-fg);
+  animation: sd-fade-up 380ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.scelo-demo .sd-import {
+  display: flex;
+  flex-direction: column;
+  gap: 5.6px;
+  border-top: 1px solid var(--ia-border);
+  padding-top: 9.6px;
+}
+
+.scelo-demo .sd-accepts {
+  font-size: 9px;
+  color: var(--ia-fg-mute);
+}
+
+.scelo-demo .sd-importrow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5.6px;
+  font-size: 8.5px;
+}
+
+.scelo-demo .sd-select {
+  border: 1px solid var(--ia-border);
+  border-radius: 3px;
+  padding: 3.2px 8px;
+  font-size: 9px;
+  color: var(--ia-fg);
+}
+
+.md-typeset .scelo-demo .sd-paste {
+  border: 1px solid var(--ia-border);
+  border-radius: 4px;
+  padding: 6.4px 8px;
+  font-size: 8.5px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--ia-fg-mute);
+  background: var(--ia-bg);
+  animation: sd-fade-up 380ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+/* ── decision sidebar ────────────────────────────────────────────────── */
+
+.scelo-demo .sd-decision-head {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--ia-fg-mute);
+}
+
+.md-typeset .scelo-demo .sd-decision .sd-say {
+  font-size: 9.5px;
+  line-height: 1.6;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .scelo-demo .sd-pane,
+  .scelo-demo .sd-agent,
+  .scelo-demo .sd-rbtile,
+  .scelo-demo .sd-macrotile,
+  .scelo-demo .sd-canonrow,
+  .scelo-demo .sd-intervbox,
+  .scelo-demo .sd-simprogress,
+  .scelo-demo .sd-toast,
+  .scelo-demo .sd-paste {
+    animation: none !important;
+  }
+  .scelo-demo .sd-tab,
+  .scelo-demo .sd-phase {
+    transition: none;
+  }
+}

@@ -35,7 +35,7 @@ a clear job and its own scoped AI assistant.
 
 ## The macro view
 
-![The macro view — three pipeline stages wired together](../assets/img/pipeline-macro.png){ .shadow }
+<div class="scelo-demo" data-scelo-demo="macro"><p class="sd-fallback">The macro view: three pipeline stages wired together, each with a status summary and a scoped chat box. The animated illustration needs JavaScript.</p></div>
 
 `Dashboards → Scelo` shows the three stages as cards on a canvas:
 
