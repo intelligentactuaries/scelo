@@ -34,28 +34,38 @@ society parameters (income mix, education mix, employment mix, culture).
 
 ## Simulation
 
-![The Simulation tab — scenario chips, drugs/compounds, sample size, and population](../assets/img/swarm-simulation.png){ .shadow }
+<div class="scelo-demo" data-scelo-demo="simulation"><p class="sd-fallback">The Simulation tab: scenario chips, drugs/compounds, sample size and population, then the macro impact tiles. The animated illustration needs JavaScript.</p></div>
 
 A standalone population simulator:
 
 1. Pick a **scenario** (a medical or social shock) — or paste your own.
 2. Set the **drugs / compounds**, **sample size**, and **population**.
-3. **Run simulation**. A progress panel shows the pipeline
-   (references → sample → simulate → macro impact).
+3. **Run simulation**. A progress panel walks the pipeline: *Resolving compound
+   references* → *Sampling the population* → *Simulating agent outcomes* →
+   *Scaling macro impact*.
 4. Results: **macro impact** tiles (workdays lost, GDP drag, excess mortality,
-   hospital admissions/cost, insurer claims, out-of-pocket), treatment-uptake
-   bars, and distributional tables by age and comorbidity.
+   severe/critical, hospital admissions/cost, insurer claims, out-of-pocket),
+   treatment-uptake bars, and distributional tables by age and comorbidity.
+
+!!! note "What the progress panel is, and isn't"
+    `/api/simulate` is a single request, so the four phases advance on a fixed
+    cadence rather than reporting server state. Only the **elapsed timer** is
+    live. The phases tell you what the pipeline does, not how far along it is.
 
 Drug references are resolved live via PubChem, OpenFDA, and ChEMBL.
 
 ## IAAI Canon
 
-![The IAAI Canon editor — reference works with import for JSON / BibTeX](../assets/img/swarm-canon.png){ .shadow }
+<div class="scelo-demo" data-scelo-demo="canon"><p class="sd-fallback">The IAAI Canon editor: reference works with import for JSON or BibTeX. The animated illustration needs JavaScript.</p></div>
 
 The reference works (title + takeaway) that get injected into every agent's
 system prompt under "IAAI Canon — apply where relevant". Add, edit, or import
 works (JSON or BibTeX). If empty, agents are told to say so — no fabricated
 citations.
+
+A fresh install starts with an **empty canon**. The **sample** button fills the
+box with a worked example for whichever format is selected, so you can see the
+shape before importing your own.
 
 !!! note "State persists across tabs"
     Switching tabs keeps your scenario, slider values, and results — you resume
