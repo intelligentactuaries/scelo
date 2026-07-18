@@ -64,6 +64,13 @@ import {
   type ModelFamily,
 } from "./modelCatalog";
 import { type DataSignature, dataSignature, fetchModelPicks, heuristicPick } from "./modelPicker";
+import {
+  applyModelDirective,
+  describeDirectiveReport,
+  modelDirectiveProtocol,
+  parseModelDirective,
+  replaceDirectiveBlock,
+} from "./modelStackDirectives";
 import type { ModelWire } from "./pipeline";
 import { type SelectedModel, useScelo } from "./sceloContext";
 import { useNodeChat } from "./useNodeChat";
@@ -82,6 +89,7 @@ function NodeChatbotPanel({
   placeholder,
   accentColor,
   chatId,
+  onAssistantFinal,
 }: {
   stageContext: string;
   placeholder: string;
@@ -89,10 +97,15 @@ function NodeChatbotPanel({
   // Stable identifier for this chat instance — combined with the active
   // project id (if any) to form the memoryKey. Memory is off when no project.
   chatId: string;
+  /** Post-process a completed assistant reply (stack directives). */
+  onAssistantFinal?: (text: string) => string | undefined;
 }) {
   const { chatMemoryPrefix } = useScelo();
   const memoryKey = chatMemoryPrefix ? `${chatMemoryPrefix}:${chatId}` : undefined;
-  const { messages, isStreaming, send, stop } = useNodeChat(stageContext, { memoryKey });
+  const { messages, isStreaming, send, stop } = useNodeChat(stageContext, {
+    memoryKey,
+    onAssistantFinal,
+  });
   const [draft, setDraft] = useState("");
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
@@ -163,6 +176,8 @@ type HubNodeData = {
   slotCount: number;
   chatContext: string;
   chatPlaceholder: string;
+  /** Applies scelo-models directives from this chat's replies. */
+  onStackDirective?: (text: string) => string | undefined;
 };
 
 // Front-and-back handle pack with one slot pair per node in the canvas.
@@ -292,6 +307,7 @@ function HubNode({ id, data }: NodeProps<HubNodeData>) {
           stageContext={data.chatContext}
           placeholder={data.chatPlaceholder}
           chatId="tools-hub"
+          onAssistantFinal={data.onStackDirective}
         />
       )}
     </div>
@@ -315,6 +331,8 @@ type ToolNodeData = {
   slotCount: number;
   chatContext: string;
   chatPlaceholder: string;
+  /** Applies scelo-models directives from this chat's replies. */
+  onStackDirective?: (text: string) => string | undefined;
 };
 
 function ToolNode({ id, data }: NodeProps<ToolNodeData>) {
@@ -480,6 +498,7 @@ function ToolNode({ id, data }: NodeProps<ToolNodeData>) {
           placeholder={data.chatPlaceholder}
           accentColor={color}
           chatId={`tools-model:${data.model.id}`}
+          onAssistantFinal={data.onStackDirective}
         />
       )}
     </div>
@@ -562,6 +581,7 @@ function buildToolsStageContext(args: {
     }
   }
   if (summary) lines.push(`PICK SUMMARY: ${summary}`);
+  lines.push(modelDirectiveProtocol());
   return lines.join("\n");
 }
 
@@ -598,6 +618,7 @@ function buildHubChatContext(args: {
     }
   }
   if (summary) lines.push(`PICK SUMMARY: ${summary}`);
+  lines.push(modelDirectiveProtocol());
   return lines.join("\n");
 }
 
@@ -640,6 +661,7 @@ function buildModelChatContext(args: {
   } else {
     lines.push("PEER MODELS: none — this is the only model attached.");
   }
+  lines.push(modelDirectiveProtocol());
   return lines.join("\n");
 }
 
@@ -1497,6 +1519,7 @@ export function ToolsWorkstation() {
             focusModel: model,
           }),
           chatPlaceholder: `ask about ${model.name}…`,
+          onStackDirective: onChatStackDirective,
         },
         draggable: true,
       };
@@ -1810,6 +1833,47 @@ export function ToolsWorkstation() {
     return `ask scelo about these ${enabledCount} model${enabledCount === 1 ? "" : "s"}…`;
   }, [dataset, selectedModels.length, enabledCount]);
 
+  // Chat-driven stack mutations. Every completed assistant reply from any
+  // Tools chat passes through here: if it carries a scelo-models directive,
+  // apply it against the LIVE stack (ref, not closure — the memo'd context
+  // the chat was created with may be stale by the time the reply lands),
+  // log the same events the manual add/remove buttons do, and swap the
+  // machine block for a plain confirmation of what actually happened.
+  const selectedModelsRef = useRef(selectedModels);
+  useEffect(() => {
+    selectedModelsRef.current = selectedModels;
+  }, [selectedModels]);
+  const onChatStackDirective = useCallback(
+    (text: string): string | undefined => {
+      const directive = parseModelDirective(text);
+      if (!directive) return undefined;
+      const { next, report } = applyModelDirective(selectedModelsRef.current, directive);
+      const changed =
+        report.added.length > 0 ||
+        report.removed.length > 0 ||
+        report.enabled.length > 0 ||
+        report.disabled.length > 0;
+      if (changed) {
+        setSelectedModels(next);
+        for (const id of report.added) {
+          logEvent({ stage: "tools", kind: "model.add", payload: { id } });
+        }
+        for (const id of report.removed) {
+          logEvent({ stage: "tools", kind: "model.remove", payload: { id } });
+        }
+        for (const id of [...report.enabled, ...report.disabled]) {
+          logEvent({
+            stage: "tools",
+            kind: "model.toggle",
+            payload: { id, enabled: report.enabled.includes(id) },
+          });
+        }
+      }
+      return replaceDirectiveBlock(text, describeDirectiveReport(report));
+    },
+    [setSelectedModels, logEvent],
+  );
+
   const focused = focusedId ? (MODEL_BY_ID.get(focusedId) ?? null) : null;
 
   return (
@@ -2040,6 +2104,7 @@ export function ToolsWorkstation() {
           title={chatPlaceholder}
           badge="tools · chat"
           dataset={dataset}
+          onAssistantFinal={onChatStackDirective}
         />
       </div>
     </div>

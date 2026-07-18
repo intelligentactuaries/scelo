@@ -59,8 +59,23 @@ function saveToStorage(key: string, messages: NodeChatMessage[]): void {
   }
 }
 
-export function useNodeChat(stageContext: string, opts?: { memoryKey?: string | null }) {
+export function useNodeChat(
+  stageContext: string,
+  opts?: {
+    memoryKey?: string | null;
+    /** Called once per COMPLETED assistant reply with the full text.
+     *  Return a string to replace what the user sees — used by the Tools
+     *  chats to apply model-stack directives and swap the machine block
+     *  for a confirmation. Kept in a ref so a stale closure never applies
+     *  yesterday's stack. */
+    onAssistantFinal?: (text: string) => string | undefined;
+  },
+) {
   const memoryKey = opts?.memoryKey ?? null;
+  const onAssistantFinalRef = useRef(opts?.onAssistantFinal);
+  useEffect(() => {
+    onAssistantFinalRef.current = opts?.onAssistantFinal;
+  });
 
   // Initialise from storage if there's a key on first mount.
   const [messages, setMessages] = useState<NodeChatMessage[]>(() => {
@@ -134,19 +149,15 @@ export function useNodeChat(stageContext: string, opts?: { memoryKey?: string | 
             { role: "user", content: trimmed },
           ];
           const res = await llmChatActive(messages, { maxTokens: 1024 });
-          setMessages((prev) =>
-            prev.map((m) =>
-              m.id === assistantId
-                ? {
-                    ...m,
-                    content: res.ok
-                      ? (res.text ?? "").trim() ||
-                        "_The provider returned an empty reply. Try a different model, or check the provider in Settings → AI providers._"
-                      : `_error: ${res.error ?? "unknown error"}_`,
-                  }
-                : m,
-            ),
-          );
+          let content = res.ok
+            ? (res.text ?? "").trim() ||
+              "_The provider returned an empty reply. Try a different model, or check the provider in Settings → AI providers._"
+            : `_error: ${res.error ?? "unknown error"}_`;
+          if (res.ok && content) {
+            const replaced = onAssistantFinalRef.current?.(content);
+            if (typeof replaced === "string") content = replaced;
+          }
+          setMessages((prev) => prev.map((m) => (m.id === assistantId ? { ...m, content } : m)));
         } catch (e) {
           // llmChatActive resolves {ok:false} for provider errors, so a
           // rejection here is the bridge itself failing (IPC). Without this
@@ -184,6 +195,7 @@ export function useNodeChat(stageContext: string, opts?: { memoryKey?: string | 
 
 ${trimmed}`;
 
+      let streamed = "";
       try {
         await streamOrchestrator(
           prompt,
@@ -192,6 +204,7 @@ ${trimmed}`;
             onEvent: (ev) => {
               if (ev.kind === "message") {
                 const chunk = ev.payload.text;
+                streamed += chunk;
                 setMessages((prev) =>
                   prev.map((m) =>
                     m.id === assistantId ? { ...m, content: m.content + chunk } : m,
@@ -250,6 +263,14 @@ ${trimmed}`;
               : m,
           ),
         );
+        if (streamed.trim().length > 0) {
+          const replaced = onAssistantFinalRef.current?.(streamed);
+          if (typeof replaced === "string") {
+            setMessages((prev) =>
+              prev.map((m) => (m.id === assistantId ? { ...m, content: replaced } : m)),
+            );
+          }
+        }
       }
     },
     [isStreaming, stageContext],
