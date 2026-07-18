@@ -16,7 +16,6 @@ import {
   InterventionRow,
   WmtrChart,
   componentsOption,
-  outcomeOption,
   survivalOption,
   trajectoryOption,
 } from './WmtrStrip';
@@ -119,7 +118,7 @@ export function ForecastCanvas({
             }}
           />
         </ForecastPanel>
-        <ForecastPanel title="Components · M / T / R (mean across paths)">
+        <ForecastPanel title="W(M,T,R) components · mean across paths">
           <WmtrChart options={componentsOption(wmtr, colors)} height={220} />
         </ForecastPanel>
       </div>
