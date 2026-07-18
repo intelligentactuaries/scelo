@@ -21,7 +21,7 @@ type Props = {
 // How long a busy run can go with ZERO stream activity before we flag it as
 // stuck. A local 3B model answers each agent in ~10–60s, so 90s of total
 // silence means the model / provider has almost certainly hung.
-const STALL_SEC = 90;
+export const STALL_SEC = 90;
 
 /**
  * On-canvas status for the Council Reactions / Society Pulse graphs.
