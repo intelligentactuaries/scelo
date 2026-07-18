@@ -622,13 +622,15 @@ function BreakdownBar({
   return (
     <div>
       <div className="stack-bar">
-        {order.map((k) => (
-          <div
-            key={k}
-            className="stack-seg"
-            style={{ flex: Math.max(values[k] ?? 0, 0.0001), background: colors[k] }}
-          />
-        ))}
+        {order
+          .filter((k) => (values[k] ?? 0) > 0)
+          .map((k) => (
+            <div
+              key={k}
+              className="stack-seg"
+              style={{ flex: values[k], background: colors[k] }}
+            />
+          ))}
       </div>
       <div className="syn-legend muted small" style={{ marginTop: 4 }}>
         {order.map((k) => (

@@ -1546,6 +1546,9 @@ code {
 
 .stack-bar {
   display: flex;
+  /* 2px surface gap between segments — zero-share segments are skipped by
+     the components (a 0-width flex child would still contribute a gap). */
+  gap: 2px;
   height: 14px;
   border-radius: var(--radius);
   overflow: hidden;
