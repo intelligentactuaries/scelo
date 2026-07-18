@@ -385,3 +385,40 @@ describe("wired pipeline · upstream results change downstream runs", () => {
     expect(bf.detail?.aprioriSource).toBe("book-average");
   });
 });
+
+describe("monetary detection · flags are not money", () => {
+  test("the reported case: claim_incurred_flag loses to claim_amount_zar", () => {
+    const ds: Dataset = {
+      name: "group_insurance.csv",
+      columns: ["member_id", "claim_incurred_flag", "group_type", "claim_amount_zar"],
+      rows: Array.from({ length: 40 }, (_, i) => ({
+        member_id: `M${i}`,
+        claim_incurred_flag: i % 3 === 0 ? 1 : 0,
+        group_type: ["stokvel", "burial", "coop"][i % 3],
+        claim_amount_zar: i % 3 === 0 ? 1200 + i * 10 : 0,
+      })) as Row[],
+    };
+    expect(detectMonetaryColumn(ds)).toBe("claim_amount_zar");
+  });
+
+  test("a binary column is refused even without a flag-ish name", () => {
+    const ds: Dataset = {
+      name: "x.csv",
+      columns: ["incurred", "region"],
+      rows: Array.from({ length: 20 }, (_, i) => ({
+        incurred: i % 2,
+        region: "GT",
+      })) as Row[],
+    };
+    expect(detectMonetaryColumn(ds)).toBeNull();
+  });
+
+  test("plain paid column still detects", () => {
+    const ds: Dataset = {
+      name: "tri.csv",
+      columns: ["origin_year", "dev_period", "paid"],
+      rows: [{ origin_year: 2020, dev_period: 1, paid: 1234.5 }] as Row[],
+    };
+    expect(detectMonetaryColumn(ds)).toBe("paid");
+  });
+});

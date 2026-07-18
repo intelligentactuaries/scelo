@@ -15,7 +15,12 @@
 // periods, which is qualitatively closer to truth than the in-browser
 // mock.
 
-import { isDesktopIDE, runPython, getRuntimeStatus } from "../../../lib/sceloIDE";
+import {
+  distillPythonError,
+  getRuntimeStatus,
+  isDesktopIDE,
+  runPython,
+} from "../../../lib/sceloIDE";
 import type { Dataset } from "../SoftDataWorkstation";
 import { findExposureColumn } from "../modelRunner";
 
@@ -146,7 +151,7 @@ export async function runClimadaPython(dataset: Dataset): Promise<ClimadaPythonO
   });
   const res = await runPython(SCRIPT, { stdin });
   if (!res.ok) {
-    throw new Error(res.stderr.trim().slice(-400) || `python exited with code ${res.exitCode}`);
+    throw new Error(distillPythonError(res.stderr, res.exitCode));
   }
   let parsed: unknown;
   try {
