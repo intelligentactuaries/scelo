@@ -36,7 +36,7 @@ import {
 import type { WmtrSingleParams } from '../shared/wmtr';
 import type { CanonWork, SimulationAgentResult } from '../shared/types';
 import { sampleSAPopulation } from './agents/saPopulation';
-import { runSimulation } from './agents/simulation';
+import { runSimulation, type SimulationProgress } from './agents/simulation';
 import { aggregateMacro, SA_MACRO_PROVENANCE } from './macroMap';
 import { fetchReferenceBundle, formatReferenceBlock, type ReferenceBundle } from './refdata';
 
@@ -316,6 +316,12 @@ interface SimulateBody {
   /** Bypass the LLM cache. */
   fresh?: boolean;
   seed?: number;
+  /** Stream progress as SSE instead of one JSON body at the end. A full
+   *  run is minutes of LLM calls; a silent response that long gets killed
+   *  by browser no-headers timeouts (~300s in Chrome), so the swarm client
+   *  opts in to this. Plain JSON stays the default — Scelo posts here and
+   *  expects the original contract. */
+  stream?: boolean;
 }
 
 function agentToRow(r: SimulationAgentResult): Record<string, unknown> {
@@ -355,33 +361,82 @@ route('POST', '/api/simulate', async ({ req }) => {
   const sampleSize = Math.max(20, Math.min(2000, body.sampleSize ?? 200));
   const drugs = (body.drugs ?? []).filter((d): d is string => !!d && d.trim().length > 0);
 
-  const t0 = performance.now();
-  const refs: ReferenceBundle = await fetchReferenceBundle(drugs);
-  const refBlock = formatReferenceBlock(refs);
-  const refMs = Math.round(performance.now() - t0);
+  const runFull = async (onProgress?: (e: SimulationProgress) => void) => {
+    const t0 = performance.now();
+    const refs: ReferenceBundle = await fetchReferenceBundle(drugs);
+    const refBlock = formatReferenceBlock(refs);
+    const refMs = Math.round(performance.now() - t0);
 
-  const agents = sampleSAPopulation({ size: sampleSize, seed: body.seed ?? 1 });
+    const agents = sampleSAPopulation({ size: sampleSize, seed: body.seed ?? 1 });
 
-  const { results, elapsedMs: simMs } = await runSimulation(agents, {
-    scenario: body.scenario.trim(),
-    referenceBlock: refBlock,
-    concurrency: body.concurrency,
-    fresh: body.fresh,
+    const { results, elapsedMs: simMs } = await runSimulation(agents, {
+      scenario: body.scenario.trim(),
+      referenceBlock: refBlock,
+      concurrency: body.concurrency,
+      fresh: body.fresh,
+      onProgress,
+    });
+
+    const macro = aggregateMacro(results, { population: body.population });
+    const rows = results.map(agentToRow);
+    return {
+      scenario: body.scenario.trim(),
+      drugs,
+      refs,
+      macro,
+      macroProvenance: SA_MACRO_PROVENANCE,
+      rows,
+      columns: rows.length > 0 ? Object.keys(rows[0]) : [],
+      sampleSize,
+      population: macro.population,
+      timings: { refMs, simMs },
+    };
+  };
+
+  if (!body.stream) return json(await runFull());
+
+  // SSE variant: headers go out immediately, progress events keep the
+  // socket warm for the whole multi-minute run, and the last event
+  // carries the exact payload the JSON branch would have returned.
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream({
+    async start(controller) {
+      let closed = false;
+      const send = (obj: unknown) => {
+        if (closed) return;
+        try {
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify(obj)}\n\n`));
+        } catch {
+          closed = true; // client went away — let the run finish quietly
+        }
+      };
+      send({ type: 'phase', phase: 'refs' });
+      try {
+        const payload = await runFull((e) => {
+          if (e.type === 'sim_start') send({ type: 'phase', phase: 'sim', total: e.total });
+          else if (e.type === 'sim_progress') send({ type: 'sim_progress', done: e.done, total: e.total });
+          else if (e.type === 'sim_done') send({ type: 'phase', phase: 'macro' });
+        });
+        send({ type: 'result', ...payload });
+      } catch (e) {
+        send({ type: 'error', message: e instanceof Error ? e.message : String(e) });
+      } finally {
+        closed = true;
+        try {
+          controller.close();
+        } catch {
+          /* already closed */
+        }
+      }
+    },
   });
-
-  const macro = aggregateMacro(results, { population: body.population });
-  const rows = results.map(agentToRow);
-  return json({
-    scenario: body.scenario.trim(),
-    drugs,
-    refs,
-    macro,
-    macroProvenance: SA_MACRO_PROVENANCE,
-    rows,
-    columns: rows.length > 0 ? Object.keys(rows[0]) : [],
-    sampleSize,
-    population: macro.population,
-    timings: { refMs, simMs },
+  return new Response(stream, {
+    headers: {
+      'content-type': 'text/event-stream',
+      'cache-control': 'no-cache',
+      connection: 'keep-alive',
+      'x-accel-buffering': 'no',
+    },
   });
 });
 
@@ -828,6 +883,10 @@ console.log(`[swarm-council] canon: ${canonInit.source} (${canonInit.count} work
 
 const server = Bun.serve({
   port: PORT,
+  // Bun's default idleTimeout is 10s, which kills any response that goes
+  // quiet — observed in the wild on SSE streams whose next event (an LLM
+  // call) took longer than that. 255 is the maximum Bun accepts.
+  idleTimeout: 255,
   development: process.env.NODE_ENV !== 'production',
   async fetch(req) {
     const url = new URL(req.url);

@@ -99,6 +99,7 @@ const DEFAULT_SOCIETY_PARAMS: SocietyParams = {
     unemployed: 0.15,
     student: 0.06,
     retired: 0.04,
+    child: 0, // society runs sample ages 16-85; key exists for the total Record type
   },
   financialLiteracy: 0.4,
 };

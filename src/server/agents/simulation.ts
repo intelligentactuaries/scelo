@@ -31,13 +31,19 @@ export type SimulationProgress =
 
 function buildAgentSystemPrompt(agent: SocietyAgent, scenario: string, ref: string): string {
   const h = agent.health;
+  // Minors don't answer for themselves. Under 12 (below SA's medical-consent
+  // age, Children's Act s129) the caregiver speaks and decides; 12-17 speak
+  // in their own voice but with a guardian involved. Under 15 nobody works
+  // (BCEA s43) — stated here and enforced again after parsing.
+  const youngChild = agent.age < 12;
+  const minor = agent.age < 18;
   const profile = [
     `id=${agent.id}`,
     `age=${agent.age}`,
     `sex=${agent.sex ?? h?.sex ?? '?'}`,
-    `income=${agent.incomeBand}`,
-    `education=${agent.education}`,
-    `employment=${agent.employment}`,
+    `income=${agent.incomeBand} (household)`,
+    `education=${agent.employment === 'child' ? 'none (pre-school)' : agent.education}`,
+    `employment=${agent.employment === 'child' ? 'child (below school age)' : agent.employment}`,
     `region=${agent.region}`,
     `culture=${agent.culture}`,
     `risk_tol=${agent.riskTolerance.toFixed(2)}`,
@@ -53,13 +59,32 @@ function buildAgentSystemPrompt(agent: SocietyAgent, scenario: string, ref: stri
       `insurance_cov=${h.insuranceCoverage.toFixed(2)}`,
     );
   }
+  const framing = youngChild
+    ? [
+        `You are the parent/guardian of ONE child, reacting to a real-world scenario.`,
+        `The profile below describes THE CHILD, not you. Answer entirely on the`,
+        `child's behalf: treatment, isolation, and spending decisions are yours,`,
+        `costs come out of the household budget, and the rationale must speak in`,
+        `the caregiver's voice ("My daughter is 2, so…", "I'd keep him home…").`,
+        `The health fields still describe the CHILD's own risk.`,
+      ]
+    : minor
+      ? [
+          `You are simulating ONE person's reaction to a real-world scenario.`,
+          `You are a minor (under 18) still in school. React in your own voice,`,
+          `but any medical treatment involves your parent/guardian's say-so and`,
+          `money usually isn't yours to spend.`,
+        ]
+      : [
+          `You are simulating ONE person's reaction to a real-world scenario.`,
+          `You are NOT an expert; you are an ordinary individual with the profile below.`,
+          `React as that person would — your education, income, comorbidities, and`,
+          `trust in institutions all shape your decisions.`,
+        ];
   return [
-    `You are simulating ONE person's reaction to a real-world scenario.`,
-    `You are NOT an expert; you are an ordinary individual with the profile below.`,
-    `React as that person would — your education, income, comorbidities, and`,
-    `trust in institutions all shape your decisions.`,
+    ...framing,
     ``,
-    `## Your profile`,
+    `## ${youngChild ? "The child's profile" : 'Your profile'}`,
     profile.join('\n'),
     ``,
     `## Scenario`,
@@ -92,6 +117,17 @@ function buildAgentSystemPrompt(agent: SocietyAgent, scenario: string, ref: stri
     `mechanisms, or adverse events. If the scenario doesn't apply (e.g. you're`,
     `outside the affected age band), reflect that with low infectionProbability`,
     `and 0 isolationDays.`,
+    `severityIfInfected, mortalityProbability, and hospitalised are all`,
+    `CONDITIONAL on ${youngChild ? 'the child' : 'you'} actually being affected`,
+    `(infectionProbability is the chance of that). "hospitalised" must be false`,
+    `unless severityIfInfected is "moderate", "severe", or "critical".`,
+    ...(agent.age < 15
+      ? [
+          `${youngChild ? 'The child' : 'You'} cannot legally work (SA minimum`,
+          `working age is 15): workdaysLost MUST be 0. School days missed go in`,
+          `isolationDays, and outOfPocketCostZar is household money spent.`,
+        ]
+      : []),
   ].join('\n');
 }
 
@@ -121,12 +157,21 @@ function parseOutcome(text: string): SimulationOutcome {
         spendingShift: normaliseSpending(b.spendingShift),
         rationale: String(b.rationale ?? '').slice(0, 200),
       },
-      health: {
-        infectionProbability: clampNum(h.infectionProbability, 0, 1, 0),
-        severityIfInfected: normaliseSeverity(h.severityIfInfected),
-        mortalityProbability: clampNum(h.mortalityProbability, 0, 1, 0),
-        hospitalised: Boolean(h.hospitalised),
-      },
+      health: (() => {
+        const severityIfInfected = normaliseSeverity(h.severityIfInfected);
+        return {
+          infectionProbability: clampNum(h.infectionProbability, 0, 1, 0),
+          severityIfInfected,
+          mortalityProbability: clampNum(h.mortalityProbability, 0, 1, 0),
+          // Enforce the prompt's validity rule: nobody is admitted while
+          // asymptomatic or mild. Models frequently tick hospitalised=true
+          // regardless, which used to inflate admissions past severe counts.
+          hospitalised:
+            Boolean(h.hospitalised) &&
+            severityIfInfected !== 'asymptomatic' &&
+            severityIfInfected !== 'mild',
+        };
+      })(),
       economic: {
         workdaysLost: clampNum(e.workdaysLost, 0, 365, 0),
         outOfPocketCostZar: clampNum(e.outOfPocketCostZar, 0, 500000, 0),
@@ -193,7 +238,12 @@ async function runOne(
       maxTokens: MAX_TOKENS,
       temperature: 0.5,
     });
-    return { agent, outcome: parseOutcome(raw), raw };
+    const outcome = parseOutcome(raw);
+    // Hard rule regardless of what the model wrote: under-15s cannot be
+    // employed (SA BCEA s43), so they cannot lose workdays. Keeps the
+    // 0-14 age band at zero in the macro workdays table by construction.
+    if (agent.age < 15) outcome.economic.workdaysLost = 0;
+    return { agent, outcome, raw };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     return { agent, outcome: defaultOutcome(`router error: ${msg}`), raw: '' };

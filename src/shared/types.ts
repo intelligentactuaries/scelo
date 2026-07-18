@@ -61,7 +61,10 @@ export interface SocietyAgent {
   education: 'primary' | 'secondary' | 'tertiary' | 'postgrad';
   region: 'urban' | 'periurban' | 'rural';
   riskTolerance: number;
-  employment: 'employed' | 'self-employed' | 'informal' | 'unemployed' | 'student' | 'retired';
+  /** 'child' = below school age (0-5); minors 6-17 are 'student'. Only
+   *  the SA population sampler emits 'child' — society runs sample ages
+   *  16-85 and never produce it. */
+  employment: 'employed' | 'self-employed' | 'informal' | 'unemployed' | 'student' | 'retired' | 'child';
   financialLiteracy: number;
   culture: string;
   /** Health profile — populated for population-simulation runs; optional on

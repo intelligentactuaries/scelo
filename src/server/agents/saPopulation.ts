@@ -171,16 +171,93 @@ const SA_EDUCATION_MIX: Array<['primary' | 'secondary' | 'tertiary' | 'postgrad'
   ['postgrad', 0.04],
 ];
 
-const SA_EMPLOYMENT_MIX: Array<
-  ['employed' | 'self-employed' | 'informal' | 'unemployed' | 'student' | 'retired', number]
-> = [
-  ['employed', 0.31],
-  ['self-employed', 0.08],
-  ['informal', 0.14],
-  ['unemployed', 0.30], // expanded definition
-  ['student', 0.10],
-  ['retired', 0.07],
-];
+/**
+ * Employment conditional on age. The previous flat mix let the sampler
+ * hand a 27-year-old 'retired' or a toddler 'student'; every band below
+ * is constrained to combinations that exist in the QLFS tables.
+ * - Under 6: below school age → 'child' (not economically active).
+ * - 6-17: compulsory schooling (SA Schools Act) → 'student'; BCEA s43
+ *   bars employment under 15 anyway.
+ * - 18-24: StatsSA QLFS 2024 youth — high NEET share, ~1/3 studying.
+ * - 25-49 / 50-59: QLFS prime-age mix; no students, early retirement
+ *   only appearing in the 50s. // proxy: band splits interpolated
+ * - 60-64: pre-/post-retirement blend; 65+: overwhelmingly retired.
+ */
+function employmentFor(
+  rand: () => number,
+  age: number,
+): SocietyAgent['employment'] {
+  if (age < 6) return 'child';
+  if (age < 18) return 'student';
+  if (age < 25) {
+    return pick(rand, [
+      ['student', 0.33],
+      ['employed', 0.16],
+      ['self-employed', 0.03],
+      ['informal', 0.10],
+      ['unemployed', 0.38], // expanded definition, youth
+    ]);
+  }
+  if (age < 50) {
+    return pick(rand, [
+      ['employed', 0.40],
+      ['self-employed', 0.10],
+      ['informal', 0.17],
+      ['unemployed', 0.33],
+    ]);
+  }
+  if (age < 60) {
+    return pick(rand, [
+      ['employed', 0.38],
+      ['self-employed', 0.11],
+      ['informal', 0.15],
+      ['unemployed', 0.28],
+      ['retired', 0.08],
+    ]);
+  }
+  if (age < 65) {
+    return pick(rand, [
+      ['retired', 0.40],
+      ['employed', 0.25],
+      ['self-employed', 0.08],
+      ['informal', 0.10],
+      ['unemployed', 0.17],
+    ]);
+  }
+  return pick(rand, [
+    ['retired', 0.85],
+    ['employed', 0.05],
+    ['self-employed', 0.05],
+    ['informal', 0.05],
+  ]);
+}
+
+/**
+ * Education conditional on age — highest level attained/attending.
+ * Children can't hold tertiary degrees; the adult attainment mix only
+ * applies from ~23 once completion is plausible.
+ */
+function educationFor(
+  rand: () => number,
+  age: number,
+): SocietyAgent['education'] {
+  if (age < 13) return 'primary';
+  if (age < 18) return 'secondary';
+  if (age < 20) {
+    return pick(rand, [
+      ['primary', 0.10],
+      ['secondary', 0.90],
+    ]);
+  }
+  if (age < 23) {
+    return pick(rand, [
+      ['primary', 0.12],
+      ['secondary', 0.68],
+      ['tertiary', 0.20],
+    ]);
+  }
+  return pick(rand, SA_EDUCATION_MIX);
+}
 
 const SA_REGION_MIX: Array<['urban' | 'periurban' | 'rural', number]> = [
   ['urban', 0.66],
@@ -239,13 +316,9 @@ export function sampleSAPopulation(args: {
     const age = Math.floor(band.band[0] + rand() * (band.band[1] - band.band[0] + 1));
 
     const incomeBand = pick(rand, SA_INCOME_MIX);
-    const education = pick(rand, SA_EDUCATION_MIX);
+    const education = educationFor(rand, age);
     const region = pick(rand, SA_REGION_MIX);
-    const employment = age < 18
-      ? 'student'
-      : age >= 65
-        ? 'retired'
-        : pick(rand, SA_EMPLOYMENT_MIX);
+    const employment = employmentFor(rand, age);
 
     const comorbidities: ComorbidityCode[] = [];
     for (const [code, fn] of Object.entries(SA_COMORBIDITY_PRIOR) as Array<
