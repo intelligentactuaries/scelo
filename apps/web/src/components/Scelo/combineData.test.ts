@@ -1,11 +1,13 @@
 import { describe, expect, test } from "bun:test";
+import type { Dataset, Row } from "./SoftDataWorkstation";
 import {
   combineAll,
   combinePair,
   detectJoinKeys,
+  previewCombine,
   suggestCombine,
 } from "./combineData";
-import type { Dataset, Row } from "./SoftDataWorkstation";
+import type { CombineStep } from "./combineData";
 
 function ds(name: string, columns: string[], rows: Array<Array<unknown>>): Dataset {
   return {
@@ -54,7 +56,14 @@ describe("detectJoinKeys", () => {
   });
 
   test("rejects shared columns whose values do not line up", () => {
-    const other = ds("other.csv", ["id", "x"], [["Z9", 1], ["Z8", 2]]);
+    const other = ds(
+      "other.csv",
+      ["id", "x"],
+      [
+        ["Z9", 1],
+        ["Z8", 2],
+      ],
+    );
     expect(detectJoinKeys(policies, other)).toEqual([]);
   });
 });
@@ -152,11 +161,7 @@ describe("combinePair join", () => {
   });
 
   test("colliding non-key columns get suffixed instead of overwritten", () => {
-    const rescore = ds(
-      "rescore.csv",
-      ["id", "sum_insurd"],
-      [["A1", 111_000]],
-    );
+    const rescore = ds("rescore.csv", ["id", "sum_insurd"], [["A1", 111_000]]);
     const { dataset, stats } = combinePair(policies, rescore, {
       strategy: "join-left",
       key: "id",
@@ -170,11 +175,7 @@ describe("combinePair join", () => {
 
 describe("combinePair append", () => {
   test("case-insensitive column alignment + union of new columns", () => {
-    const more = ds(
-      "more.csv",
-      ["ID", "Province", "broker"],
-      [["B1", "MP", "Acme"]],
-    );
+    const more = ds("more.csv", ["ID", "Province", "broker"], [["B1", "MP", "Acme"]]);
     const { dataset } = combinePair(policies, more, { strategy: "append" });
     expect(dataset.columns).toEqual(["id", "province", "sum_insurd", "broker"]);
     const added = dataset.rows[4];
@@ -227,8 +228,16 @@ describe("combineAll", () => {
   });
 
   test("row cap truncates with honest provenance fields", () => {
-    const bigA = ds("a.csv", ["id", "v"], Array.from({ length: 60 }, (_, i) => [`a${i}`, i]));
-    const bigB = ds("b.csv", ["id", "v"], Array.from({ length: 60 }, (_, i) => [`b${i}`, i]));
+    const bigA = ds(
+      "a.csv",
+      ["id", "v"],
+      Array.from({ length: 60 }, (_, i) => [`a${i}`, i]),
+    );
+    const bigB = ds(
+      "b.csv",
+      ["id", "v"],
+      Array.from({ length: 60 }, (_, i) => [`b${i}`, i]),
+    );
     const { dataset, truncated, totalRows } = combineAll(
       bigA,
       [{ dataset: bigB, step: { strategy: "append" } }],
@@ -240,5 +249,108 @@ describe("combineAll", () => {
     expect(dataset.sampled).toBe(true);
     expect(dataset.sourceTotalRows).toBe(120);
     expect(dataset.sampleKind).toBe("first");
+  });
+});
+
+describe("previewCombine", () => {
+  test("join-left preview: exact region counts for the venn", () => {
+    const p = previewCombine(policies, claims, {
+      strategy: "join-left",
+      key: "id",
+      rightKey: "ID",
+    });
+    expect(p.join).toBeDefined();
+    expect(p.join?.matched).toBe(3); // A1 A2 A3
+    expect(p.join?.baseOnly).toBe(1); // A4
+    expect(p.join?.baseNullKey).toBe(0);
+    expect(p.join?.otherOnlyKeys).toBe(0);
+    expect(p.newColumns).toEqual(["past_claims", "excess"]);
+    expect(p.resultRows).toBe(4); // left join keeps every base row
+    expect(p.resultColumns).toBe(5);
+  });
+
+  test("join-inner preview drops unmatched and null-key rows from the result", () => {
+    const withNull = ds(
+      "withnull.csv",
+      ["id", "province"],
+      [
+        ["A1", "GP"],
+        [null, "WC"],
+        ["Z9", "EC"],
+      ],
+    );
+    const p = previewCombine(withNull, claims, {
+      strategy: "join-inner",
+      key: "id",
+      rightKey: "ID",
+    });
+    expect(p.join?.matched).toBe(1);
+    expect(p.join?.baseOnly).toBe(1); // Z9
+    expect(p.join?.baseNullKey).toBe(1);
+    expect(p.join?.otherOnlyKeys).toBe(2); // A2 A3 unused
+    expect(p.resultRows).toBe(1);
+  });
+
+  test("append preview with dedupe counts exact duplicates", () => {
+    const batch = ds(
+      "batch.csv",
+      ["id", "province", "sum_insurd"],
+      [
+        ["A1", "GP", 100_000], // exact duplicate of a base row
+        ["B9", "MP", 60_000],
+      ],
+    );
+    const p = previewCombine(policies, batch, { strategy: "append", dedupeExact: true });
+    expect(p.append?.appended).toBe(1);
+    expect(p.append?.duplicatesDropped).toBe(1);
+    expect(p.resultRows).toBe(5);
+  });
+
+  test("preview numbers equal the executed combine's stats", () => {
+    const steps: CombineStep[] = [
+      { strategy: "join-left", key: "id", rightKey: "ID" },
+      { strategy: "join-inner", key: "id", rightKey: "ID" },
+      { strategy: "append", dedupeExact: true },
+      { strategy: "append", dedupeExact: false },
+    ];
+    for (const step of steps) {
+      const p = previewCombine(policies, claims, step);
+      const { dataset: out, stats } = combinePair(policies, claims, step);
+      expect(p.resultRows).toBe(out.rows.length);
+      expect(p.resultColumns).toBe(out.columns.length);
+      if (step.strategy === "append") {
+        expect(p.append?.appended).toBe(stats.matched);
+        expect(p.append?.duplicatesDropped).toBe(stats.unmatched);
+      } else {
+        expect(p.join?.matched).toBe(stats.matched);
+        expect((p.join?.baseOnly ?? 0) + (p.join?.baseNullKey ?? 0)).toBe(stats.unmatched);
+        expect(p.join?.duplicateRightKeys).toBe(stats.duplicateRightKeys);
+        expect(p.newColumns.filter((c) => /_\d+$/.test(c))).toEqual(stats.renamedColumns);
+      }
+    }
+  });
+
+  test("join preview mirrors combinePair's column renames", () => {
+    const overlap = ds(
+      "overlap.csv",
+      ["ID", "province", "notes"],
+      [
+        ["A1", "GP-2", "checked"],
+        ["A2", "WC-2", "ok"],
+      ],
+    );
+    const p = previewCombine(policies, overlap, {
+      strategy: "join-left",
+      key: "id",
+      rightKey: "ID",
+    });
+    const { dataset: out, stats } = combinePair(policies, overlap, {
+      strategy: "join-left",
+      key: "id",
+      rightKey: "ID",
+    });
+    expect(p.newColumns).toEqual(["province_2", "notes"]);
+    expect(p.resultColumns).toBe(out.columns.length);
+    expect(stats.renamedColumns).toEqual(["province_2"]);
   });
 });

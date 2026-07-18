@@ -209,6 +209,158 @@ export function suggestCombine(base: Dataset, other: Dataset): CombineSuggestion
   };
 }
 
+// ── preview ──────────────────────────────────────────────────────────────────
+//
+// Exact pre-flight accounting for the review panel's combine diagram: the
+// same key/lookup/fingerprint logic as combinePair, but counting instead of
+// materialising rows. Unlike suggestCombine's 5k-row sampled heuristics,
+// these numbers are exact — they must equal the stats the real combine
+// reports afterwards (locked in by tests).
+
+export interface CombinePreview {
+  strategy: CombineStrategy;
+  baseRows: number;
+  otherRows: number;
+  /** Columns the other side contributes (post-rename spelling). */
+  newColumns: string[];
+  /** Column names the two schemas share (case-insensitive). */
+  sharedColumns: number;
+  resultRows: number;
+  resultColumns: number;
+  join?: {
+    key: string;
+    rightKey: string;
+    /** Base rows whose key found a right-side match. */
+    matched: number;
+    /** Base rows with a non-null key and no match. */
+    baseOnly: number;
+    /** Base rows whose key is null/empty — can never match. */
+    baseNullKey: number;
+    /** Distinct right-side keys no base row uses (ignored by the join). */
+    otherOnlyKeys: number;
+    duplicateRightKeys: number;
+  };
+  append?: {
+    appended: number;
+    /** Exact duplicates dropped (0 unless dedupeExact). */
+    duplicatesDropped: number;
+  };
+}
+
+export function previewCombine(base: Dataset, other: Dataset, step: CombineStep): CombinePreview {
+  const aliases = columnAliases(base, other);
+
+  if (step.strategy === "append") {
+    const newColumns = other.columns.filter((c) => !aliases.has(c));
+    const columns = [...base.columns, ...newColumns];
+    let duplicatesDropped = 0;
+    let appended = other.rows.length;
+    if (step.dedupeExact) {
+      const seen = new Set<string>();
+      for (const r of base.rows) {
+        const padded: Row = newColumns.length === 0 ? r : { ...r };
+        for (const c of newColumns) padded[c] = null;
+        seen.add(rowFingerprint(padded, columns));
+      }
+      appended = 0;
+      for (const r of other.rows) {
+        const mapped: Row = {};
+        for (const c of columns) mapped[c] = null;
+        for (const [otherCol, baseCol] of aliases) mapped[baseCol] = r[otherCol];
+        for (const c of newColumns) mapped[c] = r[c];
+        const fp = rowFingerprint(mapped, columns);
+        if (seen.has(fp)) {
+          duplicatesDropped++;
+        } else {
+          seen.add(fp);
+          appended++;
+        }
+      }
+    }
+    return {
+      strategy: "append",
+      baseRows: base.rows.length,
+      otherRows: other.rows.length,
+      newColumns,
+      sharedColumns: aliases.size,
+      resultRows: base.rows.length + appended,
+      resultColumns: columns.length,
+      append: { appended, duplicatesDropped },
+    };
+  }
+
+  const key = step.key;
+  if (!key) throw new Error("join requires a key column");
+  const rightKey = step.rightKey ?? other.columns.find((c) => norm(c) === norm(key)) ?? key;
+  if (!base.columns.includes(key)) throw new Error(`key ${key} not in base dataset`);
+  if (!other.columns.includes(rightKey)) throw new Error(`key ${rightKey} not in second dataset`);
+
+  // Same rename walk as combinePair so newColumns reflects the final spelling.
+  const baseSet = new Set(base.columns.map(norm));
+  const newColumns: string[] = [];
+  for (const c of other.columns) {
+    if (c === rightKey) continue;
+    if (baseSet.has(norm(c))) {
+      let candidate = `${c}_2`;
+      let n = 2;
+      while (baseSet.has(norm(candidate))) candidate = `${c}_${++n}`;
+      newColumns.push(candidate);
+      baseSet.add(norm(candidate));
+    } else {
+      newColumns.push(c);
+      baseSet.add(norm(c));
+    }
+  }
+
+  const rightKeys = new Set<string>();
+  let duplicateRightKeys = 0;
+  for (const r of other.rows) {
+    const v = r[rightKey];
+    if (v === null || v === "") continue;
+    const k = String(v);
+    if (rightKeys.has(k)) duplicateRightKeys++;
+    else rightKeys.add(k);
+  }
+
+  let matched = 0;
+  let baseOnly = 0;
+  let baseNullKey = 0;
+  const usedKeys = new Set<string>();
+  for (const r of base.rows) {
+    const v = r[key];
+    if (v === null || v === "") {
+      baseNullKey++;
+      continue;
+    }
+    const k = String(v);
+    if (rightKeys.has(k)) {
+      matched++;
+      usedKeys.add(k);
+    } else {
+      baseOnly++;
+    }
+  }
+
+  return {
+    strategy: step.strategy,
+    baseRows: base.rows.length,
+    otherRows: other.rows.length,
+    newColumns,
+    sharedColumns: aliases.size,
+    resultRows: step.strategy === "join-inner" ? matched : base.rows.length,
+    resultColumns: base.columns.length + newColumns.length,
+    join: {
+      key,
+      rightKey,
+      matched,
+      baseOnly,
+      baseNullKey,
+      otherOnlyKeys: rightKeys.size - usedKeys.size,
+      duplicateRightKeys,
+    },
+  };
+}
+
 // ── execution ────────────────────────────────────────────────────────────────
 
 function rowFingerprint(row: Row, columns: string[]): string {
@@ -236,9 +388,7 @@ export function combinePair(
       for (const c of newColumns) padded[c] = null;
       return padded;
     });
-    const seen = step.dedupeExact
-      ? new Set(rows.map((r) => rowFingerprint(r, columns)))
-      : null;
+    const seen = step.dedupeExact ? new Set(rows.map((r) => rowFingerprint(r, columns))) : null;
     let appended = 0;
     let dropped = 0;
     for (const r of other.rows) {
@@ -274,8 +424,7 @@ export function combinePair(
   // join
   const key = step.key;
   if (!key) throw new Error("join requires a key column");
-  const rightKey =
-    step.rightKey ?? other.columns.find((c) => norm(c) === norm(key)) ?? key;
+  const rightKey = step.rightKey ?? other.columns.find((c) => norm(c) === norm(key)) ?? key;
   if (!base.columns.includes(key)) throw new Error(`key ${key} not in base dataset`);
   if (!other.columns.includes(rightKey)) {
     throw new Error(`key ${rightKey} not in second dataset`);
