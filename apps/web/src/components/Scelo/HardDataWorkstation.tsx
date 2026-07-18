@@ -44,6 +44,7 @@ import { useSwarmProbe } from "../SwarmStatus";
 import { SWARM_DOCS_URL, swarmStartCommand } from "../workspace/SwarmPanel";
 import { ChatInputPill } from "./ChatInputPill";
 import { ClimateDataPanel, isClimateFamilyModel } from "./ClimateDataPanel";
+import { CouncilDeliberationOverlay } from "./CouncilDeliberationOverlay";
 import { ExportButton } from "./ExportScreen";
 import { FlowControls } from "./FlowControls";
 import { ResizablePanel } from "./ResizablePanel";
@@ -53,7 +54,7 @@ import { ScrollFade } from "./ScrollFade";
 import { type Dataset, formatNumber } from "./SoftDataWorkstation";
 import { StageChatPanel } from "./StageChatPanel";
 import { UploadIndicator, nextPaint } from "./UploadIndicator";
-import { type CouncilSynthesis, conveneCouncil } from "./forecast/councilClient";
+import { type CouncilSynthesis, conveneCouncil, swarmApiUrl } from "./forecast/councilClient";
 import { forecastConfigFor } from "./forecast/derive";
 import { hasForecastDomain } from "./forecast/domainLabels";
 import { runForecast } from "./forecast/runner";
@@ -1276,6 +1277,7 @@ function ComparativeCharts({
   const sweep = doneRuns.find((r) => r.modelId === "wmtr-sensitivity")?.detail?.sweep as
     | ShockSweepRow[]
     | undefined;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: OUTCOME_COLORS/axisBase derive from `light`/`textDim`/`grid`, all listed.
   const shockOption = useMemo(() => {
     if (!Array.isArray(sweep) || sweep.length === 0) return null;
     const bands = sweep.map((r) => r.shock);
@@ -1315,7 +1317,6 @@ function ComparativeCharts({
         animation: false,
       })),
     };
-    // biome-ignore lint/correctness/useExhaustiveDependencies: OUTCOME_COLORS derives from `light` alone.
   }, [sweep, textDim, grid, light]);
 
   // ── GLM drivers: estimate ± 2·SE, top |z| coefficients ─────────────────
@@ -2550,6 +2551,11 @@ function CouncilAttachCta({ focused }: { focused: RunResult }) {
   const [error, setError] = useState<string | null>(null);
   const [progressId, setProgressId] = useState<string | null>(null);
   const [subset, setSubset] = useState<12 | 24 | 48 | 96 | 192>(12);
+  // Full-screen deliberation overlay — owns the screen while the council
+  // runs (minutes on a local LLM); Esc/hide tucks it away without touching
+  // the run, cancel aborts. Re-open by clicking the "Deliberating…" button.
+  const [overlayOpen, setOverlayOpen] = useState(false);
+  const abortRef = useRef<AbortController | null>(null);
   const probe = useSwarmProbe();
   // Society pulse defaults ON so the swarm app's Society tab is populated
   // when the user clicks "open in swarm ↗". Adds ~30s of Ollama time on a
@@ -2561,6 +2567,9 @@ function CouncilAttachCta({ focused }: { focused: RunResult }) {
     setBusy(true);
     setError(null);
     setProgressId(null);
+    setOverlayOpen(true);
+    const ac = new AbortController();
+    abortRef.current = ac;
     const labelName = MODEL_BY_ID.get(focused.modelId)?.name ?? focused.modelId;
     const scenarioContext =
       `${labelName} (${focused.family}) result on dataset \`${dataset?.name ?? "unknown"}\`: ` +
@@ -2569,6 +2578,7 @@ function CouncilAttachCta({ focused }: { focused: RunResult }) {
       scenario: scenarioContext,
       subset,
       skipSociety,
+      signal: ac.signal,
       onStart: (id) => setProgressId(id),
     })
       .then((s) => {
@@ -2587,8 +2597,17 @@ function CouncilAttachCta({ focused }: { focused: RunResult }) {
           createdAt: Date.now(),
         });
       })
-      .catch((e) => setError(e instanceof Error ? e.message : "council failed"))
-      .finally(() => setBusy(false));
+      .catch((e) => {
+        const aborted =
+          (e instanceof Error && e.message === "aborted") ||
+          (e instanceof DOMException && e.name === "AbortError");
+        setError(aborted ? "cancelled" : e instanceof Error ? e.message : "council failed");
+      })
+      .finally(() => {
+        setBusy(false);
+        setOverlayOpen(false);
+        abortRef.current = null;
+      });
   }, [focused, dataset, subset, skipSociety]);
 
   return (
@@ -2693,8 +2712,8 @@ function CouncilAttachCta({ focused }: { focused: RunResult }) {
           </div>
           <button
             type="button"
-            onClick={convene}
-            disabled={busy || probe === "down"}
+            onClick={busy ? () => setOverlayOpen(true) : convene}
+            disabled={(!busy && probe === "down") || (busy && overlayOpen)}
             className="ia-btn ia-btn-md ia-btn-secondary group w-full justify-between"
             title={
               probe === "down"
@@ -2717,6 +2736,24 @@ function CouncilAttachCta({ focused }: { focused: RunResult }) {
               swarm view as soon as the run has an id, not only when the
               synthesis lands. */}
           {busy && progressId && <OpenInSwarmLink runId={progressId} live />}
+          {busy && overlayOpen && (
+            <CouncilDeliberationOverlay
+              runId={progressId}
+              swarmBase={swarmApiUrl()}
+              agents={subset}
+              skipSociety={skipSociety}
+              modelLabel={MODEL_BY_ID.get(focused.modelId)?.name ?? focused.modelId}
+              onHide={() => setOverlayOpen(false)}
+              onCancel={() => {
+                abortRef.current?.abort();
+                setOverlayOpen(false);
+              }}
+              onWatchLive={() => {
+                setOverlayOpen(false);
+                navigate("/swarm");
+              }}
+            />
+          )}
         </div>
       )}
       {error && (
