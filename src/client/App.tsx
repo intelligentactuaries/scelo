@@ -67,7 +67,7 @@ import { CanonPanel, useCanonState } from './components/CanonPanel';
 import { HelpOverlay } from './components/HelpOverlay';
 import { ResizeHandle } from './components/ResizeHandle';
 import { ForecastCanvas } from './components/ForecastCanvas';
-import { RunStatus } from './components/RunStatus';
+import { RunStatus, STALL_SEC } from './components/RunStatus';
 
 interface RoundProgress {
   round: 1 | 2 | 3;
@@ -1121,6 +1121,18 @@ export function App() {
               </div>
             ) : (
               <>
+                {tab === 'forecast' && run && (runError || (stalledSec != null && stalledSec >= STALL_SEC)) && (
+                  <RunStatus
+                    phase="council"
+                    run={run}
+                    busy={runBusy}
+                    error={runError}
+                    stalledSec={stalledSec}
+                    progress={progress}
+                    society={society}
+                    onRetry={startRun}
+                  />
+                )}
                 {tab === 'forecast' && run && (
                   <ForecastCanvas
                     run={run}

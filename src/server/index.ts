@@ -410,6 +410,16 @@ route('POST', '/api/simulate', async ({ req }) => {
           closed = true; // client went away — let the run finish quietly
         }
       };
+      // Progress events land every ~10 agents; on a busy GPU that gap can
+      // stretch, so heartbeat comments guard the socket regardless.
+      const heartbeat = setInterval(() => {
+        if (closed) return;
+        try {
+          controller.enqueue(encoder.encode(`: hb\n\n`));
+        } catch {
+          clearInterval(heartbeat);
+        }
+      }, 20_000);
       send({ type: 'phase', phase: 'refs' });
       try {
         const payload = await runFull((e) => {
@@ -422,6 +432,7 @@ route('POST', '/api/simulate', async ({ req }) => {
         send({ type: 'error', message: e instanceof Error ? e.message : String(e) });
       } finally {
         closed = true;
+        clearInterval(heartbeat);
         try {
           controller.close();
         } catch {
@@ -716,6 +727,7 @@ route('GET', '/api/run/:id/justify-all', ({ params }) => {
 
 route('GET', '/api/run/:id/justify-all/stream', ({ params }) => {
   let sub: ReturnType<typeof subscribe> = null;
+  let heartbeat: ReturnType<typeof setInterval> | undefined;
   const encoder = new TextEncoder();
   const stream = new ReadableStream({
     start(controller) {
@@ -738,6 +750,7 @@ route('GET', '/api/run/:id/justify-all/stream', ({ params }) => {
         }
         if (ev.type === 'justify_done' || ev.type === 'error') {
           closed = true;
+          if (heartbeat) clearInterval(heartbeat);
           try {
             controller.close();
           } catch {
@@ -755,9 +768,19 @@ route('GET', '/api/run/:id/justify-all/stream', ({ params }) => {
       }
       // replay only justify events from history so a late-attaching client catches up
       for (const ev of sub.replay) send(ev);
+      // Keep the socket alive across slow per-agent justification calls.
+      heartbeat = setInterval(() => {
+        if (closed) return;
+        try {
+          controller.enqueue(encoder.encode(`: hb\n\n`));
+        } catch {
+          if (heartbeat) clearInterval(heartbeat);
+        }
+      }, 20_000);
     },
     cancel() {
       sub?.unsubscribe();
+      if (heartbeat) clearInterval(heartbeat);
     },
   });
   return new Response(stream, {
@@ -801,8 +824,22 @@ route('POST', '/api/chat', async ({ req }) => {
   const encoder = new TextEncoder();
   const stream = new ReadableStream({
     async start(controller) {
-      const send = (obj: unknown) =>
-        controller.enqueue(encoder.encode(`data: ${JSON.stringify(obj)}\n\n`));
+      const send = (obj: unknown) => {
+        try {
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify(obj)}\n\n`));
+        } catch {
+          /* client went away */
+        }
+      };
+      // Time-to-first-token on a local model with a long context can exceed
+      // idle timeouts; comment heartbeats keep the socket warm until tokens flow.
+      const heartbeat = setInterval(() => {
+        try {
+          controller.enqueue(encoder.encode(`: hb\n\n`));
+        } catch {
+          clearInterval(heartbeat);
+        }
+      }, 15_000);
       try {
         const gen = streamChat(body.runId, body.message.trim(), body.history ?? [], {
           fresh: body.fresh,
@@ -820,7 +857,12 @@ route('POST', '/api/chat', async ({ req }) => {
       } catch (e) {
         send({ type: 'error', message: e instanceof Error ? e.message : String(e) });
       } finally {
-        controller.close();
+        clearInterval(heartbeat);
+        try {
+          controller.close();
+        } catch {
+          /* already closed */
+        }
       }
     },
   });
@@ -836,30 +878,62 @@ route('POST', '/api/chat', async ({ req }) => {
 
 route('GET', '/api/run/:id/stream', ({ params }) => {
   let sub: ReturnType<typeof subscribe> = null;
+  let heartbeat: ReturnType<typeof setInterval> | undefined;
   const encoder = new TextEncoder();
   const stream = new ReadableStream({
     start(controller) {
       const send = (ev: SSEEvent) => {
-        controller.enqueue(encoder.encode(`data: ${JSON.stringify(ev)}\n\n`));
+        try {
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify(ev)}\n\n`));
+        } catch {
+          /* client went away */
+        }
       };
       sub = subscribe(params.id, send);
       if (!sub) {
-        // run not in-memory; emit current persisted state then close
+        // Run not in-memory; emit the persisted terminal state, then close.
+        // EVERY branch must send a terminal event: EventSource silently
+        // reconnects to a stream that closes without data, so an empty close
+        // here left the client re-polling forever with the UI stuck on
+        // "running…" — the post-restart freeze. A run that the DB still calls
+        // running/pending without an in-memory record is an orphan the boot
+        // reconciliation somehow missed; report it as interrupted.
         const run = getRun(params.id);
         if (!run) {
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'error', message: 'run not found' })}\n\n`));
+          send({ type: 'error', message: 'run not found' });
         } else if (run.summary) {
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'status', status: run.status })}\n\n`));
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'done', runId: run.id, summary: run.summary })}\n\n`));
+          send({ type: 'status', status: run.status });
+          send({ type: 'done', runId: run.id, summary: run.summary });
+        } else if (run.status === 'failed') {
+          send({ type: 'status', status: run.status });
+          send({ type: 'error', message: run.error ?? 'run failed' });
+        } else {
+          send({ type: 'status', status: 'failed' });
+          send({ type: 'error', message: 'interrupted: server restarted before the run completed' });
         }
-        controller.close();
+        try {
+          controller.close();
+        } catch {
+          /* already closed */
+        }
         return;
       }
       // replay history first
       for (const ev of sub.replay) send(ev);
+      // Heartbeat comments keep the socket alive through idle timeouts (Bun
+      // caps idleTimeout at 255s; a single slow LLM call between events can
+      // exceed it). EventSource ignores `:`-prefixed lines.
+      heartbeat = setInterval(() => {
+        try {
+          controller.enqueue(encoder.encode(`: hb\n\n`));
+        } catch {
+          if (heartbeat) clearInterval(heartbeat);
+        }
+      }, 20_000);
     },
     cancel() {
       sub?.unsubscribe();
+      if (heartbeat) clearInterval(heartbeat);
     },
   });
   return new Response(stream, {
