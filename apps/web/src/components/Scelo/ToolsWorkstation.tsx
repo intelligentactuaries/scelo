@@ -69,6 +69,7 @@ import {
   describeDirectiveReport,
   modelDirectiveProtocol,
   parseModelDirective,
+  parseStackCommand,
   replaceDirectiveBlock,
 } from "./modelStackDirectives";
 import type { ModelWire } from "./pipeline";
@@ -90,6 +91,7 @@ function NodeChatbotPanel({
   accentColor,
   chatId,
   onAssistantFinal,
+  onLocalCommand,
 }: {
   stageContext: string;
   placeholder: string;
@@ -99,10 +101,13 @@ function NodeChatbotPanel({
   chatId: string;
   /** Post-process a completed assistant reply (stack directives). */
   onAssistantFinal?: (text: string) => string | undefined;
+  /** Deterministic intent handler, tried BEFORE the provider — receives the
+   *  assistant history so "add all suggested" can resolve the suggestions. */
+  onLocalCommand?: (text: string, assistantHistory?: string[]) => string | null;
 }) {
   const { chatMemoryPrefix } = useScelo();
   const memoryKey = chatMemoryPrefix ? `${chatMemoryPrefix}:${chatId}` : undefined;
-  const { messages, isStreaming, send, stop } = useNodeChat(stageContext, {
+  const { messages, isStreaming, send, sendLocal, stop } = useNodeChat(stageContext, {
     memoryKey,
     onAssistantFinal,
   });
@@ -119,6 +124,14 @@ function NodeChatbotPanel({
     const text = draft.trim();
     if (!text || isStreaming) return;
     setDraft("");
+    const localReply = onLocalCommand?.(
+      text,
+      messages.filter((m) => m.role === "assistant").map((m) => m.content),
+    );
+    if (localReply != null) {
+      sendLocal(text, localReply);
+      return;
+    }
     void send(text);
   };
 
@@ -178,6 +191,8 @@ type HubNodeData = {
   chatPlaceholder: string;
   /** Applies scelo-models directives from this chat's replies. */
   onStackDirective?: (text: string) => string | undefined;
+  /** Deterministic stack commands, tried before the provider. */
+  onLocalStackCommand?: (text: string, assistantHistory?: string[]) => string | null;
 };
 
 // Front-and-back handle pack with one slot pair per node in the canvas.
@@ -308,6 +323,7 @@ function HubNode({ id, data }: NodeProps<HubNodeData>) {
           placeholder={data.chatPlaceholder}
           chatId="tools-hub"
           onAssistantFinal={data.onStackDirective}
+          onLocalCommand={data.onLocalStackCommand}
         />
       )}
     </div>
@@ -333,6 +349,8 @@ type ToolNodeData = {
   chatPlaceholder: string;
   /** Applies scelo-models directives from this chat's replies. */
   onStackDirective?: (text: string) => string | undefined;
+  /** Deterministic stack commands, tried before the provider. */
+  onLocalStackCommand?: (text: string, assistantHistory?: string[]) => string | null;
 };
 
 function ToolNode({ id, data }: NodeProps<ToolNodeData>) {
@@ -499,6 +517,7 @@ function ToolNode({ id, data }: NodeProps<ToolNodeData>) {
           accentColor={color}
           chatId={`tools-model:${data.model.id}`}
           onAssistantFinal={data.onStackDirective}
+          onLocalCommand={data.onLocalStackCommand}
         />
       )}
     </div>
@@ -1504,6 +1523,49 @@ export function ToolsWorkstation() {
     [setSelectedModels, logEvent],
   );
 
+  // Deterministic stack commands — tried before the provider. "add all the
+  // suggested models" resolves the ids from the assistant's own prior
+  // replies (newest first, skipping confirmations that only re-list the
+  // attached stack), so acceptance never depends on the LLM remembering
+  // what it proposed. Explicit "add glm-frequency / remove mack / swap X
+  // for Y" resolve straight from the catalog. Returns null → normal chat.
+  const applyDirectiveAndDescribe = useCallback(
+    (directive: ReturnType<typeof parseStackCommand>): string | null => {
+      if (!directive) return null;
+      const { next, report } = applyModelDirective(selectedModelsRef.current, directive);
+      const changed =
+        report.added.length > 0 ||
+        report.removed.length > 0 ||
+        report.enabled.length > 0 ||
+        report.disabled.length > 0;
+      if (changed) {
+        setSelectedModels(next);
+        for (const id of report.added) {
+          logEvent({ stage: "tools", kind: "model.add", payload: { id } });
+        }
+        for (const id of report.removed) {
+          logEvent({ stage: "tools", kind: "model.remove", payload: { id } });
+        }
+        for (const id of [...report.enabled, ...report.disabled]) {
+          logEvent({
+            stage: "tools",
+            kind: "model.toggle",
+            payload: { id, enabled: report.enabled.includes(id) },
+          });
+        }
+      }
+      return `**stack update:** ${describeDirectiveReport(report)}`;
+    },
+    [setSelectedModels, logEvent],
+  );
+  const onChatStackCommand = useCallback(
+    (text: string, assistantHistory?: string[]): string | null =>
+      applyDirectiveAndDescribe(
+        parseStackCommand(text, assistantHistory ?? [], selectedModelsRef.current),
+      ),
+    [applyDirectiveAndDescribe],
+  );
+
   const desiredNodes: Node[] = useMemo(() => {
     if (!dataset) return [];
     const layout = columnLayout(selectedModels.length);
@@ -1531,6 +1593,7 @@ export function ToolsWorkstation() {
             ? "suggest a starter model mix…"
             : "rebalance the mix, flag gaps…",
         onStackDirective: onChatStackDirective,
+        onLocalStackCommand: onChatStackCommand,
       },
       draggable: true,
       selectable: false,
@@ -1562,6 +1625,7 @@ export function ToolsWorkstation() {
           }),
           chatPlaceholder: `ask about ${model.name}…`,
           onStackDirective: onChatStackDirective,
+          onLocalStackCommand: onChatStackCommand,
         },
         draggable: true,
       };
@@ -2105,6 +2169,7 @@ export function ToolsWorkstation() {
           title={chatPlaceholder}
           badge="tools · chat"
           dataset={dataset}
+          onLocalCommand={onChatStackCommand}
           onAssistantFinal={onChatStackDirective}
         />
       </div>
