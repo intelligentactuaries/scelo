@@ -36,19 +36,30 @@ echarts.use([
 ]);
 
 // ─── ECharts base option (mirrors /lab/wmtr's baseOption) ────────────────
+//
+// Color discipline: every series sets its color at the SERIES level (never
+// only inside lineStyle). ECharts derives legend chips and tooltip markers
+// from the series-level color — style only the line and the legend renders
+// default-palette blues/greens that match nothing on the plot, which is
+// exactly the "legends look swapped" failure this file used to have.
 
-const ECHART_GRID = { left: 44, right: 16, top: 22, bottom: 30, containLabel: false };
+// containLabel reserves room for tick labels but NOT for axis names, so the
+// bottom margin carries the centred x-axis name.
+const ECHART_GRID = { left: 8, right: 16, top: 26, bottom: 16, containLabel: true };
+
+const MONO = "'JetBrains Mono', ui-monospace, monospace";
 
 function baseOption(colors: ThemeColors) {
   return {
     backgroundColor: 'transparent',
-    textStyle: {
-      color: colors.fg,
-      fontFamily: "'JetBrains Mono', ui-monospace, monospace",
-    },
+    textStyle: { color: colors.fg, fontFamily: MONO },
     grid: ECHART_GRID,
     xAxis: {
       type: 'value' as const,
+      name: 'years',
+      nameLocation: 'middle' as const,
+      nameGap: 26,
+      nameTextStyle: { color: colors.muted, fontSize: 9, fontFamily: MONO },
       axisLine: { lineStyle: { color: colors.border } },
       axisLabel: { color: colors.fgMute, fontSize: 10 },
       splitLine: { lineStyle: { color: colors.grid } },
@@ -61,16 +72,24 @@ function baseOption(colors: ThemeColors) {
     },
     tooltip: {
       trigger: 'axis' as const,
+      axisPointer: { type: 'line' as const, lineStyle: { color: colors.muted, width: 1 } },
       backgroundColor: colors.tooltipBg,
       borderColor: colors.tooltipBorder,
-      textStyle: { color: colors.tooltipText, fontSize: 11 },
+      textStyle: { color: colors.tooltipText, fontSize: 11, fontFamily: MONO },
     },
     legend: {
-      textStyle: { color: colors.fgMute, fontSize: 10 },
+      textStyle: { color: colors.fgMute, fontSize: 10, fontFamily: MONO },
+      itemWidth: 14,
+      itemHeight: 8,
       top: 0,
       right: 8,
     },
   };
+}
+
+// Tooltip marker dot matching a series color (ECharts' own chip markup).
+function dot(color: string): string {
+  return `<span style="display:inline-block;margin-right:5px;border-radius:50%;width:8px;height:8px;background:${color}"></span>`;
 }
 
 // ─── Component ─────────────────────────────────────────────────────────
@@ -128,7 +147,7 @@ export function WmtrStrip({ wmtr, clusters, runId, scenario, onInterveneStarted 
         <WmtrPanel title="Outcome distribution">
           <WmtrChart options={outcomeOption(wmtr, colors)} height={150} />
         </WmtrPanel>
-        <WmtrPanel title="Components · M / T / R (mean across paths)">
+        <WmtrPanel title="W(M,T,R) components · mean across paths">
           <WmtrChart options={componentsOption(wmtr, colors)} height={150} />
         </WmtrPanel>
       </div>
@@ -212,17 +231,44 @@ export function WmtrChart({ options, height }: { options: object; height: number
 
 export function trajectoryOption(w: RunWmtr, colors: ThemeColors): object {
   const r = w.result;
-  const xs = r.years;
   const b = baseOption(colors);
+  const f3 = (x: number) => x.toFixed(3);
   return {
     ...b,
-    xAxis: { ...b.xAxis, data: xs, name: '', boundaryGap: false },
-    yAxis: { ...b.yAxis, name: '' },
+    // Category axis, not value: the band is drawn with `stack`, and ECharts
+    // stacks EVERY dimension of pair data on a value axis (x runs to 2× the
+    // horizon), while scalar data on a value axis is read as x. The classic
+    // quantile-band recipe is category years + 1-D series.
+    xAxis: { ...b.xAxis, type: 'category' as const, data: r.years, boundaryGap: false },
+    // W sits in a narrow band (e.g. 0.60–0.76); a zero-based axis squashes
+    // the whole story into the top fifth of the panel. scale:true fits the
+    // data; the W₀ markLine keeps "where we started" visible for reference.
+    yAxis: { ...b.yAxis, scale: true },
     legend: { ...b.legend, show: false },
+    tooltip: {
+      ...b.tooltip,
+      // The band is drawn via an invisible stacked base + a delta series;
+      // neither raw value means anything to a reader, so the tooltip is
+      // built by hand from the real quantiles instead.
+      formatter: (params: Array<{ dataIndex: number }>) => {
+        const i = params[0]?.dataIndex ?? 0;
+        return [
+          `year ${r.years[i]}`,
+          `${dot(colors.consensus)}mean W ${f3(r.meanW[i])}`,
+          `${dot(`${colors.consensus}60`)}p25–p75 ${f3(r.p25W[i])} – ${f3(r.p75W[i])}`,
+          `${dot(colors.muted)}W₀ ${f3(r.w0)}`,
+        ].join('<br/>');
+      },
+    },
+    // NOTE: the band series use 1-D arrays, not [year, value] pairs — with
+    // `stack`, ECharts sums EVERY dimension of pair data, so the x values
+    // stack too and the axis runs to 2× the horizon. Index == year holds by
+    // construction (result.years is always 0..T-1).
     series: [
       {
-        name: 'p25',
+        name: 'p25 (band base)',
         type: 'line',
+        color: 'transparent',
         data: r.p25W,
         showSymbol: false,
         lineStyle: { opacity: 0 },
@@ -230,27 +276,36 @@ export function trajectoryOption(w: RunWmtr, colors: ThemeColors): object {
         silent: true,
       },
       {
-        name: '25–75',
+        name: '25–75 band',
         type: 'line',
+        color: `${colors.consensus}30`,
         data: r.p75W.map((v, i) => v - r.p25W[i]),
         showSymbol: false,
         lineStyle: { opacity: 0 },
         areaStyle: { color: `${colors.consensus}30` },
         stack: 'band',
+        silent: true,
       },
       {
-        name: 'mean',
+        name: 'mean W',
         type: 'line',
+        color: colors.consensus,
         data: r.meanW,
         showSymbol: false,
-        lineStyle: { color: colors.consensus, width: 2 },
-      },
-      {
-        name: 'W₀',
-        type: 'line',
-        data: xs.map(() => r.w0),
-        showSymbol: false,
-        lineStyle: { color: colors.muted, type: 'dashed', width: 1 },
+        lineStyle: { width: 2 },
+        markLine: {
+          silent: true,
+          symbol: 'none',
+          data: [{ yAxis: r.w0 }],
+          lineStyle: { color: colors.muted, type: 'dashed', width: 1 },
+          label: {
+            formatter: 'W₀',
+            position: 'insideEndTop',
+            color: colors.muted,
+            fontSize: 10,
+            fontFamily: MONO,
+          },
+        },
       },
     ],
   };
@@ -262,16 +317,29 @@ export function survivalOption(w: RunWmtr, colors: ThemeColors): object {
   return {
     ...b,
     xAxis: { ...b.xAxis, boundaryGap: false },
-    yAxis: { ...b.yAxis, min: 0, max: 1.05 },
+    yAxis: {
+      ...b.yAxis,
+      min: 0,
+      max: 1,
+      axisLabel: {
+        ...b.yAxis.axisLabel,
+        formatter: (v: number) => `${Math.round(v * 100)}%`,
+      },
+    },
     legend: { ...b.legend, show: false },
+    tooltip: {
+      ...b.tooltip,
+      valueFormatter: (v: unknown) => `${((v as number) * 100).toFixed(0)}%`,
+    },
     series: [
       {
-        name: 'S(t)',
+        name: 'P(survival)',
         type: 'line',
+        color: colors.consensus,
         data: r.years.map((y, i) => [y, r.meanSurv[i]]),
         showSymbol: false,
-        lineStyle: { color: colors.consensus, width: 2 },
-        areaStyle: { color: `${colors.consensus}24` },
+        lineStyle: { width: 2 },
+        areaStyle: { opacity: 0.14 },
       },
     ],
   };
@@ -280,34 +348,44 @@ export function survivalOption(w: RunWmtr, colors: ThemeColors): object {
 export function componentsOption(w: RunWmtr, colors: ThemeColors): object {
   const r = w.result;
   const b = baseOption(colors);
+  // Fixed identity → color assignment (validated CVD-safe trio); the legend
+  // and tooltip chips inherit these same series-level colors, so the three
+  // surfaces can never disagree again. Names are short enough to keep the
+  // legend to ONE row even in the 150px strip panels; the panel title
+  // ("W(M,T,R) components") carries the letter mapping.
+  const defs = [
+    { key: 'meanM' as const, name: 'money', color: colors.chartM },
+    { key: 'meanT' as const, name: 'time', color: colors.chartT },
+    { key: 'meanR' as const, name: 'relationships', color: colors.chartR },
+  ];
   return {
     ...b,
+    // Strip panels can be as narrow as 180px (minmax in .wmtr-strip-grid);
+    // the compact legend wraps to two rows there, so the grid reserves room.
+    grid: { ...ECHART_GRID, top: 40 },
     xAxis: { ...b.xAxis, boundaryGap: false },
-    yAxis: { ...b.yAxis },
-    legend: { ...b.legend, data: ['M', 'T', 'R'] },
-    series: [
-      {
-        name: 'M',
-        type: 'line',
-        data: r.years.map((y, i) => [y, r.meanM[i]]),
-        showSymbol: false,
-        lineStyle: { color: colors.dissent, width: 1.6 },
-      },
-      {
-        name: 'T',
-        type: 'line',
-        data: r.years.map((y, i) => [y, r.meanT[i]]),
-        showSymbol: false,
-        lineStyle: { color: '#6366f1', width: 1.6 },
-      },
-      {
-        name: 'R',
-        type: 'line',
-        data: r.years.map((y, i) => [y, r.meanR[i]]),
-        showSymbol: false,
-        lineStyle: { color: colors.adversarial, width: 1.6 },
-      },
-    ],
+    yAxis: { ...b.yAxis, min: 0 },
+    legend: {
+      ...b.legend,
+      left: 8,
+      right: 8,
+      top: 0,
+      itemWidth: 12,
+      itemGap: 6,
+      textStyle: { ...b.legend.textStyle, fontSize: 9 },
+    },
+    tooltip: {
+      ...b.tooltip,
+      valueFormatter: (v: unknown) => (v as number).toFixed(3),
+    },
+    series: defs.map((d) => ({
+      name: d.name,
+      type: 'line',
+      color: d.color,
+      data: r.years.map((y, i) => [y, r[d.key][i]]),
+      showSymbol: false,
+      lineStyle: { width: 2 },
+    })),
   };
 }
 
@@ -315,23 +393,43 @@ export function outcomeOption(w: RunWmtr, colors: ThemeColors): object {
   const order: Outcome[] = ['grew', 'stabilized', 'declined', 'collapsed'];
   const f = w.result.outcomeFractions;
   const b = baseOption(colors);
+  const full: Record<Outcome, string> = {
+    grew: 'Grew',
+    stabilized: 'Stabilized',
+    declined: 'Declined',
+    collapsed: 'Collapsed',
+  };
   return {
     ...b,
-    grid: { ...ECHART_GRID, left: 56, bottom: 32 },
+    grid: { ...ECHART_GRID, top: 18, bottom: 2 },
     legend: { show: false },
     xAxis: {
       ...b.xAxis,
       type: 'category' as const,
-      data: order.map((o) => o[0].toUpperCase() + o.slice(1, 4)),
+      name: '',
+      data: order.map((o) => full[o].slice(0, 4)),
       boundaryGap: true,
+      axisLabel: { ...b.xAxis.axisLabel, interval: 0 },
     },
-    yAxis: { ...b.yAxis, max: 105 },
+    yAxis: {
+      ...b.yAxis,
+      max: 105,
+      axisLabel: { ...b.yAxis.axisLabel, formatter: (v: number) => `${v}%` },
+    },
+    tooltip: {
+      ...b.tooltip,
+      trigger: 'item' as const,
+      formatter: (p: { dataIndex: number; value: number }) => {
+        const o = order[p.dataIndex];
+        return `${dot(OUTCOME_COLOR[o])}${full[o]} — ${p.value.toFixed(1)}% of ${w.config.nPaths} paths`;
+      },
+    },
     series: [
       {
         type: 'bar',
         data: order.map((o) => ({
           value: +(f[o] * 100).toFixed(1),
-          itemStyle: { color: OUTCOME_COLOR[o] },
+          itemStyle: { color: OUTCOME_COLOR[o], borderRadius: [4, 4, 0, 0] },
         })),
         barWidth: '60%',
         label: {
@@ -339,7 +437,7 @@ export function outcomeOption(w: RunWmtr, colors: ThemeColors): object {
           position: 'top',
           formatter: (p: { value: number }) => `${p.value.toFixed(0)}%`,
           color: colors.fgMute,
-          fontFamily: "'JetBrains Mono', ui-monospace, monospace",
+          fontFamily: MONO,
           fontSize: 10,
         },
       },

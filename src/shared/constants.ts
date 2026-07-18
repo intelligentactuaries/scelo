@@ -68,6 +68,12 @@ export interface ThemeColors {
   dissent: string;
   adversarial: string;
   accent: string;
+  // WMTR components chart — categorical trio for M / T / R lines. Validated
+  // CVD-safe (deutan/protan/tritan dE >= 8.9 adjacent) against each mode's
+  // chart surface; keep the M, T, R assignment fixed, never cycled.
+  chartM: string;
+  chartT: string;
+  chartR: string;
   // Tooltip styling — ECharts inlines these on the tooltip element.
   tooltipBg: string;
   tooltipBorder: string;
@@ -86,6 +92,9 @@ const LIGHT: ThemeColors = {
   dissent: '#C87D32',
   adversarial: '#B73A3A',
   accent: '#309061',
+  chartM: '#2F5E9E',
+  chartT: '#A8641F',
+  chartR: '#0F8A68',
   tooltipBg: 'rgba(242, 238, 226, 0.95)',
   tooltipBorder: '#CDC7B8',
   tooltipText: '#181715',
@@ -103,6 +112,9 @@ const DARK: ThemeColors = {
   dissent: '#EBB46E',
   adversarial: '#E66E6E',
   accent: '#82D7AF',
+  chartM: '#4A82C7',
+  chartT: '#C7802E',
+  chartR: '#22997D',
   tooltipBg: 'rgba(34, 30, 26, 0.95)',
   tooltipBorder: '#423A31',
   tooltipText: '#F1ECDF',
