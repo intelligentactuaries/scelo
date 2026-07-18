@@ -17,7 +17,12 @@
 // no usable target, Python error, bad output — THROWS with the reason so
 // the caller can surface it instead of silently substituting the mock.
 
-import { isDesktopIDE, runPython, getRuntimeStatus } from "../../../lib/sceloIDE";
+import {
+  distillPythonError,
+  getRuntimeStatus,
+  isDesktopIDE,
+  runPython,
+} from "../../../lib/sceloIDE";
 import type { Dataset } from "../SoftDataWorkstation";
 import {
   detectCategoricalCovariates,
@@ -176,7 +181,7 @@ export async function runGlmPython(
   const stdin = JSON.stringify({ kind, target, covariates: cov, rows });
   const res = await runPython(SCRIPT, { stdin });
   if (!res.ok) {
-    throw new Error(res.stderr.trim().slice(-400) || `python exited with code ${res.exitCode}`);
+    throw new Error(distillPythonError(res.stderr, res.exitCode));
   }
   let parsed: unknown;
   try {

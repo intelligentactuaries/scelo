@@ -155,17 +155,38 @@ export function detectFrequencyTarget(dataset: Dataset): string | null {
 
 // Monetary severity column: paid / claim_amt / severity / loss / incurred
 // with at least one positive numeric value.
+// Indicator columns whose NAME matches the monetary pattern anyway —
+// `claim_incurred_flag` is the reported case: it matched via `incurred`,
+// won on column order, and a Gamma severity model was fitted to a 0/1
+// flag (headline "severity = 1", crashed the statsmodels bridge).
+const FLAGGY_RE = /(^|_)(flag|ind|indicator|is|has|bool)(_|$)/i;
+// Names that are near-certainly a real monetary amount — preferred over
+// generic pattern hits regardless of column order.
+const STRONG_MONEY_RE = /(amount|amt|zar|usd|gbp|eur|cost|paid|severity|loss)/i;
+
 export function detectMonetaryColumn(dataset: Dataset): string | null {
   const rows = dataset.rows;
   const scan = Math.min(rows.length, DETECT_SCAN_CAP);
+  const candidates: Array<{ col: string; strong: boolean }> = [];
   for (const col of dataset.columns) {
     if (!MONETARY_RE.test(col)) continue;
+    if (FLAGGY_RE.test(col)) continue;
+    // Value screen: must carry a positive value AND not be all 0/1 —
+    // a binary column is an indicator whatever its name says.
+    let positive = false;
+    let nonBinary = false;
     for (let i = 0; i < scan; i++) {
       const v = rows[i][col];
-      if (typeof v === "number" && Number.isFinite(v) && v > 0) return col;
+      if (typeof v !== "number" || !Number.isFinite(v)) continue;
+      if (v > 0) positive = true;
+      if (v !== 0 && v !== 1) nonBinary = true;
+      if (positive && nonBinary) break;
     }
+    if (!positive || !nonBinary) continue;
+    candidates.push({ col, strong: STRONG_MONEY_RE.test(col) });
   }
-  return null;
+  const strong = candidates.find((c) => c.strong);
+  return (strong ?? candidates[0])?.col ?? null;
 }
 
 // Exposure-like column for the climate runners. Fuzzy on purpose:
