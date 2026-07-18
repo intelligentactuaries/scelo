@@ -59,6 +59,13 @@ export function DecisionSankey({ run, crossHighlight, onCrossHighlight }: Props)
   // handlers (registered once on mount) always see the live values.
   const onCrossHighlightRef = useRef(onCrossHighlight);
   const crossHighlightRef = useRef(crossHighlight);
+  // Mount-time chart handlers must read the CURRENT run — a re-run reuses
+  // agent ids, so a stale closure silently maps highlights through the old
+  // run's clusters/stances.
+  const runRef = useRef(run);
+  useEffect(() => {
+    runRef.current = run;
+  }, [run]);
   useEffect(() => {
     onCrossHighlightRef.current = onCrossHighlight;
   }, [onCrossHighlight]);
@@ -87,14 +94,14 @@ export function DecisionSankey({ run, crossHighlight, onCrossHighlight }: Props)
       if (!cb) return;
       if (params.dataType === 'node' && params.name) {
         const name = String(params.name);
-        const ids = agentsForSankeyNode(name, run);
+        const ids = agentsForSankeyNode(name, runRef.current);
         const key = `node:${name}`;
         const cur = crossHighlightRef.current;
         if (cur?.locked && cur.key === key) cb(null);
         else cb({ source: 'sankey', agentIds: ids, key, locked: true });
       } else if (params.dataType === 'edge' && params.data) {
         const e = params.data as { source: string; target: string };
-        const ids = agentsForSankeyLink(e.source, e.target, run);
+        const ids = agentsForSankeyLink(e.source, e.target, runRef.current);
         const key = `edge:${e.source}|${e.target}`;
         const cur = crossHighlightRef.current;
         if (cur?.locked && cur.key === key) cb(null);
@@ -117,11 +124,11 @@ export function DecisionSankey({ run, crossHighlight, onCrossHighlight }: Props)
       if (!cb || crossHighlightRef.current?.locked) return;
       if (params.dataType === 'node' && params.name) {
         const name = String(params.name);
-        const ids = agentsForSankeyNode(name, run);
+        const ids = agentsForSankeyNode(name, runRef.current);
         cb({ source: 'sankey', agentIds: ids, key: `node:${name}`, locked: false });
       } else if (params.dataType === 'edge' && params.data) {
         const e = params.data as { source: string; target: string };
-        const ids = agentsForSankeyLink(e.source, e.target, run);
+        const ids = agentsForSankeyLink(e.source, e.target, runRef.current);
         cb({ source: 'sankey', agentIds: ids, key: `edge:${e.source}|${e.target}`, locked: false });
       }
     });
