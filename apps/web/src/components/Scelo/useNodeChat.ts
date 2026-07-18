@@ -147,6 +147,15 @@ export function useNodeChat(stageContext: string, opts?: { memoryKey?: string | 
                 : m,
             ),
           );
+        } catch (e) {
+          // llmChatActive resolves {ok:false} for provider errors, so a
+          // rejection here is the bridge itself failing (IPC). Without this
+          // catch the bubble sat empty forever and the rejection went
+          // unhandled.
+          const msg = e instanceof Error ? e.message : String(e);
+          setMessages((prev) =>
+            prev.map((m) => (m.id === assistantId ? { ...m, content: `_error: ${msg}_` } : m)),
+          );
         } finally {
           setIsStreaming(false);
           abortRef.current = null;

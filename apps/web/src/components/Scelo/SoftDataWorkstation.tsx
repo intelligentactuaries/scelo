@@ -37,6 +37,7 @@ import {
 } from "react";
 import { useNavigate } from "react-router-dom";
 import { ChatInputPill } from "./ChatInputPill";
+import { CombineDiagram } from "./CombineDiagram";
 import { ExportButton } from "./ExportScreen";
 import { ResizablePanel } from "./ResizablePanel";
 import { SceloChatMarkdown } from "./SceloChatMarkdown";
@@ -74,12 +75,15 @@ import {
   roundColumnValues,
   transformColumnCase,
 } from "./columnOps";
+import type { CombinePreview } from "./combineData";
 import {
   type CombineStats,
   type CombineStep,
   type CombineStrategy,
   type CombineSuggestion,
   combineAll,
+  combinePair,
+  previewCombine,
   suggestCombine,
 } from "./combineData";
 import { buildDirtySample } from "./dirtySampleData";
@@ -1706,12 +1710,27 @@ function DataGrid({
     setPage((p) => Math.min(p, Math.max(0, totalPages - 1)));
   }, [totalPages]);
 
-  // Per-column hover chat — hovering the `<th>` opens a scoped popover. State
-  // lives at the grid level (rather than on each `<th>`) so we share one close
-  // timer across all headers; moving from one column to another cancels the
-  // pending close on the previous, giving a smooth slide between popovers.
+  // Per-column chat — hovering a `<th>` opens a scoped popover; CLICKING the
+  // header pins it. State lives at the grid level (rather than on each `<th>`)
+  // so we share one close timer across all headers; moving from one column to
+  // another cancels the pending close on the previous, giving a smooth slide
+  // between popovers.
+  //
+  // The pin exists because hover-only chat was fragile: drift the pointer one
+  // row too far mid-thought and the popover (and your draft) vanished.
+  // Clicking IN a column — its header or any of its body cells — is the ONE
+  // pin gesture: it locks the chat to that column, and clicking a different
+  // column moves the pin there (old chat closes, new one opens, anchored to
+  // the new column's header). While pinned, hover changes and mouse-leave
+  // are ignored — release via ✕ / Esc / re-clicking the pinned header.
   const [hoveredCol, setHoveredCol] = useState<string | null>(null);
+  const [lockedCol, setLockedCol] = useState<string | null>(null);
   const [hoverAnchor, setHoverAnchor] = useState<DOMRect | null>(null);
+  const thRefs = useRef<Map<string, HTMLTableCellElement>>(new Map());
+  const lockedRef = useRef<string | null>(null);
+  useEffect(() => {
+    lockedRef.current = lockedCol;
+  }, [lockedCol]);
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const cancelClose = useCallback(() => {
     if (closeTimer.current) {
@@ -1721,11 +1740,32 @@ function DataGrid({
   }, []);
   const scheduleClose = useCallback(() => {
     cancelClose();
-    closeTimer.current = setTimeout(() => setHoveredCol(null), 220);
+    closeTimer.current = setTimeout(() => {
+      if (!lockedRef.current) setHoveredCol(null);
+    }, 220);
   }, [cancelClose]);
   useEffect(() => cancelClose, [cancelClose]);
 
-  const hoveredMeta = hoveredCol ? (metaByName.get(hoveredCol) ?? null) : null;
+  // A cleaning op or combine can rename the pinned column away — release.
+  useEffect(() => {
+    if (lockedCol && !dataset.columns.includes(lockedCol)) {
+      setLockedCol(null);
+      setHoveredCol(null);
+    }
+  }, [dataset.columns, lockedCol]);
+
+  // Pin the chat to a column, anchored to that column's header cell. The
+  // single entry point for both header and body-cell clicks, so "click in
+  // column B" always closes the previous pin and opens B's chat.
+  const pinColumnChat = useCallback((c: string, fallbackRect?: DOMRect) => {
+    const rect = thRefs.current.get(c)?.getBoundingClientRect() ?? fallbackRect ?? null;
+    setLockedCol(c);
+    setHoveredCol(c);
+    if (rect) setHoverAnchor(rect);
+  }, []);
+
+  const activeChatCol = lockedCol ?? hoveredCol;
+  const hoveredMeta = activeChatCol ? (metaByName.get(activeChatCol) ?? null) : null;
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -1744,18 +1784,37 @@ function DataGrid({
                 // The column whose scoped chat popover is open is "in play" —
                 // frame the whole column in green so it's obvious which one
                 // you're working on.
-                const chatActive = hoveredCol === c;
+                const chatActive = activeChatCol === c;
+                const pinnedThis = lockedCol === c;
                 return (
                   // biome-ignore lint/a11y/useKeyWithClickEvents: clicking anywhere in the header cell (mini chart, chips, padding) selects the column — the name button inside remains the keyboard-accessible path.
                   <th
                     key={c}
-                    onClick={() => onSelectColumn(c)}
+                    ref={(el) => {
+                      if (el) thRefs.current.set(c, el);
+                      else thRefs.current.delete(c);
+                    }}
+                    onClick={(e) => {
+                      onSelectColumn(c);
+                      // Interactive children (mini-chart filters, the date
+                      // format menu) shouldn't toggle the chat pin.
+                      if ((e.target as HTMLElement).closest("[data-chat-nolock]")) return;
+                      if (lockedCol === c) {
+                        setLockedCol(null);
+                      } else {
+                        pinColumnChat(c, e.currentTarget.getBoundingClientRect());
+                      }
+                    }}
                     onMouseEnter={(e) => {
+                      if (lockedRef.current) return;
                       cancelClose();
                       setHoveredCol(c);
                       setHoverAnchor(e.currentTarget.getBoundingClientRect());
                     }}
                     onMouseLeave={scheduleClose}
+                    title={
+                      pinnedThis ? "chat pinned — click to unpin" : "click to pin the column chat"
+                    }
                     className={`cursor-pointer p-0 text-left align-bottom ${
                       chatActive
                         ? "border-x-2 border-t-2 border-primary bg-primary/10"
@@ -1767,7 +1826,7 @@ function DataGrid({
                   >
                     <div className="flex flex-col">
                       {meta && (
-                        <div className="border-b border-border/60 pt-1">
+                        <div data-chat-nolock className="border-b border-border/60 pt-1">
                           <MiniColumnChart
                             meta={meta}
                             activeFilter={activeFilter}
@@ -1818,15 +1877,18 @@ function DataGrid({
                             </span>
                           ) : null}
                         </button>
-                        {meta &&
-                          (dateColSet.has(c) ? (
-                            <ColumnFormatMenu
-                              column={c}
-                              onPick={(style) => onReformatColumnDates(c, style)}
-                            />
-                          ) : (
-                            <TypeChip type={meta.type} />
-                          ))}
+                        {meta && (
+                          <span data-chat-nolock className="contents">
+                            {dateColSet.has(c) ? (
+                              <ColumnFormatMenu
+                                column={c}
+                                onPick={(style) => onReformatColumnDates(c, style)}
+                              />
+                            ) : (
+                              <TypeChip type={meta.type} />
+                            )}
+                          </span>
+                        )}
                       </div>
                     </div>
                   </th>
@@ -1843,12 +1905,18 @@ function DataGrid({
                 </td>
                 {dataset.columns.map((c) => {
                   const v = row[c];
-                  const chatActive = hoveredCol === c;
+                  const chatActive = activeChatCol === c;
                   return (
                     // biome-ignore lint/a11y/useKeyWithClickEvents: clicking a body cell selects its column for the summary panel — a convenience mirror of the header button, which remains the keyboard-accessible path.
                     <td
                       key={c}
-                      onClick={() => onSelectColumn(c)}
+                      onClick={() => {
+                        onSelectColumn(c);
+                        // Clicking in a column pins its chat there; a click in
+                        // an already-pinned column keeps it pinned (no toggle —
+                        // cell clicks are how you inspect values).
+                        if (lockedCol !== c) pinColumnChat(c);
+                      }}
                       className={`cursor-pointer px-2 py-1 ${
                         chatActive
                           ? "border-b border-x-2 border-primary bg-primary/[0.06]"
@@ -1905,9 +1973,13 @@ function DataGrid({
         <ColumnChatPopover
           meta={hoveredMeta}
           anchor={hoverAnchor}
+          pinned={lockedCol !== null}
           onEnter={cancelClose}
           onLeave={scheduleClose}
-          onClose={() => setHoveredCol(null)}
+          onClose={() => {
+            setLockedCol(null);
+            setHoveredCol(null);
+          }}
           onLocalCommand={(text) => onColumnCommand(hoveredMeta.name, text)}
         />
       )}
@@ -4465,6 +4537,37 @@ function CombineBanner({
     [base, staged, suggestions],
   );
 
+  // Exact combine previews driving the per-file diagram. Unlike the sampled
+  // suggestion heuristics these walk the full datasets, so the bar counts
+  // equal what the combine will actually do. Steps run in order, so each
+  // preview runs against the MATERIALISED result of the previous step —
+  // previewing file 2 against the original dataset would report the wrong
+  // result size (and wrong duplicate counts) whenever file 1 changes the
+  // data. Bounded work: at most two staged files → one intermediate build.
+  const previews = useMemo(() => {
+    let current = base;
+    let currentLabel = "current data";
+    return staged.map((ds, i) => {
+      const step = steps[i] ?? suggestions[i]?.step ?? { strategy: "append" as const };
+      let preview: CombinePreview | null = null;
+      try {
+        preview = previewCombine(current, ds, step);
+      } catch {
+        preview = null; // join selected while the key is still unset
+      }
+      const entry = preview ? { preview, baseLabel: currentLabel } : null;
+      if (i < staged.length - 1) {
+        try {
+          current = combinePair(current, ds, step).dataset;
+          currentLabel = `result of step ${i + 1}`;
+        } catch {
+          /* keep previous base; the next preview will show against it */
+        }
+      }
+      return entry;
+    });
+  }, [base, staged, steps, suggestions]);
+
   // A join step with no usable key can't run — disable combine and say why.
   const joinWithoutKey = steps.some(
     (s, i) => s.strategy !== "append" && ((keyOptions[i]?.length ?? 0) === 0 || !s.key),
@@ -4562,6 +4665,15 @@ function CombineBanner({
                     <div className="mt-0.5 font-mono text-[10px] leading-snug text-fg-mute">
                       {suggestion.rationale}
                     </div>
+                  )}
+                  {previews[i] && (
+                    <CombineDiagram
+                      preview={previews[i].preview}
+                      baseName={
+                        previews[i].baseLabel === "current data" ? base.name : previews[i].baseLabel
+                      }
+                      otherName={ds.name}
+                    />
                   )}
                   <div className="mt-1.5 flex flex-wrap items-center gap-2.5">
                     <label className="flex items-center gap-1 font-mono text-[9px] uppercase tracking-wider text-fg-dim">
@@ -4691,6 +4803,7 @@ function CombineBanner({
 function ColumnChatPopover({
   meta,
   anchor,
+  pinned,
   onEnter,
   onLeave,
   onClose,
@@ -4698,6 +4811,9 @@ function ColumnChatPopover({
 }: {
   meta: ColumnMeta;
   anchor: DOMRect;
+  /** True while the chat is click-locked to its column (clicking IN a
+   *  column is the only pin gesture; clicking another column moves it). */
+  pinned: boolean;
   onEnter: () => void;
   onLeave: () => void;
   onClose: () => void;
@@ -4784,21 +4900,37 @@ function ColumnChatPopover({
       style={style}
       onMouseEnter={onEnter}
       onMouseLeave={onLeave}
-      className="flex max-h-[60vh] flex-col overflow-hidden rounded-lg border border-border bg-bg-1 shadow-2xl"
+      className={`flex max-h-[60vh] flex-col overflow-hidden rounded-lg border bg-bg-1 shadow-2xl ${
+        pinned ? "border-primary/60" : "border-border"
+      }`}
     >
       <header className="flex shrink-0 items-center justify-between gap-2 border-b border-border bg-bg-1 px-3 py-1.5">
         <div className="flex min-w-0 items-center gap-2">
           <TypeChip type={meta.type} />
           <span className="truncate font-mono text-xs text-fg">{meta.name}</span>
         </div>
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label="close"
-          className="font-mono text-[10px] text-fg-dim hover:text-error"
-        >
-          ✕
-        </button>
+        <div className="flex shrink-0 items-center gap-2">
+          <span
+            className={`font-mono text-[9px] uppercase tracking-wider ${
+              pinned ? "text-primary" : "text-fg-dim"
+            }`}
+            title={
+              pinned
+                ? "pinned — stays open until ✕, Esc, or re-clicking this column's header; clicking another column moves it there"
+                : "click anywhere in the column to pin"
+            }
+          >
+            {pinned ? "pinned" : "hover"}
+          </span>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="close"
+            className="font-mono text-[10px] text-fg-dim hover:text-error"
+          >
+            ✕
+          </button>
+        </div>
       </header>
       {messages.length > 0 && (
         <div ref={scrollRef} className="min-h-0 flex-1 overflow-auto px-3 py-2">
