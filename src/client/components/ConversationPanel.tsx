@@ -61,6 +61,15 @@ export function ConversationPanel({
     handleRef.current = null;
   }, [runId]);
 
+  // Collapsing the panel unmounts it — abort any in-flight stream so the
+  // fetch doesn't keep running against a component that no longer exists.
+  useEffect(() => {
+    return () => {
+      handleRef.current?.abort();
+      handleRef.current = null;
+    };
+  }, []);
+
   useEffect(() => {
     if (scrollerRef.current) {
       scrollerRef.current.scrollTop = scrollerRef.current.scrollHeight;

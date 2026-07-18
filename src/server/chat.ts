@@ -6,13 +6,19 @@ import { listJustifications } from './justify';
 
 const SYSTEM = `You are the SWARM COUNCIL chatbot.
 
-The professor has run a multi-perspective deliberation: a council of 256 expert
-agents (8 professions × 16 MBTI × 2 genders) and an optional 1000-agent society
-sample. The full run state is provided below as structured data.
+The professor ran a W(M,T,R) Nanoeconomics FORECAST for a scenario, then convened
+a council of expert agents (professions × MBTI × gender; the exact roster is in
+the data below) to interrogate whether that forecast is trustworthy, plus an
+optional society sample reacting to it. The full run state is provided below as
+structured data.
 
 Rules:
 - Answer ONLY from the data provided. If the data does not contain what is asked,
   say so plainly — do NOT invent agents, quotes, or numbers.
+- Stance vocabulary: the stored votes read support/oppose/abstain, but they mean
+  TRUST / DISTRUST / UNCERTAIN about the forecast — and that is how the UI labels
+  them. Prefer the trust wording in your answers ("22 agents distrust the
+  forecast"), keeping ids and quoted data verbatim.
 - Cite agents by their id (e.g. c-actuary-intj-f) when relevant.
 - When the Justifications section is present, you can answer queries like "which
   lawyers cited the Companies Act" or "which actuaries used Bornhuetter-Ferguson"
@@ -22,8 +28,8 @@ Rules:
   questions like "what is the Finance group's position" or "summarise the
   lawyers' collective view".
 - Be terse. No filler. No hedging caveats unless materially warranted.
-- The swarm does NOT make the decision; you are reporting on what the swarm said
-  so the professor can decide.`;
+- The swarm does NOT make the decision; you are reporting on what the forecast
+  predicts and what the swarm said about it so the professor can decide.`;
 
 export function buildChatContext(run: Run): string {
   const lines: string[] = [];
@@ -38,10 +44,36 @@ export function buildChatContext(run: Run): string {
   lines.push('\n## Scenario');
   lines.push(run.scenario);
 
-  if (run.summary) {
-    lines.push('\n## Council synthesis');
+  // ---- the forecast itself — the artifact the council is interrogating ----
+  // Without this block the bot had to answer "what does the forecast predict?"
+  // with "not in my data", on the app's headline artifact.
+  if (run.wmtr) {
+    const w = run.wmtr;
+    const r = w.result;
+    const last = r.years.length - 1;
+    const finalW = r.meanW[last] ?? 0;
+    const ratio = r.w0 > 0 ? finalW / r.w0 : 0;
+    lines.push('\n## W(M,T,R) forecast (what the council votes trust/distrust on)');
     lines.push(
-      `support: ${run.summary.supportPct}%   oppose: ${run.summary.opposePct}%   abstain: ${run.summary.abstainPct}%`,
+      `dominant_outcome: ${w.dominantOutcome} (${Math.round((r.outcomeFractions[w.dominantOutcome] ?? 0) * 100)}% of ${w.config.nPaths} paths)`,
+    );
+    lines.push(
+      `outcome_fractions: ${(Object.entries(r.outcomeFractions) as Array<[string, number]>)
+        .map(([k, v]) => `${k}:${Math.round(v * 100)}%`)
+        .join('  ')}`,
+    );
+    lines.push(
+      `horizon: ${w.config.horizon}y   shock: ${w.config.shock}   driver: ${w.driver}   alpha M:T:R = ${w.config.alphaM}:${w.config.alphaT}:${w.config.alphaR}`,
+    );
+    lines.push(
+      `final_mean_W: ${finalW.toFixed(3)} (W/W0 ${ratio >= 1 ? '+' : ''}${((ratio - 1) * 100).toFixed(0)}%)   final_survival: ${Math.round((r.meanSurv[last] ?? 0) * 100)}%`,
+    );
+  }
+
+  if (run.summary) {
+    lines.push('\n## Council synthesis (verdict on the forecast)');
+    lines.push(
+      `trust: ${run.summary.supportPct}%   distrust: ${run.summary.opposePct}%   uncertain: ${run.summary.abstainPct}%`,
     );
     lines.push(`consensus_score: ${run.summary.consensusScore}/100`);
     lines.push(`dissenters: ${run.summary.dissentingAgentIds.length}`);
