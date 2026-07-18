@@ -9,28 +9,9 @@ import { useTheme } from '../lib/theme';
 import type { CrossHighlight } from './CouncilGraph';
 import { layoutCells, forceClusterLayout, type Group, type FNode, type FEdge } from '../lib/groupLayout';
 import { installGroupHulls, type HullDatum } from '../lib/groupHulls';
+import { SENTIMENT_ORDER, clusterColor, sentimentColors } from '../lib/societyPalette';
 
 echarts.use([GraphChart, LegendComponent, TooltipComponent, GridComponent, GraphicComponent, CanvasRenderer]);
-
-function sentimentColor(c: ThemeColors): Record<Sentiment, string> {
-  return {
-    enthusiastic: c.consensus,
-    supportive: '#7fef7c',
-    neutral: c.fg,
-    skeptical: c.dissent,
-    hostile: c.adversarial,
-  };
-}
-
-const SENTIMENT_ORDER: Sentiment[] = ['enthusiastic', 'supportive', 'neutral', 'skeptical', 'hostile'];
-
-const CLUSTER_PALETTE = ['#4a9eff', '#b388ff', '#7fc8ff', '#ffd866', '#a0a0a0', '#5fdfb3'];
-// Light-theme overrides: c3 (amber) and c5 (mint) wash out on a light ground, so
-// they get darker variants there. All other clusters — and the whole dark-theme
-// palette — are unchanged.
-const CLUSTER_PALETTE_LIGHT = ['#4a9eff', '#b388ff', '#7fc8ff', '#c99700', '#a0a0a0', '#1f9e7b'];
-const clusterColor = (i: number, dark: boolean) =>
-  (dark ? CLUSTER_PALETTE : CLUSTER_PALETTE_LIGHT)[i % CLUSTER_PALETTE.length];
 
 // External pin: lifted to App so the Decision Sidebar can react to
 // what's pinned in the legend (cluster name or sentiment value).
@@ -62,7 +43,7 @@ export function SocietyGraph({
   const chartRef = useRef<echarts.ECharts | null>(null);
   const { resolved } = useTheme();
   const colors = useMemo(() => colorsForTheme(resolved), [resolved]);
-  const SENTIMENT_COLOR = useMemo(() => sentimentColor(colors), [colors]);
+  const SENTIMENT_COLOR = useMemo(() => sentimentColors(colors), [colors]);
   // Measured canvas size drives the labelled-region (cluster) grid layout.
   const [size, setSize] = useState({ w: 0, h: 0 });
 
@@ -410,7 +391,7 @@ function buildOption(
   catOf: Map<string, string>;
   sentOf: Map<string, string>;
 } {
-  const SENTIMENT_COLOR = sentimentColor(colors);
+  const SENTIMENT_COLOR = sentimentColors(colors);
   const clusterIds = new Set<number>();
   for (const r of run.societyResults) if (r.cluster !== undefined) clusterIds.add(r.cluster);
   const clusters = [...clusterIds].sort((a, b) => a - b);

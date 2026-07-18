@@ -6,6 +6,7 @@ import { CanvasRenderer } from 'echarts/renderers';
 import type { Run, Sentiment, SocietyAgentResult } from '../../shared/types';
 import { colorsForTheme, type ThemeColors } from '../../shared/constants';
 import { useTheme } from '../lib/theme';
+import { SENTIMENT_ORDER, clusterColor, sentimentColors } from '../lib/societyPalette';
 import type { CrossHighlight } from './CouncilGraph';
 
 echarts.use([SankeyChart, TooltipComponent, TitleComponent, CanvasRenderer]);
@@ -20,24 +21,6 @@ type Props = {
   crossHighlight?: CrossHighlight;
   onCrossHighlight?: (h: CrossHighlight) => void;
 };
-
-function sentimentColor(c: ThemeColors): Record<Sentiment, string> {
-  return {
-    enthusiastic: c.consensus,
-    supportive: '#7fef7c',
-    neutral: c.fg,
-    skeptical: c.dissent,
-    hostile: c.adversarial,
-  };
-}
-
-// Shared with SocietyGraph — keep these palettes in sync.
-const CLUSTER_PALETTE = ['#4a9eff', '#b388ff', '#7fc8ff', '#ffd866', '#a0a0a0', '#5fdfb3'];
-// Light-theme overrides: c3 (amber) and c5 (mint) wash out on a light ground.
-// Kept in sync with SocietyGraph.
-const CLUSTER_PALETTE_LIGHT = ['#4a9eff', '#b388ff', '#7fc8ff', '#c99700', '#a0a0a0', '#1f9e7b'];
-const clusterColor = (i: number, dark: boolean) =>
-  (dark ? CLUSTER_PALETTE : CLUSTER_PALETTE_LIGHT)[i % CLUSTER_PALETTE.length];
 
 type IntBand = 'High ≥70' | 'Mid 40–69' | 'Low <40';
 function intColor(c: ThemeColors): Record<IntBand, string> {
@@ -64,6 +47,13 @@ export function SocietySankey({ run, crossHighlight, onCrossHighlight }: Props) 
 
   const onCrossHighlightRef = useRef(onCrossHighlight);
   const crossHighlightRef = useRef(crossHighlight);
+  // Mount-time chart handlers must read the CURRENT run — a re-run reuses
+  // agent ids, so a stale closure silently maps highlights through the old
+  // run's clusters/stances.
+  const runRef = useRef(run);
+  useEffect(() => {
+    runRef.current = run;
+  }, [run]);
   useEffect(() => {
     onCrossHighlightRef.current = onCrossHighlight;
   }, [onCrossHighlight]);
@@ -87,14 +77,14 @@ export function SocietySankey({ run, crossHighlight, onCrossHighlight }: Props) 
       if (!cb) return;
       if (params.dataType === 'node' && params.name) {
         const name = String(params.name);
-        const ids = agentsForSankeyNode(name, run);
+        const ids = agentsForSankeyNode(name, runRef.current);
         const key = `node:${name}`;
         const cur = crossHighlightRef.current;
         if (cur?.locked && cur.key === key) cb(null);
         else cb({ source: 'sankey', agentIds: ids, key, locked: true });
       } else if (params.dataType === 'edge' && params.data) {
         const e = params.data as { source: string; target: string };
-        const ids = agentsForSankeyLink(e.source, e.target, run);
+        const ids = agentsForSankeyLink(e.source, e.target, runRef.current);
         const key = `edge:${e.source}|${e.target}`;
         const cur = crossHighlightRef.current;
         if (cur?.locked && cur.key === key) cb(null);
@@ -115,11 +105,11 @@ export function SocietySankey({ run, crossHighlight, onCrossHighlight }: Props) 
       if (!cb || crossHighlightRef.current?.locked) return;
       if (params.dataType === 'node' && params.name) {
         const name = String(params.name);
-        const ids = agentsForSankeyNode(name, run);
+        const ids = agentsForSankeyNode(name, runRef.current);
         cb({ source: 'sankey', agentIds: ids, key: `node:${name}`, locked: false });
       } else if (params.dataType === 'edge' && params.data) {
         const e = params.data as { source: string; target: string };
-        const ids = agentsForSankeyLink(e.source, e.target, run);
+        const ids = agentsForSankeyLink(e.source, e.target, runRef.current);
         cb({ source: 'sankey', agentIds: ids, key: `edge:${e.source}|${e.target}`, locked: false });
       }
     });
@@ -171,7 +161,7 @@ export function SocietySankey({ run, crossHighlight, onCrossHighlight }: Props) 
 
 function buildOption(run: Run, colors: ThemeColors, dark: boolean): echarts.EChartsCoreOption {
   const total = Math.max(1, run.societyResults.length);
-  const SENTIMENT_COLOR = sentimentColor(colors);
+  const SENTIMENT_COLOR = sentimentColors(colors);
   const INT_COLOR = intColor(colors);
 
   const clusterIds = Array.from(
@@ -183,7 +173,7 @@ function buildOption(run: Run, colors: ThemeColors, dark: boolean): echarts.ECha
     label: { formatter: `c${c}`, color: colors.fg, fontSize: 11 },
     itemStyle: { color: clusterColor(i, dark) },
   }));
-  const sentiments: Sentiment[] = ['enthusiastic', 'supportive', 'neutral', 'skeptical', 'hostile'];
+  const sentiments: Sentiment[] = SENTIMENT_ORDER;
   const sentimentNodes = sentiments.map((s) => ({
     name: `sent:${s}`,
     label: { formatter: s, color: colors.fg, fontSize: 11, fontWeight: 500 as const },

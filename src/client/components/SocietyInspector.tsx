@@ -1,5 +1,8 @@
 import { useMemo } from 'react';
 import type { Run, Sentiment } from '../../shared/types';
+import { colorsForTheme } from '../../shared/constants';
+import { useTheme } from '../lib/theme';
+import { SENTIMENT_ORDER, sentimentColors } from '../lib/societyPalette';
 import type { SocietyPin } from './SocietyGraph';
 
 const REACTION_WORDS = 12;
@@ -17,16 +20,6 @@ function clipReaction(
   if (words.length <= n) return { text: words.join(' '), full: null };
   return { text: words.slice(0, n).join(' ') + '…', full: trimmed };
 }
-
-const SENTIMENT_COLORS: Record<Sentiment, string> = {
-  enthusiastic: '#2ea36b',
-  supportive: '#7fef7c',
-  neutral: '#888',
-  skeptical: '#c47a00',
-  hostile: '#d23a3a',
-};
-
-const SENTIMENT_ORDER: Sentiment[] = ['enthusiastic', 'supportive', 'neutral', 'skeptical', 'hostile'];
 
 type Props = {
   run: Run;
@@ -54,6 +47,7 @@ function ClusterInspector({
   clusterName: string;
   onClose: () => void;
 }) {
+  const SENTIMENT_COLORS = sentimentColors(colorsForTheme(useTheme().resolved));
   // cluster ids are "c0", "c1" etc. — strip the prefix to index.
   const idx = Number.parseInt(clusterName.replace(/^c/, ''), 10);
   const summary = run.societySummary?.clusters.find((c) => c.cluster === idx);
@@ -101,7 +95,7 @@ function ClusterInspector({
                     >
                       {m.sentiment}
                     </span>
-                    <span className="num small">{Math.round(m.intensity * 100)}</span>
+                    <span className="num small">{Math.round(m.intensity)}</span>
                   </div>
                   <ReactionLine reaction={m.reaction} />
                 </div>
@@ -126,6 +120,7 @@ function SentimentInspector({
   sentiment: Sentiment;
   onClose: () => void;
 }) {
+  const SENTIMENT_COLORS = sentimentColors(colorsForTheme(useTheme().resolved));
   const members = useMemo(
     () => run.societyResults.filter((r) => r.sentiment === sentiment),
     [run, sentiment],
@@ -165,7 +160,7 @@ function SentimentInspector({
         </div>
         <div>
           <div className="panel-label">avg intensity</div>
-          <div className="big-num num">{Math.round(avgIntensity * 100)}</div>
+          <div className="big-num num">{Math.round(avgIntensity)}</div>
         </div>
       </div>
       <div className="inspector-body">
@@ -197,7 +192,7 @@ function SentimentInspector({
                     <span className="muted small">
                       {m.agent.region} · {m.agent.education}
                     </span>
-                    <span className="num small">{Math.round(m.intensity * 100)}</span>
+                    <span className="num small">{Math.round(m.intensity)}</span>
                   </div>
                   <ReactionLine reaction={m.reaction} />
                 </div>
@@ -217,6 +212,7 @@ function SentimentBar({
   mix: Record<Sentiment, number>;
   total: number;
 }) {
+  const SENTIMENT_COLORS = sentimentColors(colorsForTheme(useTheme().resolved));
   return (
     <div>
       <div className="stack-bar">
