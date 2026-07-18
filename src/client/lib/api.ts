@@ -311,6 +311,15 @@ export function streamChat(
   onEvent: (e: ChatEvent) => void,
 ): StreamChatHandle {
   const ctrl = new AbortController();
+  // The panel's busy state is cleared ONLY by a terminal event. A stream
+  // that ends cleanly without done/error (proxy hiccup, server restart
+  // that closes the socket without a reset) would otherwise leave the
+  // spinner stuck forever — synthesise a terminal error in that case.
+  let sawTerminal = false;
+  const emit = (e: ChatEvent) => {
+    if (e.type === 'done' || e.type === 'error') sawTerminal = true;
+    onEvent(e);
+  };
   const done = (async () => {
     try {
       const r = await fetch('/api/chat', {
@@ -320,7 +329,7 @@ export function streamChat(
         signal: ctrl.signal,
       });
       if (!r.ok || !r.body) {
-        onEvent({ type: 'error', message: `chat ${r.status}` });
+        emit({ type: 'error', message: `chat ${r.status}` });
         return;
       }
       const reader = r.body.getReader();
@@ -341,7 +350,7 @@ export function streamChat(
             const payload = t.slice(5).trim();
             if (!payload) continue;
             try {
-              onEvent(JSON.parse(payload) as ChatEvent);
+              emit(JSON.parse(payload) as ChatEvent);
             } catch {
               // skip malformed
             }
@@ -349,9 +358,12 @@ export function streamChat(
           i = buf.indexOf('\n\n');
         }
       }
+      if (!sawTerminal) {
+        emit({ type: 'error', message: 'chat stream ended unexpectedly — try again' });
+      }
     } catch (e) {
       if ((e as { name?: string })?.name !== 'AbortError') {
-        onEvent({ type: 'error', message: e instanceof Error ? e.message : 'chat failed' });
+        emit({ type: 'error', message: e instanceof Error ? e.message : 'chat failed' });
       }
     }
   })();
