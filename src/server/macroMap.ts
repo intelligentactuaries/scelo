@@ -50,6 +50,7 @@ function dailyWageFor(agent: SocietyAgent): number {
     case 'student':
     case 'retired':
     case 'unemployed':
+    case 'child':
     default:
       return 0;
   }
@@ -127,6 +128,12 @@ export function aggregateMacro(
   for (const r of results) {
     const { agent, outcome } = r;
     const wage = dailyWageFor(agent);
+    // Health outcomes (severity, mortality, hospitalisation) are reported
+    // CONDITIONAL on the agent being affected; infectionProbability is the
+    // chance of that. Expected-value roll-up multiplies the two — without
+    // this, a cohort of hospitalised=true agents at p=0.4 scaled to tens of
+    // millions of admissions while severe counts stayed near zero.
+    const pInfect = outcome.health.infectionProbability;
 
     workdaysLost += outcome.economic.workdaysLost;
     gdpDrag += outcome.economic.workdaysLost * wage;
@@ -135,15 +142,14 @@ export function aggregateMacro(
       outcome.health.severityIfInfected === 'severe' ||
       outcome.health.severityIfInfected === 'critical'
     ) {
-      severeCount += 1;
+      severeCount += pInfect;
       severeIllnessCost +=
-        outcome.economic.outOfPocketCostZar + outcome.economic.insurerClaimZar;
+        (outcome.economic.outOfPocketCostZar + outcome.economic.insurerClaimZar) * pInfect;
     }
-    if (outcome.health.hospitalised) admissions += 1;
+    if (outcome.health.hospitalised) admissions += pInfect;
 
-    // Mortality is expressed as a per-agent probability. Sum (= expected
-    // count). This is the conventional approach for population-rate roll-up.
-    excessMortality += outcome.health.mortalityProbability;
+    // Expected deaths = P(affected) × P(death | affected), summed.
+    excessMortality += outcome.health.mortalityProbability * pInfect;
 
     insurerClaims += outcome.economic.insurerClaimZar;
     oop += outcome.economic.outOfPocketCostZar;
@@ -156,7 +162,7 @@ export function aggregateMacro(
       : 'no comorbidities';
     mortalityByCom.set(
       comStatus,
-      (mortalityByCom.get(comStatus) ?? 0) + outcome.health.mortalityProbability,
+      (mortalityByCom.get(comStatus) ?? 0) + outcome.health.mortalityProbability * pInfect,
     );
 
     const uk = outcome.behaviour.treatmentUptake;
@@ -198,4 +204,8 @@ export const SA_MACRO_PROVENANCE: string[] = [
   'Daily wage formal R1,350 — StatsSA QES Q4 2024 (P0277), annualised.',
   'Daily wage informal R280 — StatsSA QLFS 2024.',
   'Avg admission cost R18,500 — blended public+private; CMS 2023 + Treasury health spend (proxy).',
+  'Mortality, severe/critical, admissions & severe-illness cost are expected values: per-agent conditional outcome × infectionProbability, summed, then scaled.',
+  'Workdays, GDP drag, claims & out-of-pocket are behavioural/unconditional per-agent reports, summed then scaled.',
+  'Under-15s cannot be employed (BCEA s43): their workdaysLost is forced to 0. Caregiver absenteeism for sick children is NOT modelled (proxy gap).',
+  "Under-12s are answered by a parent/guardian (Children's Act s129 consent age); their costs are household costs.",
 ];

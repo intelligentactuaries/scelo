@@ -65,8 +65,18 @@ export function sampleSocietyAgents(params: SocietyParams, n: number, seed = 0xC
     const ageRaw = params.ageMean + gauss(rng) * (params.ageSpread / 2.5);
     const age = clamp(Math.round(ageRaw), 16, 85);
     const incomeBand = pickWeighted(rng, params.incomeMix, INCOME_BANDS);
-    const education = pickWeighted(rng, params.educationMix, EDUCATIONS);
-    const employment = pickWeighted(rng, params.employmentMix, EMPLOYMENTS);
+    let education = pickWeighted(rng, params.educationMix, EDUCATIONS);
+    let employment = pickWeighted(rng, params.employmentMix, EMPLOYMENTS);
+    // Age-consistency guards: the user-dialled mixes are drawn independently
+    // of age, which can produce a 16-year-old 'retired' or a 17-year-old
+    // 'postgrad'. Same rules as the SA population sampler: minors are
+    // students without degrees, and nobody retires before 50.
+    if (age < 18) {
+      employment = 'student';
+      if (education === 'tertiary' || education === 'postgrad') education = 'secondary';
+    } else if (employment === 'retired' && age < 50) {
+      employment = 'unemployed';
+    }
     let region: SocietyAgent['region'];
     const u = rng();
     const urb = clamp(params.urbanRatio, 0, 1);

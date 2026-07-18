@@ -119,6 +119,13 @@ function downloadCsv(rows: SimRow[], columns: string[], filename: string): void 
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
+// Live progress relayed by the server's SSE variant of /api/simulate.
+export interface SimProgress {
+  phase: 'refs' | 'sim' | 'macro';
+  done: number;
+  total: number;
+}
+
 // All Simulation-tab state lives here so it can be owned by App (lifted out of
 // the view), which keeps the scenario, sliders, and results alive across tab
 // switches even when the view itself unmounts.
@@ -134,6 +141,7 @@ export interface SimulationState {
   busy: boolean;
   error: string | null;
   result: SimResponse | null;
+  progress: SimProgress | null;
   onTemplate: (idx: number) => void;
   run: () => void;
 }
@@ -146,6 +154,7 @@ export function useSimulationState(): SimulationState {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<SimResponse | null>(null);
+  const [progress, setProgress] = useState<SimProgress | null>(null);
 
   const onTemplate = (idx: number) => {
     const t = TEMPLATES[idx];
@@ -157,24 +166,76 @@ export function useSimulationState(): SimulationState {
     setBusy(true);
     setError(null);
     setResult(null); // clear the prior run so the progress panel shows cleanly
+    setProgress(null);
     const drugs = drugsText
       .split(/[,\n]/)
       .map((d) => d.trim())
       .filter(Boolean);
-    fetch('/api/simulate', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        scenario,
-        drugs,
-        sampleSize,
-        population,
-      }),
-    })
-      .then(async (r) => {
-        if (!r.ok) throw new Error(`/api/simulate ${r.status}`);
+    // stream:true → SSE. A full run is minutes of LLM calls; a single JSON
+    // response that long has no bytes on the wire until the very end and
+    // browsers kill it (~300s no-headers timeout in Chrome). The stream
+    // sends headers immediately and progress events keep the socket warm.
+    (async () => {
+      const r = await fetch('/api/simulate', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          scenario,
+          drugs,
+          sampleSize,
+          population,
+          stream: true,
+        }),
+      });
+      if (!r.ok) throw new Error(`/api/simulate ${r.status}`);
+      // Old server (no stream support) answers with plain JSON — accept it.
+      if (r.headers.get('content-type')?.includes('application/json')) {
         return (await r.json()) as SimResponse;
-      })
+      }
+      if (!r.body) throw new Error('/api/simulate returned no body');
+      const reader = r.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let final: SimResponse | null = null;
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const events = buffer.split('\n\n');
+        buffer = events.pop() ?? '';
+        for (const raw of events) {
+          const line = raw.split('\n').find((l) => l.startsWith('data: '));
+          if (!line) continue;
+          let ev: Record<string, unknown>;
+          try {
+            ev = JSON.parse(line.slice(6)) as Record<string, unknown>;
+          } catch {
+            continue;
+          }
+          if (ev.type === 'phase') {
+            const phase = ev.phase as SimProgress['phase'];
+            setProgress((p) => ({
+              phase,
+              done: phase === 'macro' ? (p?.total ?? 0) : (p?.done ?? 0),
+              total: typeof ev.total === 'number' ? ev.total : (p?.total ?? 0),
+            }));
+          } else if (ev.type === 'sim_progress') {
+            setProgress({
+              phase: 'sim',
+              done: Number(ev.done ?? 0),
+              total: Number(ev.total ?? 0),
+            });
+          } else if (ev.type === 'error') {
+            throw new Error(String(ev.message ?? 'simulation failed'));
+          } else if (ev.type === 'result') {
+            const { type: _type, ...payload } = ev;
+            final = payload as unknown as SimResponse;
+          }
+        }
+      }
+      if (!final) throw new Error('stream ended without a result');
+      return final;
+    })()
       .then((res) => setResult(res))
       .catch((e) => setError(e instanceof Error ? e.message : String(e)))
       .finally(() => setBusy(false));
@@ -192,6 +253,7 @@ export function useSimulationState(): SimulationState {
     busy,
     error,
     result,
+    progress,
     onTemplate,
     run,
   };
@@ -210,6 +272,7 @@ export function SimulationView({ state }: { state: SimulationState }) {
     busy,
     error,
     result,
+    progress,
     onTemplate,
     run,
   } = state;
@@ -287,43 +350,38 @@ export function SimulationView({ state }: { state: SimulationState }) {
         {error && <div className="simulation-error">error: {error}</div>}
       </header>
 
-      {busy && !result && <SimulationProgress />}
+      {busy && !result && <SimulationProgress progress={progress} />}
       {result && <SimulationResults result={result} />}
     </div>
   );
 }
 
-// Lightweight, honest in-progress panel for the (non-streamed) /api/simulate
-// call. The server runs references → sample → simulate → macro as one request,
-// so we can't get true per-phase callbacks; instead we show an elapsed timer
-// (real) and walk the known pipeline phases forward on a gentle cadence,
-// holding on the last until the result lands. Reads as deliberate progress
-// rather than a frozen blank screen.
+// In-progress panel for /api/simulate. The SSE stream reports which pipeline
+// phase the server is actually in plus a done/total counter for the per-agent
+// pass, so the panel shows real progress; the elapsed timer runs locally.
 const SIM_PHASES: Array<{ key: string; label: string; hint: string }> = [
   { key: 'refs', label: 'Resolving compound references', hint: 'PubChem · OpenFDA · ChEMBL' },
-  { key: 'sample', label: 'Sampling the population', hint: 'synthetic cohort' },
   { key: 'sim', label: 'Simulating agent outcomes', hint: 'per-agent disease course' },
   { key: 'macro', label: 'Scaling macro impact', hint: 'cohort → national' },
 ];
 
-function SimulationProgress() {
+function SimulationProgress({ progress }: { progress: SimProgress | null }) {
   const [elapsed, setElapsed] = useState(0);
-  const [phase, setPhase] = useState(0);
 
   useEffect(() => {
     const t0 = performance.now();
     const tick = window.setInterval(() => setElapsed((performance.now() - t0) / 1000), 100);
-    // Advance through the phases, but never past the last one — the real
-    // result unmounts this panel when it arrives.
-    const advance = window.setInterval(
-      () => setPhase((p) => Math.min(p + 1, SIM_PHASES.length - 1)),
-      1800,
-    );
-    return () => {
-      window.clearInterval(tick);
-      window.clearInterval(advance);
-    };
+    return () => window.clearInterval(tick);
   }, []);
+
+  const phase = Math.max(
+    0,
+    SIM_PHASES.findIndex((p) => p.key === (progress?.phase ?? 'refs')),
+  );
+  const pct =
+    progress && progress.phase === 'sim' && progress.total > 0
+      ? Math.round((progress.done / progress.total) * 100)
+      : null;
 
   return (
     <div className="sim-progress" role="status" aria-live="polite">
@@ -334,23 +392,55 @@ function SimulationProgress() {
       <ul className="sim-progress-phases">
         {SIM_PHASES.map((ph, i) => {
           const state = i < phase ? 'done' : i === phase ? 'active' : 'pending';
+          const counter =
+            ph.key === 'sim' && progress && progress.total > 0 && i <= phase
+              ? ` · ${progress.done}/${progress.total} agents${pct !== null ? ` (${pct}%)` : ''}`
+              : '';
           return (
             <li key={ph.key} className={`sim-phase is-${state}`}>
               <span className="sim-phase-dot" aria-hidden />
-              <span className="sim-phase-label">{ph.label}</span>
+              <span className="sim-phase-label">{ph.label}{counter}</span>
               <span className="sim-phase-hint">{ph.hint}</span>
             </li>
           );
         })}
       </ul>
       <div className="sim-progress-bar" aria-hidden>
-        <span />
+        <span
+          style={
+            pct !== null
+              ? { width: `${pct}%`, left: 0, animation: 'none', transition: 'width 0.4s ease' }
+              : undefined
+          }
+        />
       </div>
     </div>
   );
 }
 
+// The dataset carries ~10 demographic columns before the sim_* outputs, so a
+// naive first-N slice used to preview demographics only — the one thing the
+// panel exists to show (the simulated outcomes) never made it on screen.
+const PREVIEW_COLUMNS = [
+  'id',
+  'age',
+  'sex',
+  'region',
+  'employment',
+  'sim_treatment_uptake',
+  'sim_severity_if_infected',
+  'sim_workdays_lost',
+  'sim_oop_zar',
+  'sim_rationale',
+];
+
+function previewColumns(all: string[]): string[] {
+  const curated = PREVIEW_COLUMNS.filter((c) => all.includes(c));
+  return curated.length > 0 ? curated : all.slice(0, 8);
+}
+
 function SimulationResults({ result }: { result: SimResponse }) {
+  const cols = previewColumns(result.columns);
   return (
     <div className="simulation-results">
       <section className="simulation-section">
@@ -470,13 +560,13 @@ function SimulationResults({ result }: { result: SimResponse }) {
           <table className="simulation-rows-table">
             <thead>
               <tr>
-                {result.columns.slice(0, 8).map((c) => <th key={c}>{c}</th>)}
+                {cols.map((c) => <th key={c}>{c}</th>)}
               </tr>
             </thead>
             <tbody>
               {result.rows.slice(0, 20).map((r, i) => (
                 <tr key={String(r.id ?? i)}>
-                  {result.columns.slice(0, 8).map((c) => (
+                  {cols.map((c) => (
                     <td key={c}>{String(r[c] ?? '')}</td>
                   ))}
                 </tr>
