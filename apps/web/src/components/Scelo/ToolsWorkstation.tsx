@@ -1463,6 +1463,47 @@ export function ToolsWorkstation() {
   // Derived "desired" nodes/edges from the current model picks. The real
   // React Flow state is held in `nodes`/`edges` below — we sync the desired
   // shape in but preserve any positions the user has dragged to.
+  // Chat-driven stack mutations. Every completed assistant reply from any
+  // Tools chat passes through here: if it carries a scelo-models directive,
+  // apply it against the LIVE stack (ref, not closure — the memo'd context
+  // the chat was created with may be stale by the time the reply lands),
+  // log the same events the manual add/remove buttons do, and swap the
+  // machine block for a plain confirmation of what actually happened.
+  const selectedModelsRef = useRef(selectedModels);
+  useEffect(() => {
+    selectedModelsRef.current = selectedModels;
+  }, [selectedModels]);
+  const onChatStackDirective = useCallback(
+    (text: string): string | undefined => {
+      const directive = parseModelDirective(text);
+      if (!directive) return undefined;
+      const { next, report } = applyModelDirective(selectedModelsRef.current, directive);
+      const changed =
+        report.added.length > 0 ||
+        report.removed.length > 0 ||
+        report.enabled.length > 0 ||
+        report.disabled.length > 0;
+      if (changed) {
+        setSelectedModels(next);
+        for (const id of report.added) {
+          logEvent({ stage: "tools", kind: "model.add", payload: { id } });
+        }
+        for (const id of report.removed) {
+          logEvent({ stage: "tools", kind: "model.remove", payload: { id } });
+        }
+        for (const id of [...report.enabled, ...report.disabled]) {
+          logEvent({
+            stage: "tools",
+            kind: "model.toggle",
+            payload: { id, enabled: report.enabled.includes(id) },
+          });
+        }
+      }
+      return replaceDirectiveBlock(text, describeDirectiveReport(report));
+    },
+    [setSelectedModels, logEvent],
+  );
+
   const desiredNodes: Node[] = useMemo(() => {
     if (!dataset) return [];
     const layout = columnLayout(selectedModels.length);
@@ -1489,6 +1530,7 @@ export function ToolsWorkstation() {
           selectedModels.length === 0
             ? "suggest a starter model mix…"
             : "rebalance the mix, flag gaps…",
+        onStackDirective: onChatStackDirective,
       },
       draggable: true,
       selectable: false,
@@ -1832,47 +1874,6 @@ export function ToolsWorkstation() {
     if (selectedModels.length === 0) return "ask scelo about model choice…";
     return `ask scelo about these ${enabledCount} model${enabledCount === 1 ? "" : "s"}…`;
   }, [dataset, selectedModels.length, enabledCount]);
-
-  // Chat-driven stack mutations. Every completed assistant reply from any
-  // Tools chat passes through here: if it carries a scelo-models directive,
-  // apply it against the LIVE stack (ref, not closure — the memo'd context
-  // the chat was created with may be stale by the time the reply lands),
-  // log the same events the manual add/remove buttons do, and swap the
-  // machine block for a plain confirmation of what actually happened.
-  const selectedModelsRef = useRef(selectedModels);
-  useEffect(() => {
-    selectedModelsRef.current = selectedModels;
-  }, [selectedModels]);
-  const onChatStackDirective = useCallback(
-    (text: string): string | undefined => {
-      const directive = parseModelDirective(text);
-      if (!directive) return undefined;
-      const { next, report } = applyModelDirective(selectedModelsRef.current, directive);
-      const changed =
-        report.added.length > 0 ||
-        report.removed.length > 0 ||
-        report.enabled.length > 0 ||
-        report.disabled.length > 0;
-      if (changed) {
-        setSelectedModels(next);
-        for (const id of report.added) {
-          logEvent({ stage: "tools", kind: "model.add", payload: { id } });
-        }
-        for (const id of report.removed) {
-          logEvent({ stage: "tools", kind: "model.remove", payload: { id } });
-        }
-        for (const id of [...report.enabled, ...report.disabled]) {
-          logEvent({
-            stage: "tools",
-            kind: "model.toggle",
-            payload: { id, enabled: report.enabled.includes(id) },
-          });
-        }
-      }
-      return replaceDirectiveBlock(text, describeDirectiveReport(report));
-    },
-    [setSelectedModels, logEvent],
-  );
 
   const focused = focusedId ? (MODEL_BY_ID.get(focusedId) ?? null) : null;
 
