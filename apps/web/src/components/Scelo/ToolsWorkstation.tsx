@@ -64,6 +64,7 @@ import {
   type ModelFamily,
 } from "./modelCatalog";
 import { type DataSignature, dataSignature, fetchModelPicks, heuristicPick } from "./modelPicker";
+import type { ModelWire } from "./pipeline";
 import { type SelectedModel, useScelo } from "./sceloContext";
 import { useNodeChat } from "./useNodeChat";
 
@@ -1208,6 +1209,8 @@ export function ToolsWorkstation() {
     setPickSummary,
     picksDatasetName,
     setPicksDatasetName,
+    modelWires,
+    setModelWires,
     logEvent,
   } = useScelo();
 
@@ -1683,9 +1686,81 @@ export function ToolsWorkstation() {
     });
   }, [desiredNodes, setNodes]);
 
+  // Latest context wires, readable inside the merge effect without joining
+  // its dependency list (edges→context sync writes modelWires on every edge
+  // change; depending on it here would resurrect deleted wires in a loop).
+  const modelWiresRef = useRef<ModelWire[]>(modelWires);
   useEffect(() => {
-    setEdges(desiredEdges);
-  }, [desiredEdges, setEdges]);
+    modelWiresRef.current = modelWires;
+  }, [modelWires]);
+
+  useEffect(() => {
+    setEdges((prev) => {
+      const nodeIds = new Set(["hub", ...selectedModels.map((m) => `model-${m.id}`)]);
+      const autoPairs = new Set(desiredEdges.map((e) => `${e.source}→${e.target}`));
+      // 1. Hand-drawn wires survive a mix change as long as both ends still
+      //    exist and the pair didn't just become an auto workflow arrow.
+      const keptUser = prev.filter(
+        (e) =>
+          e.id.startsWith("user-") &&
+          nodeIds.has(e.source) &&
+          nodeIds.has(e.target) &&
+          !autoPairs.has(`${e.source}→${e.target}`),
+      );
+      const present = new Set([...autoPairs, ...keptUser.map((e) => `${e.source}→${e.target}`)]);
+      // 2. Wires persisted in the session (context) but not on the canvas —
+      //    a remount lost the hand-drawn edge objects — re-materialise them
+      //    so what executes is always what the canvas shows.
+      const restored: Edge[] = [];
+      for (const w of modelWiresRef.current) {
+        const source = `model-${w.source}`;
+        const target = `model-${w.target}`;
+        if (!nodeIds.has(source) || !nodeIds.has(target)) continue;
+        if (present.has(`${source}→${target}`)) continue;
+        present.add(`${source}→${target}`);
+        const color = colorFor(w.source);
+        restored.push({
+          id: `user-restored-${w.source}-${w.target}`,
+          type: "removable",
+          source,
+          sourceHandle: "s-right-1",
+          target,
+          targetHandle: "t-left-1",
+          animated: true,
+          style: { stroke: color, strokeWidth: 1.5, opacity: 0.95 },
+          markerEnd: { type: MarkerType.ArrowClosed, color, width: 12, height: 12 },
+        });
+      }
+      return [...desiredEdges, ...keptUser, ...restored];
+    });
+  }, [desiredEdges, setEdges, selectedModels, colorFor]);
+
+  // Publish the canvas's model→model wires to the shared session so Hard
+  // Data can order execution topologically and feed upstream results into
+  // downstream runners. Auto workflow arrows count — the default pipeline
+  // (chain-ladder → mack, gbm → shap, …) is live out of the box.
+  useEffect(() => {
+    const wires: ModelWire[] = [];
+    const seen = new Set<string>();
+    for (const e of edges) {
+      if (!e.source.startsWith("model-") || !e.target.startsWith("model-")) continue;
+      const source = e.source.slice("model-".length);
+      const target = e.target.slice("model-".length);
+      const key = `${source}→${target}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      wires.push({ source, target });
+    }
+    setModelWires((prev) => {
+      if (
+        prev.length === wires.length &&
+        prev.every((w, i) => w.source === wires[i]?.source && w.target === wires[i]?.target)
+      ) {
+        return prev;
+      }
+      return wires;
+    });
+  }, [edges, setModelWires]);
 
   // React Flow's `fitView` prop only fires on the initial mount. Our nodes
   // arrive via the sync effect *after* mount, so without this the freshly

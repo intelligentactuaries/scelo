@@ -6,6 +6,7 @@
 import { describe, expect, test } from "bun:test";
 import type { Dataset, Row } from "./SoftDataWorkstation";
 import {
+  BRIDGED_MODEL_IDS,
   detectCategoricalCovariates,
   detectFrequencyTarget,
   detectMonetaryColumn,
@@ -13,7 +14,6 @@ import {
   profileNumericColumns,
   runModel,
   sampleRowsCapped,
-  BRIDGED_MODEL_IDS,
 } from "./modelRunner";
 
 // Small deterministic LCG so the fixture is stable across runs.
@@ -296,5 +296,92 @@ describe("dispatcher provenance", () => {
       expect(BRIDGED_MODEL_IDS.has(id)).toBe(true);
     }
     expect(BRIDGED_MODEL_IDS.has("gbm")).toBe(false);
+  });
+});
+
+describe("wired pipeline · upstream results change downstream runs", () => {
+  const motor = makeMotorDataset();
+  // Minimal claims triangle: 3 origins × up to 3 devs of cumulative paid.
+  const triangle: Dataset = {
+    name: "tri.csv",
+    columns: ["origin_year", "dev_period", "paid"],
+    rows: [
+      { origin_year: 2020, dev_period: 1, paid: 100 },
+      { origin_year: 2020, dev_period: 2, paid: 150 },
+      { origin_year: 2020, dev_period: 3, paid: 175 },
+      { origin_year: 2021, dev_period: 1, paid: 110 },
+      { origin_year: 2021, dev_period: 2, paid: 160 },
+      { origin_year: 2022, dev_period: 1, paid: 120 },
+    ] as Row[],
+  };
+
+  test("BF a-priori comes from the wired chain-ladder ultimates", () => {
+    const cl = runModel("chain-ladder", triangle);
+    expect(cl.status).toBe("done");
+    const standalone = runModel("bornhuetter-ferguson", triangle);
+    const wired = runModel("bornhuetter-ferguson", triangle, new Map([["chain-ladder", cl]]));
+    expect(wired.status).toBe("done");
+    expect(wired.wiredFrom?.[0]?.id).toBe("chain-ladder");
+    expect(wired.detail?.aprioriSource).toBe("chain-ladder");
+    expect(standalone.detail?.aprioriSource).toBe("book-average");
+    // The seeded prior must actually move the reserve.
+    expect(wired.headline.value).not.toBe(standalone.headline.value);
+  });
+
+  test("Mack and bootstrap centre on the wired chain-ladder estimate", () => {
+    const cl = runModel("chain-ladder", triangle);
+    const mack = runModel("mack", triangle, new Map([["chain-ladder", cl]]));
+    expect(mack.wiredFrom?.[0]?.id).toBe("chain-ladder");
+    expect(mack.headline.value).toBe(cl.headline.value);
+    const boot = runModel("bootstrap-ibnr", triangle, new Map([["chain-ladder", cl]]));
+    expect(boot.wiredFrom?.[0]?.id).toBe("chain-ladder");
+    expect(boot.headline.value).toBe(cl.headline.value);
+  });
+
+  test("severity crossed with wired frequency yields the pure premium", () => {
+    const freq = runModel("glm-frequency", motor);
+    const sev = runModel("glm-severity", motor, new Map([["glm-frequency", freq]]));
+    if (sev.status === "done" && freq.status === "done") {
+      expect(sev.wiredFrom?.[0]?.id).toBe("glm-frequency");
+      const pp = sev.detail?.purePremium as number;
+      expect(pp).toBeCloseTo(freq.headline.value * (sev.detail?.mean as number), 6);
+    }
+  });
+
+  test("SHAP explains the wired GBM's variance screen", () => {
+    const gbm = runModel("gbm", motor);
+    const importances = gbm.detail?.importances as Array<{ feature: string; weight: number }>;
+    expect(Array.isArray(importances)).toBe(true);
+    expect(importances.length).toBeGreaterThan(0);
+    const shap = runModel("shap", motor, new Map([["gbm", gbm]]));
+    expect(shap.wiredFrom?.[0]?.id).toBe("gbm");
+    expect(shap.secondary[0]?.label).toBe(importances[0]?.feature);
+  });
+
+  test("life contingencies price off the wired Lee-Carter projection", () => {
+    const lc = runModel("lee-carter", motor);
+    const standalone = runModel("lifecontingencies", motor);
+    const wired = runModel("lifecontingencies", motor, new Map([["lee-carter", lc]]));
+    expect(wired.wiredFrom?.[0]?.id).toBe("lee-carter");
+    expect(wired.detail?.mortalitySource).toBe("lee-carter");
+    expect(standalone.detail?.mortalitySource).toBe("canned");
+    expect(wired.headline.value).not.toBe(standalone.headline.value);
+  });
+
+  test("SCR includes an interest stress from the wired ESG path", () => {
+    const esg = runModel("esg", motor);
+    const standalone = runModel("scr-standard", triangle);
+    const wired = runModel("scr-standard", triangle, new Map([["esg", esg]]));
+    expect(wired.wiredFrom?.[0]?.id).toBe("esg");
+    expect((wired.detail?.intStress as number) ?? 0).toBeGreaterThan(0);
+    expect(wired.headline.value).toBeGreaterThan(standalone.headline.value);
+  });
+
+  test("failed upstream results are ignored (no wiredFrom)", () => {
+    const bad = runModel("chain-ladder", motor); // motor has no triangle
+    expect(bad.status).toBe("error");
+    const bf = runModel("bornhuetter-ferguson", triangle, new Map([["chain-ladder", bad]]));
+    expect(bf.wiredFrom).toBeUndefined();
+    expect(bf.detail?.aprioriSource).toBe("book-average");
   });
 });

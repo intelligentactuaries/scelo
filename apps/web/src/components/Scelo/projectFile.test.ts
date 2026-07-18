@@ -13,6 +13,7 @@ const session: StoredSessionSnapshot = {
   domain: "pricing",
   pickSummary: "pricing mix",
   picksDatasetName: "policies.csv",
+  modelWires: [],
   runs: {},
   derivedColumns: { logprem: "log(premium)" },
   transformLog: ["premium|log(premium)"],

@@ -55,6 +55,9 @@ export type RunResult = {
   // still runs, but the result card must say WHY the canonical path
   // didn't — a bridge failure must never be a silent mock substitution.
   bridgeError?: string;
+  /** Canvas wiring provenance: upstream models whose results this run
+   *  consumed, with a one-line note of what flowed across the wire. */
+  wiredFrom?: Array<{ id: string; note: string }>;
 };
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -349,7 +352,19 @@ function ataFactors(tri: NonNullable<ReturnType<typeof buildTriangle>>) {
 
 // ── runners ──────────────────────────────────────────────────────────────────
 
-type Args = { dataset: Dataset };
+type Args = {
+  dataset: Dataset;
+  /** Results of models wired INTO this one on the Tools canvas, keyed by
+   *  model id. Runners that know how to consume an upstream result do so
+   *  and record it in `wiredFrom`; everything else ignores it. */
+  upstream?: Map<string, RunResult>;
+};
+
+/** Wired upstream result, if present and successfully computed. */
+function wired(upstream: Map<string, RunResult> | undefined, id: string): RunResult | null {
+  const r = upstream?.get(id);
+  return r && r.status === "done" ? r : null;
+}
 
 function runChainLadder({ dataset }: Args): RunResult {
   const tri = buildTriangle(dataset);
@@ -407,14 +422,17 @@ function runChainLadder({ dataset }: Args): RunResult {
   };
 }
 
-function runMack({ dataset }: Args): RunResult {
+function runMack({ dataset, upstream }: Args): RunResult {
   const tri = buildTriangle(dataset);
   if (!tri) {
     return makeUnsupported("mack", "reserving", "Triangle not detected.");
   }
   const { factors, sigmas } = ataFactors(tri);
-  // Reuse chain-ladder for the point estimate, then attach a CV from sigmas.
-  const base = runChainLadder({ dataset });
+  // Point estimate: a wired chain-ladder result wins (same triangle, same
+  // maths — but the provenance is explicit and the numbers are guaranteed
+  // consistent with the card the actuary is looking at); otherwise refit.
+  const wiredCl = wired(upstream, "chain-ladder");
+  const base = wiredCl ?? runChainLadder({ dataset });
   const ibnr = base.headline.value;
   // Very rough Mack-style standard error: weight sigma_k^2 by the average
   // cumulative paid at dev k. This is illustrative, not production-grade.
@@ -441,25 +459,60 @@ function runMack({ dataset }: Args): RunResult {
     series: base.series,
     blurb: `Mack reproduces chain-ladder's ${fmt(ibnr, 0)} IBNR with a CV of ${pct(cv)} (SE ≈ ${fmt(se, 0)}).`,
     detail: { factors, sigmas, ibnr, se, cv },
+    ...(wiredCl
+      ? {
+          wiredFrom: [
+            { id: "chain-ladder", note: "point estimate from the wired chain-ladder run" },
+          ],
+        }
+      : {}),
   };
 }
 
-function runBornhuetterFerguson({ dataset }: Args): RunResult {
+function runBornhuetterFerguson({ dataset, upstream }: Args): RunResult {
   const tri = buildTriangle(dataset);
   if (!tri) {
     return makeUnsupported("bornhuetter-ferguson", "reserving", "Triangle not detected.");
   }
   const { factors } = ataFactors(tri);
   const cdf = buildCdf(factors);
-  // Use mean cumulative paid as a rough premium proxy → assume 65% ELR.
-  const elr = 0.65;
+  // A-priori expected ultimates. BF's whole point is blending the
+  // development view with an INDEPENDENT prior — when a chain-ladder run
+  // is wired in, its per-origin ultimates BECOME that prior (the classic
+  // CL-seeded BF an actuary reaches for when no plan loss ratio exists).
+  // Standalone, the prior is the book-average ultimate held constant per
+  // origin. (The old standalone back-solved premium from a flat ELR, which
+  // cancelled algebraically back to the chain-ladder ultimate — a BF whose
+  // prior cannot move the answer isn't a BF.)
+  const wiredCl = wired(upstream, "bornhuetter-ferguson") ? null : wired(upstream, "chain-ladder");
+  const clUlts = Array.isArray(wiredCl?.detail?.ultByOrigin)
+    ? (wiredCl?.detail?.ultByOrigin as number[])
+    : null;
+  // Book-average CL-style ultimate for the standalone prior.
+  let bookUltSum = 0;
+  let bookUltN = 0;
+  for (const o of tri.origins) {
+    const row = tri.cumByRow.get(o) ?? [];
+    let lastK = -1;
+    let lastC = 0;
+    for (let k = 0; k < row.length; k++) {
+      if (Number.isFinite(row[k])) {
+        lastK = k;
+        lastC = row[k];
+      }
+    }
+    if (lastK < 0) continue;
+    bookUltSum += lastC * (cdf[lastK] ?? 1);
+    bookUltN++;
+  }
+  const bookAvgUlt = bookUltN > 0 ? bookUltSum / bookUltN : 0;
   let bfReserve = 0;
   let ult = 0;
   // Per-origin breakdown — populated alongside the running totals so the
   // node's small table can show "where the reserve comes from" cohort by
   // cohort, which is the most useful diagnostic for a BF estimate.
   const perOrigin: Array<{ origin: number; reserve: number }> = [];
-  for (const o of tri.origins) {
+  for (const [oi, o] of tri.origins.entries()) {
     const row = tri.cumByRow.get(o) ?? [];
     let lastK = -1;
     let lastC = 0;
@@ -472,8 +525,9 @@ function runBornhuetterFerguson({ dataset }: Args): RunResult {
     if (lastK < 0) continue;
     const remainingCdf = cdf[lastK] ?? 1;
     const pctDevelopedRatio = remainingCdf > 0 ? 1 / remainingCdf : 1;
-    const premium = lastC / elr / pctDevelopedRatio || lastC;
-    const expectedUltimate = premium * elr;
+    const clPrior = clUlts?.[oi];
+    const expectedUltimate =
+      clPrior !== undefined && Number.isFinite(clPrior) ? clPrior : bookAvgUlt || lastC;
     const bfRes = expectedUltimate * (1 - pctDevelopedRatio);
     bfReserve += bfRes;
     ult += lastC + bfRes;
@@ -492,7 +546,9 @@ function runBornhuetterFerguson({ dataset }: Args): RunResult {
     headline: { label: "BF reserve", value: bfReserve, precision: 0 },
     secondary: [
       { label: "ultimate", value: fmt(ult, 0) },
-      { label: "ELR (prior)", value: pct(elr) },
+      clUlts
+        ? { label: "a-priori", value: "chain-ladder ultimates (wired)" }
+        : { label: "a-priori", value: `book-avg ultimate ${fmt(bookAvgUlt, 0)}` },
     ],
     // Top contributors to the total reserve — bf has no time-series since
     // it isn't a development-pattern model, so the in-card visual is a
@@ -501,13 +557,34 @@ function runBornhuetterFerguson({ dataset }: Args): RunResult {
       headers: ["origin", "reserve"],
       rows: topOrigins.map((p) => [p.origin, p.reserve]),
     },
-    blurb: `BF gives a reserve of ${fmt(bfReserve, 0)} using a ${pct(elr)} prior ELR.`,
-    detail: { factors, cdf, bfReserve, ult, elr, perOrigin },
+    blurb: clUlts
+      ? `BF gives a reserve of ${fmt(bfReserve, 0)} with the a-priori seeded from the wired chain-ladder ultimates.`
+      : `BF gives a reserve of ${fmt(bfReserve, 0)} against a book-average ultimate prior of ${fmt(bookAvgUlt, 0)}.`,
+    detail: {
+      factors,
+      cdf,
+      bfReserve,
+      ult,
+      bookAvgUlt,
+      perOrigin,
+      aprioriSource: clUlts ? "chain-ladder" : "book-average",
+    },
+    ...(clUlts
+      ? {
+          wiredFrom: [
+            {
+              id: "chain-ladder",
+              note: "per-origin a-priori ultimates from the wired chain-ladder",
+            },
+          ],
+        }
+      : {}),
   };
 }
 
-function runBootstrap({ dataset }: Args): RunResult {
-  const base = runChainLadder({ dataset });
+function runBootstrap({ dataset, upstream }: Args): RunResult {
+  const wiredCl = wired(upstream, "chain-ladder");
+  const base = wiredCl ?? runChainLadder({ dataset });
   if (base.status === "error") return { ...base, modelId: "bootstrap-ibnr", family: "reserving" };
   const ibnr = base.headline.value;
   // Pretend we ran 5000 bootstrap resamples with ±18% noise around the
@@ -530,6 +607,13 @@ function runBootstrap({ dataset }: Args): RunResult {
     series: base.series,
     blurb: `Bootstrap brackets IBNR between ${fmt(p5, 0)} (p5) and ${fmt(p95, 0)} (p95) around ${fmt(ibnr, 0)}.`,
     detail: { ibnr, p5, p95 },
+    ...(wiredCl
+      ? {
+          wiredFrom: [
+            { id: "chain-ladder", note: "resampling centred on the wired chain-ladder reserve" },
+          ],
+        }
+      : {}),
   };
 }
 
@@ -587,11 +671,28 @@ function runCBD({ dataset }: Args): RunResult {
   };
 }
 
-function runLifeContingencies({ dataset }: Args): RunResult {
-  // Annuity factor a_x = sum_{t>=0} v^t * p(x,t) with a flat 4% discount and
-  // canned survival rates if mortality data is absent.
+function runLifeContingencies({ dataset, upstream }: Args): RunResult {
+  // Annuity factor a_x = sum_{t>=0} v^t * p(x,t) at a flat 4% discount.
+  // With a Lee-Carter run wired in, the survival curve is BUILT from its
+  // projected q(65) path — the fitted table prices the annuity, which is
+  // the entire point of the "price annuities" workflow arrow. Standalone,
+  // canned survival rates stand in.
   const v = 1 / 1.04;
-  const survival = [1, 0.99, 0.98, 0.97, 0.96, 0.945, 0.93, 0.91, 0.88, 0.84];
+  const wiredLc = wired(upstream, "lee-carter");
+  const lcQ = wiredLc?.series?.y;
+  let survival: number[];
+  let mortalitySource: "lee-carter" | "canned";
+  if (lcQ && lcQ.length >= 2) {
+    survival = [1];
+    for (let t = 0; t < lcQ.length - 1; t++) {
+      const q = Math.max(0, Math.min(0.5, lcQ[t]));
+      survival.push(survival[t] * (1 - q));
+    }
+    mortalitySource = "lee-carter";
+  } else {
+    survival = [1, 0.99, 0.98, 0.97, 0.96, 0.945, 0.93, 0.91, 0.88, 0.84];
+    mortalitySource = "canned";
+  }
   let a = 0;
   for (let t = 0; t < survival.length; t++) a += v ** t * survival[t];
   return {
@@ -604,14 +705,28 @@ function runLifeContingencies({ dataset }: Args): RunResult {
     secondary: [
       { label: "discount", value: pct(0.04) },
       { label: "horizon", value: `${survival.length}y` },
+      {
+        label: "mortality",
+        value: mortalitySource === "lee-carter" ? "wired lee-carter table" : "canned survival",
+      },
     ],
     series: {
       kind: "line",
       x: survival.map((_, i) => `t=${i}`),
       y: survival.map((s, i) => v ** i * s),
     },
-    blurb: `Life annuity factor a₆₅ ≈ ${a.toFixed(3)} at 4% discount over ${survival.length}y.`,
-    detail: { a, v, survival, ages: numericCol(dataset.rows, "age").length },
+    blurb:
+      mortalitySource === "lee-carter"
+        ? `Annuity factor a₆₅ ≈ ${a.toFixed(3)} priced on the wired Lee-Carter projection (4% discount, ${survival.length}y).`
+        : `Life annuity factor a₆₅ ≈ ${a.toFixed(3)} at 4% discount over ${survival.length}y.`,
+    detail: { a, v, survival, mortalitySource, ages: numericCol(dataset.rows, "age").length },
+    ...(mortalitySource === "lee-carter"
+      ? {
+          wiredFrom: [
+            { id: "lee-carter", note: "survival curve built from the wired q(65) projection" },
+          ],
+        }
+      : {}),
   };
 }
 
@@ -696,7 +811,7 @@ function runGLMFrequency({ dataset }: Args): RunResult {
   };
 }
 
-function runGLMSeverity({ dataset }: Args): RunResult {
+function runGLMSeverity({ dataset, upstream }: Args): RunResult {
   const covariates = detectCategoricalCovariates(dataset);
   const money = detectMonetaryColumn(dataset);
   if (!money)
@@ -738,6 +853,12 @@ function runGLMSeverity({ dataset }: Args): RunResult {
   const sampleNote = sampled
     ? ` (fitted on a ${GLM_FIT_ROW_CAP.toLocaleString()}-row sample of ${dataset.rows.length.toLocaleString()})`
     : "";
+  // Wired frequency → the two halves of the pure premium are on the canvas;
+  // multiply them out. This is exactly the "× combine" the workflow arrow
+  // between the GLMs has always promised.
+  const wiredFreq = wired(upstream, "glm-frequency");
+  const freqMean = wiredFreq?.headline.value;
+  const purePremium = freqMean !== undefined && Number.isFinite(freqMean) ? freqMean * mean : null;
   return {
     modelId: "glm-severity",
     family: "pricing",
@@ -750,15 +871,26 @@ function runGLMSeverity({ dataset }: Args): RunResult {
       precision: 0,
     },
     secondary: [
+      ...(purePremium !== null
+        ? [{ label: "pure premium (freq × sev)", value: fmt(purePremium, 0) }]
+        : []),
       { label: "groups", value: String(groups.size) },
       { label: "n claims", value: total.toLocaleString() },
       { label: "covariates found", value: covariates.slice(0, 4).join(", ") },
-    ],
+    ].slice(0, 3),
     series: { kind: "bar", x: xs, y: ys },
     blurb:
-      `Gamma-style grouped mean of \`${money}\` by ${cat}: ${fmt(mean, 0)} ` +
-      `across ${groups.size} levels${sampleNote}.`,
-    detail: { target: money, covariates, groupsCount: groups.size, mean, sampled },
+      purePremium !== null
+        ? `Severity ${fmt(mean, 0)} × wired frequency ${(freqMean ?? 0).toFixed(3)} → pure premium ≈ ${fmt(purePremium, 0)} per policy${sampleNote}.`
+        : `Gamma-style grouped mean of \`${money}\` by ${cat}: ${fmt(mean, 0)} across ${groups.size} levels${sampleNote}.`,
+    detail: { target: money, covariates, groupsCount: groups.size, mean, sampled, purePremium },
+    ...(purePremium !== null
+      ? {
+          wiredFrom: [
+            { id: "glm-frequency", note: "frequency mean crossed in for the pure premium" },
+          ],
+        }
+      : {}),
   };
 }
 
@@ -769,6 +901,46 @@ function runGBM({ dataset }: Args): RunResult {
   // says so explicitly — this is NOT a fitted model.
   const auc = Math.min(0.92, 0.7 + n / 4000);
   const rmse = 1200 / Math.max(1, Math.sqrt(n));
+  // Honest feature screen for downstream SHAP wiring: rank the categorical
+  // covariates by between-group variance of a numeric target (monetary
+  // column preferred, else the frequency target). Variance-based screening
+  // is not SHAP — the label downstream says so — but it IS computed from
+  // this dataset rather than invented.
+  const target = detectMonetaryColumn(dataset) ?? detectFrequencyTarget(dataset);
+  const importances: Array<{ feature: string; weight: number }> = [];
+  if (target) {
+    const cats = detectCategoricalCovariates(dataset);
+    const scores: Array<{ feature: string; score: number }> = [];
+    for (const cat of cats) {
+      const groups = new Map<string, { sum: number; n: number }>();
+      let sum = 0;
+      let count = 0;
+      for (const r of dataset.rows) {
+        const v = r[target];
+        if (typeof v !== "number" || !Number.isFinite(v)) continue;
+        const k = String(r[cat] ?? "—");
+        const g = groups.get(k) ?? { sum: 0, n: 0 };
+        g.sum += v;
+        g.n += 1;
+        groups.set(k, g);
+        sum += v;
+        count += 1;
+      }
+      if (count === 0 || groups.size < 2) continue;
+      const grand = sum / count;
+      let between = 0;
+      for (const g of groups.values()) {
+        const m = g.sum / g.n;
+        between += g.n * (m - grand) ** 2;
+      }
+      scores.push({ feature: cat, score: between / count });
+    }
+    scores.sort((a, b) => b.score - a.score);
+    const totalScore = scores.reduce((a, b) => a + b.score, 0) || 1;
+    for (const sc of scores.slice(0, 5)) {
+      importances.push({ feature: sc.feature, weight: sc.score / totalScore });
+    }
+  }
   return {
     modelId: "gbm",
     family: "pricing",
@@ -782,15 +954,38 @@ function runGBM({ dataset }: Args): RunResult {
       { label: "n", value: String(n) },
     ],
     blurb: `GBM (in-browser approximation, not a fitted model) lands at AUC ${auc.toFixed(3)} on ${n} rows.`,
-    detail: { auc, rmse, n },
+    detail: { auc, rmse, n, importances },
   };
 }
 
-function runSHAP({ dataset }: Args): RunResult {
-  // Pretend the GBM is in memory and pull a top-3 SHAP. Stand-in ranking
-  // = the dataset's own categorical rating factors; unsupported when the
-  // dataset has none (fabricating a "top driver — 0.00" would be worse
-  // than an honest error).
+function runSHAP({ dataset, upstream }: Args): RunResult {
+  // With a GBM wired in, explain THAT run: its variance-screen importances
+  // (computed from the data) become the ranking. Standalone, fall back to
+  // the dataset's own categorical rating factors with illustrative weights;
+  // unsupported when the dataset has none (fabricating a "top driver —
+  // 0.00" would be worse than an honest error).
+  const wiredGbm = wired(upstream, "gbm");
+  const gbmImportances = Array.isArray(wiredGbm?.detail?.importances)
+    ? (wiredGbm?.detail?.importances as Array<{ feature: string; weight: number }>)
+    : null;
+  if (gbmImportances && gbmImportances.length > 0) {
+    const xs = gbmImportances.slice(0, 3).map((i) => i.feature);
+    const ys = gbmImportances.slice(0, 3).map((i) => i.weight);
+    const top = xs[0];
+    return {
+      modelId: "shap",
+      family: "pricing",
+      status: "done",
+      startedAt: Date.now(),
+      finishedAt: Date.now(),
+      headline: { label: "top driver (wired GBM · variance screen)", value: ys[0], precision: 2 },
+      secondary: xs.map((c, i) => ({ label: c, value: (ys[i] ?? 0).toFixed(2) })),
+      series: { kind: "bar", x: xs, y: ys },
+      blurb: `SHAP-style attribution over the wired GBM's variance screen ranks ${top} as the top driver.`,
+      detail: { top, ranking: xs, weights: ys, source: "wired-gbm" },
+      wiredFrom: [{ id: "gbm", note: "feature ranking from the wired GBM's variance screen" }],
+    };
+  }
   const cats = detectCategoricalCovariates(dataset);
   if (cats.length === 0)
     return makeUnsupported(
@@ -903,9 +1098,21 @@ function runParametric({ dataset }: Args): RunResult {
   };
 }
 
-function runSCR({ dataset }: Args): RunResult {
+function runSCR({ dataset, upstream }: Args): RunResult {
   const paid = numericCol(dataset.rows, "paid").reduce((a, b) => a + b, 0);
-  const scr = Math.max(paid * 0.18, 250000);
+  const base = Math.max(paid * 0.18, 250000);
+  // Wired ESG → add an interest-rate stress: the adverse-percentile path's
+  // range proxies the rate shock the standard formula's market module
+  // charges for. Illustrative like the rest of this runner, but the number
+  // now MOVES with the wired scenario set instead of being fixed.
+  const wiredEsg = wired(upstream, "esg");
+  const esgPath = Array.isArray(wiredEsg?.detail?.y) ? (wiredEsg?.detail?.y as number[]) : null;
+  let intStress = 0;
+  if (esgPath && esgPath.length > 1) {
+    const range = Math.max(...esgPath) - Math.min(...esgPath);
+    intStress = Math.round(base * range * 10);
+  }
+  const scr = base + intStress;
   return {
     modelId: "scr-standard",
     family: "capital",
@@ -915,11 +1122,23 @@ function runSCR({ dataset }: Args): RunResult {
     headline: { label: "SCR", value: scr, precision: 0 },
     secondary: [
       { label: "BSCR", value: fmt(scr * 0.85, 0) },
-      { label: "op risk", value: fmt(scr * 0.1, 0) },
+      ...(intStress > 0
+        ? [{ label: "int-rate stress (ESG)", value: fmt(intStress, 0) }]
+        : [{ label: "op risk", value: fmt(scr * 0.1, 0) }]),
       { label: "VaR", value: "99.5%" },
     ],
-    blurb: `Standard formula SCR ≈ ${fmt(scr, 0)} at 99.5% VaR.`,
-    detail: { scr, paid },
+    blurb:
+      intStress > 0
+        ? `Standard formula SCR ≈ ${fmt(scr, 0)} including ${fmt(intStress, 0)} interest-rate stress from the wired ESG path.`
+        : `Standard formula SCR ≈ ${fmt(scr, 0)} at 99.5% VaR.`,
+    detail: { scr, paid, intStress },
+    ...(intStress > 0
+      ? {
+          wiredFrom: [
+            { id: "esg", note: "interest-rate stress sized from the wired scenario path" },
+          ],
+        }
+      : {}),
   };
 }
 
@@ -1641,7 +1860,11 @@ const RUNNERS: Record<string, (args: Args) => RunResult> = {
   "workspace-bottleneck": runWorkspaceBottleneck,
 };
 
-export function runModel(modelId: string, dataset: Dataset): RunResult {
+export function runModel(
+  modelId: string,
+  dataset: Dataset,
+  upstream?: Map<string, RunResult>,
+): RunResult {
   const fn = RUNNERS[modelId];
   if (!fn) {
     return {
@@ -1658,7 +1881,7 @@ export function runModel(modelId: string, dataset: Dataset): RunResult {
     };
   }
   try {
-    return { ...fn({ dataset }), source: "browser" };
+    return { ...fn({ dataset, upstream }), source: "browser" };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     return { ...makeUnsupported(modelId, "general", msg), source: "browser" };
@@ -1716,7 +1939,11 @@ function bridgeErrorMessage(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
-export async function runModelAsync(modelId: string, dataset: Dataset): Promise<RunResult> {
+export async function runModelAsync(
+  modelId: string,
+  dataset: Dataset,
+  upstream?: Map<string, RunResult>,
+): Promise<RunResult> {
   // Why the bridge didn't produce a result, if it was attempted. Attached
   // to the in-browser fallback at the bottom.
   let bridgeError: string | undefined;
@@ -2198,6 +2425,6 @@ export async function runModelAsync(modelId: string, dataset: Dataset): Promise<
   // No bridge produced a result — run the in-browser approximation and,
   // when a bridge was attempted but failed, carry the reason so the card
   // shows WHY the canonical path didn't run.
-  const fallback = runModel(modelId, dataset);
+  const fallback = runModel(modelId, dataset, upstream);
   return bridgeError ? { ...fallback, bridgeError } : fallback;
 }
