@@ -15,7 +15,9 @@ export function SynthesisView({ run, onSelectAgent }: Props) {
     return (
       <div className="canvas-body">
         <div className="empty-state">
-          <div className="muted small">no synthesis yet</div>
+          <div className="muted small">
+            no readback yet — the council synthesis lands after round 3.
+          </div>
         </div>
       </div>
     );
@@ -122,6 +124,11 @@ export function SynthesisView({ run, onSelectAgent }: Props) {
                 <span className="dissent-risk">{r.keyRisk}</span>
               </button>
             ))}
+            {s.dissentingAgentIds.length > dissenters.length && (
+              <div className="muted small" style={{ padding: '4px 2px' }}>
+                … {s.dissentingAgentIds.length - dissenters.length} more — drill in via the council tab.
+              </div>
+            )}
           </div>
         )}
       </section>
@@ -130,11 +137,16 @@ export function SynthesisView({ run, onSelectAgent }: Props) {
 }
 
 function StackBar({ support, oppose, abstain, colors }: { support: number; oppose: number; abstain: number; colors: ReturnType<typeof colorsForTheme> }) {
+  const segs = [
+    { key: 'trust', v: support, bg: colors.consensus },
+    { key: 'distrust', v: oppose, bg: colors.adversarial },
+    { key: 'uncertain', v: abstain, bg: colors.muted },
+  ].filter((s) => s.v > 0);
   return (
     <div className="stack-bar">
-      <div className="stack-seg" style={{ flex: support, background: colors.consensus }} />
-      <div className="stack-seg" style={{ flex: oppose, background: colors.adversarial }} />
-      <div className="stack-seg" style={{ flex: abstain, background: colors.muted }} />
+      {segs.map((s) => (
+        <div key={s.key} className="stack-seg" style={{ flex: s.v, background: s.bg }} />
+      ))}
     </div>
   );
 }
