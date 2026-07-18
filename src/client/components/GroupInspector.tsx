@@ -1,6 +1,8 @@
 import { useMemo } from 'react';
 import type { Run, Stance } from '../../shared/types';
-import { PROFESSION_PALETTE, type LegalJurisdiction, type Profession } from '../../shared/constants';
+import { professionColor, type LegalJurisdiction, type Profession } from '../../shared/constants';
+import { useTheme } from '../lib/theme';
+import { STANCE_CLASS, STANCE_LABEL } from '../lib/stance';
 import { JustificationPanel } from './JustificationPanel';
 
 type Props = {
@@ -11,12 +13,6 @@ type Props = {
   onClose: () => void;
 };
 
-const STANCE_CLASS: Record<Stance, string> = {
-  support: 'status-ok',
-  oppose: 'status-err',
-  abstain: 'muted',
-};
-
 export function GroupInspector({
   run,
   runId,
@@ -24,6 +20,7 @@ export function GroupInspector({
   legalJurisdiction,
   onClose,
 }: Props) {
+  const dark = useTheme().resolved === 'dark';
   const stats = useMemo(() => {
     const agents = run.councilResults.filter((r) => r.agent.profession === profession);
     const byStance: Record<Stance, { count: number; sumConf: number }> = {
@@ -56,7 +53,7 @@ export function GroupInspector({
         <div>
           <div
             className="agent-tag"
-            style={{ borderLeft: `3px solid ${PROFESSION_PALETTE[profession]}` }}
+            style={{ borderLeft: `3px solid ${professionColor(profession, dark)}` }}
           >
             <div className="agent-id">{profession} group</div>
             <div className="muted small">
@@ -71,9 +68,9 @@ export function GroupInspector({
 
       <div className="inspector-vote">
         <div>
-          <div className="panel-label">dominant stance</div>
+          <div className="panel-label">dominant verdict</div>
           <div className={`big-num ${STANCE_CLASS[stats.dominant]}`}>
-            {stats.dominant}
+            {STANCE_LABEL[stats.dominant]}
           </div>
         </div>
         <div>
@@ -84,14 +81,14 @@ export function GroupInspector({
           <div className="panel-label">distribution</div>
           <div className="small group-dist">
             <span className="status-ok">
-              support {stats.byStance.support.count}
+              trust {stats.byStance.support.count}
             </span>
             <span className="muted"> · </span>
             <span className="status-err">
-              oppose {stats.byStance.oppose.count}
+              distrust {stats.byStance.oppose.count}
             </span>
             <span className="muted"> · </span>
-            <span>abstain {stats.byStance.abstain.count}</span>
+            <span>uncertain {stats.byStance.abstain.count}</span>
           </div>
         </div>
       </div>
@@ -122,7 +119,7 @@ export function GroupInspector({
                     </td>
                     <td>
                       <span className={`stance-pill ${STANCE_CLASS[r.finalStance]}`}>
-                        {r.finalStance}
+                        {STANCE_LABEL[r.finalStance]}
                       </span>
                     </td>
                     <td className="num small">{r.finalConfidence}</td>

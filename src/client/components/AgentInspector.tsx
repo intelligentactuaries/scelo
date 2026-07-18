@@ -1,5 +1,7 @@
 import type { CouncilAgentResult } from '../../shared/types';
-import { PROFESSION_PALETTE, type LegalJurisdiction } from '../../shared/constants';
+import { professionColor, type LegalJurisdiction } from '../../shared/constants';
+import { useTheme } from '../lib/theme';
+import { STANCE_CLASS, STANCE_LABEL } from '../lib/stance';
 import { JustificationPanel } from './JustificationPanel';
 
 type Props = {
@@ -9,13 +11,8 @@ type Props = {
   onClose: () => void;
 };
 
-const STANCE_CLASS: Record<CouncilAgentResult['finalStance'], string> = {
-  support: 'status-ok',
-  oppose: 'status-err',
-  abstain: 'muted',
-};
-
 export function AgentInspector({ agent, runId, legalJurisdiction, onClose }: Props) {
+  const dark = useTheme().resolved === 'dark';
   if (!agent) {
     return (
       <aside className="inspector">
@@ -36,7 +33,7 @@ export function AgentInspector({ agent, runId, legalJurisdiction, onClose }: Pro
         <div>
           <div
             className="agent-tag"
-            style={{ borderLeft: `3px solid ${PROFESSION_PALETTE[a.profession]}` }}
+            style={{ borderLeft: `3px solid ${professionColor(a.profession, dark)}` }}
           >
             <div className="agent-id">{a.id}</div>
             <div className="muted small">
@@ -51,8 +48,8 @@ export function AgentInspector({ agent, runId, legalJurisdiction, onClose }: Pro
 
       <div className="inspector-vote">
         <div>
-          <div className="panel-label">final stance</div>
-          <div className={`big-num ${STANCE_CLASS[finalStance]}`}>{finalStance}</div>
+          <div className="panel-label">final verdict</div>
+          <div className={`big-num ${STANCE_CLASS[finalStance]}`}>{STANCE_LABEL[finalStance]}</div>
         </div>
         <div>
           <div className="panel-label">confidence</div>
@@ -78,7 +75,7 @@ export function AgentInspector({ agent, runId, legalJurisdiction, onClose }: Pro
               <div className="round-header">
                 <span className="panel-label">round {r.round}</span>
                 {r.stance && (
-                  <span className={STANCE_CLASS[r.stance]}>{r.stance}</span>
+                  <span className={STANCE_CLASS[r.stance]}>{STANCE_LABEL[r.stance]}</span>
                 )}
                 <span className="muted small">conf {r.confidence}</span>
               </div>

@@ -149,3 +149,23 @@ export const PROFESSION_PALETTE: Record<Profession, string> = {
   Lawyer: '#a3e635',
   SocialMediaInfluencer: '#f472b6',
 };
+
+/** Light-theme profession hues. The dark palette above is neon-bright and
+ *  washes out on the cream surface (same failure the society cluster palette
+ *  fixed with its light overrides). Same hue identities, darkened; validated
+ *  CVD-safe adjacent-pairwise in PROFESSIONS order on #E8E4D8 — worst pair
+ *  deutan ΔE 12.7, normal ≥15.4. Always pick via professionColor(). */
+export const PROFESSION_PALETTE_LIGHT: Record<Profession, string> = {
+  Finance: '#274F9E',
+  Investor: '#0A8A57',
+  Accountant: '#2596BE',
+  Actuary: '#7A52D6',
+  Psychologist: '#C4860A',
+  ConspiracyTheorist: '#992121',
+  Lawyer: '#7E8C00',
+  SocialMediaInfluencer: '#C74E90',
+};
+
+export function professionColor(p: Profession, dark: boolean): string {
+  return (dark ? PROFESSION_PALETTE : PROFESSION_PALETTE_LIGHT)[p];
+}

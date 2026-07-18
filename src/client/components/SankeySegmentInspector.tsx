@@ -1,17 +1,12 @@
 import { useMemo } from 'react';
 import type { Run, Stance, Sentiment, CouncilAgentResult, SocietyAgentResult } from '../../shared/types';
 import type { CrossHighlight } from './CouncilGraph';
+import { STANCE_CLASS, STANCE_LABEL, STANCE_ORDER } from '../lib/stance';
 
 type Props = {
   run: Run;
   highlight: NonNullable<CrossHighlight>;
   onClose: () => void;
-};
-
-const STANCE_CLASS: Record<Stance, string> = {
-  support: 'status-ok',
-  oppose: 'status-err',
-  abstain: 'muted',
 };
 
 const SENTIMENT_CLASS: Record<Sentiment, string> = {
@@ -22,7 +17,6 @@ const SENTIMENT_CLASS: Record<Sentiment, string> = {
   hostile: 'status-err',
 };
 
-const ORDER_STANCE: Stance[] = ['support', 'oppose', 'abstain'];
 const ORDER_SENT: Sentiment[] = ['enthusiastic', 'supportive', 'neutral', 'skeptical', 'hostile'];
 
 /** Decision-sidebar view for a click-locked Sankey segment. Aggregates the
@@ -120,8 +114,8 @@ function CouncilSegment({
           <div className="muted small">{pct}% of {total}</div>
         </div>
         <div>
-          <div className="panel-label">dominant stance</div>
-          <div className={`big-num ${STANCE_CLASS[dominant]}`}>{dominant}</div>
+          <div className="panel-label">dominant verdict</div>
+          <div className={`big-num ${STANCE_CLASS[dominant]}`}>{STANCE_LABEL[dominant]}</div>
         </div>
         <div>
           <div className="panel-label">avg confidence</div>
@@ -131,12 +125,12 @@ function CouncilSegment({
 
       <div className="inspector-body">
         <section className="round-block">
-          <div className="round-header"><span className="panel-label">stance mix</span></div>
+          <div className="round-header"><span className="panel-label">verdict mix</span></div>
           <div className="small group-dist">
-            {ORDER_STANCE.map((s, i) => (
+            {STANCE_ORDER.map((s, i) => (
               <span key={s}>
                 {i > 0 && <span className="muted"> · </span>}
-                <span className={STANCE_CLASS[s]}>{s} {byStance[s]}</span>
+                <span className={STANCE_CLASS[s]}>{STANCE_LABEL[s]} {byStance[s]}</span>
               </span>
             ))}
           </div>
@@ -199,7 +193,7 @@ function CouncilSegment({
                     </td>
                     <td>
                       <span className={`stance-pill ${STANCE_CLASS[r.finalStance]}`}>
-                        {r.finalStance}
+                        {STANCE_LABEL[r.finalStance]}
                       </span>
                     </td>
                     <td className="num small">{r.finalConfidence}</td>
@@ -227,9 +221,9 @@ function buildCouncilJustification(p: {
   if (p.n === 0) return 'No council agents flow through this segment.';
   const verb = p.byStance[p.dominant] === p.n ? 'unanimously' : 'predominantly';
   const stanceText =
-    p.dominant === 'support' ? 'support the proposal'
-      : p.dominant === 'oppose' ? 'oppose the proposal'
-        : 'abstain';
+    p.dominant === 'support' ? 'trust the forecast'
+      : p.dominant === 'oppose' ? 'distrust the forecast'
+        : 'are uncertain about the forecast';
   const confText =
     p.avgConf >= 80 ? `with strong conviction (avg confidence ${p.avgConf})`
       : p.avgConf >= 60 ? `with moderate conviction (avg confidence ${p.avgConf})`
@@ -416,7 +410,10 @@ function parseSegmentKey(key: string): { label: string; sublabel: string } {
   if (key.startsWith('node:')) {
     const inner = key.slice(5);
     if (inner.startsWith('prof:')) return { label: inner.slice(5), sublabel: 'profession' };
-    if (inner.startsWith('stance:')) return { label: inner.slice(7), sublabel: 'council stance' };
+    if (inner.startsWith('stance:')) {
+      const raw = inner.slice(7) as Stance;
+      return { label: STANCE_LABEL[raw] ?? raw, sublabel: 'council verdict' };
+    }
     if (inner.startsWith('conf:')) return { label: inner.slice(5), sublabel: 'confidence band' };
     if (inner.startsWith('clu:')) return { label: `Cluster ${inner.slice(4)}`, sublabel: 'society cluster' };
     if (inner.startsWith('sent:')) return { label: inner.slice(5), sublabel: 'society sentiment' };
