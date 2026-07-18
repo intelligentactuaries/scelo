@@ -2,6 +2,7 @@
 // SmartColumnDashboard: prompt the orchestrator with the dataset shape,
 // parse JSON, fall back to a local heuristic if anything goes wrong.
 
+import { hasLocalLlmBridge, llmChatActive } from "@/lib/aiProviders";
 import { streamOrchestrator } from "@/lib/api";
 import type { ColumnMeta, Dataset } from "./SoftDataWorkstation";
 import { type CatalogModel, MODEL_BY_ID, MODEL_CATALOG, type ModelFamily } from "./modelCatalog";
@@ -71,6 +72,16 @@ export type DataSignature = {
    *  These don't fit any actuarial model family directly; the row IS
    *  the simulation result. Route to descriptive stats. */
   hasSimulationOutcomes: boolean;
+  // Yield-curve / rates signals (zero/spot/forward rates over maturities).
+  hasTenor: boolean;
+  hasRateColumn: boolean;
+  // Pension-scheme signals (member data with salary + service/contribution).
+  hasSalary: boolean;
+  hasService: boolean;
+  hasRetirement: boolean;
+  hasContribution: boolean;
+  // Capital / solvency aggregates (scr, own funds, risk margin).
+  hasCapitalSignals: boolean;
   numNumeric: number;
   numCategorical: number;
   rowCount: number;
@@ -137,6 +148,18 @@ export function dataSignature(dataset: Dataset, metas: ColumnMeta[]): DataSignat
       nameMatches(lower, /^(w_rel|wrel)$/) ||
       nameMatches(lower, /^(w_s|ws)$/),
     hasSimulationOutcomes: lower.some((c) => c.startsWith("sim_")),
+    hasTenor: nameMatches(lower, /^(maturity|tenor)(_years|_months)?$/),
+    hasRateColumn:
+      nameMatches(lower, /(^|_)(zero|spot|forward|discount|swap)_?(rate|yield)?$/) ||
+      nameMatches(lower, /^(rate|yield|ytm)$/),
+    hasSalary: nameMatches(lower, /(^|_)(salary|pensionable)(_|$)/),
+    hasService: nameMatches(lower, /^(service|service_years|years_of_service|past_service)$/),
+    hasRetirement: nameMatches(lower, /(^|_)(retirement|pension_age|nra)(_|$)/),
+    hasContribution: nameMatches(lower, /(^|_)contributions?(_|$)/),
+    hasCapitalSignals: nameMatches(
+      lower,
+      /(^|_)(scr|bscr|own_funds|risk_margin|solvency_ratio)(_|$)/,
+    ),
     numNumeric: metas.filter((m) => m.type === "number").length,
     numCategorical: metas.filter((m) => m.type === "string").length,
     rowCount: dataset.rows.length,
@@ -380,6 +403,69 @@ function basePick(sig: DataSignature): PickResult {
         "Geographic / exposure-shaped data: CLIMADA + parametric design with a descriptive baseline.",
     };
   }
+  // Capital / solvency aggregates → capital family. Column names like scr,
+  // own_funds, risk_margin are written by capital processes and nothing else.
+  if (sig.hasCapitalSignals) {
+    return {
+      domain: "capital",
+      selected: [
+        {
+          id: "scr-standard",
+          rationale: "SCR / own-funds / risk-margin columns — Standard Formula capital work.",
+        },
+        {
+          id: "esg",
+          rationale: "Stochastic economic paths to stress the same capital position.",
+        },
+        { id: "descriptive", rationale: "Baseline summary of the capital components." },
+      ],
+      summary:
+        "Capital / solvency aggregates: Standard Formula SCR machinery with an ESG for stochastic stresses.",
+    };
+  }
+  // Pension-scheme member data → pensions family. Salary plus any of
+  // service / contribution / retirement is the tell; age+sex alone is
+  // mortality-table territory and routes above.
+  if (sig.hasSalary && (sig.hasService || sig.hasRetirement || sig.hasContribution)) {
+    return {
+      domain: "pensions",
+      selected: [
+        {
+          id: "db-valuation",
+          rationale:
+            "Member data with salary + service/contribution — DB/DC liability valuation shape.",
+        },
+        {
+          id: "lifecontingencies",
+          rationale: "Annuity / assurance pricing on the same member table.",
+        },
+        { id: "descriptive", rationale: "Membership profile summary before the valuation." },
+      ],
+      summary:
+        "Pension-scheme member data: DB/DC valuation headline with life-contingency pricing alongside.",
+    };
+  }
+  // Yield-curve / rates shape → life curve tooling. Zero/spot/forward rates
+  // over maturities (or dated observations) with no model points and no
+  // triangle — the Smith-Wilson + economic-curves pair is the right lens.
+  if (sig.hasRateColumn && (sig.hasTenor || sig.hasDateColumn) && !sig.hasPolicyId) {
+    return {
+      domain: "life",
+      selected: [
+        {
+          id: "smithwilson-curve",
+          rationale: "Rates over maturities — Smith-Wilson extrapolation to the UFR.",
+        },
+        {
+          id: "economic-curves",
+          rationale: "Curve bundle (zero / forward / discount) built from the same quotes.",
+        },
+        { id: "esg", rationale: "Optional stochastic scenarios seeded from the fitted curve." },
+      ],
+      summary:
+        "Yield-curve quotes: Smith-Wilson fit + curve bundle, with an ESG for stochastic extensions.",
+    };
+  }
   // Fallback — descriptive only with a couple of general companions.
   return {
     domain: "general",
@@ -485,7 +571,9 @@ FAMILY ROUTING (use as a strong prior — override only with explicit data evide
 - WEATHER / CLIMATE columns — names containing t2m, temp, temperature, tas, tp, precip, precipitation, rain, wind, u10, v10 — or REANALYSIS suffixes (era5, era5_land, merra2, merra-2, jra3q, jra-3q, ncep) → \`climate\`: climada, parametric-design, descriptive. THIS IS A STRONG SIGNAL; the user is doing climate-actuarial work and the right family is climate even if no geographic column exists.
 - Date-indexed numeric time-series with no claims/triangle signal but multiple correlated numeric series → still consider \`climate\` if the column names look weather-flavoured.
 - Geographic codes (state, province, country, region) but no weather columns → \`climate\` framed as exposure / cat work ONLY when geo + hazard / exposure columns dominate the schema and there are no policy-level covariates. If the geo code sits among policy rating factors, route to \`pricing\` instead.
-- Yield-curve / rates columns or zero/forward curve data with no MP file → \`life\`: smithwilson-curve, economic-curves.
+- Yield-curve / rates columns or zero/forward curve data with no MP file → \`life\`: smithwilson-curve, economic-curves (esg as optional companion).
+- PENSION SCHEME MEMBER DATA (salary plus service / contribution / retirement columns) → \`pensions\`: db-valuation, lifecontingencies, descriptive.
+- CAPITAL / SOLVENCY AGGREGATES (scr, bscr, own_funds, risk_margin, solvency_ratio) → \`capital\`: scr-standard, esg.
 - Otherwise → \`general\`: descriptive plus a couple of generic candidates.${variantNudge}
 
 OUTPUT SCHEMA:
@@ -612,6 +700,21 @@ export async function fetchModelPicks(args: {
   if (strong) return strong;
 
   const prompt = buildPickerPrompt(args);
+
+  // Desktop IDE: no orchestrator backend exists, so the streaming call below
+  // would parse the SPA shell into zero frames and every ambiguous dataset
+  // silently landed on the heuristic. Talk to the active provider through
+  // the main-process bridge instead — same prompt, single-shot reply.
+  if (hasLocalLlmBridge()) {
+    const res = await llmChatActive([{ role: "user", content: prompt }], { maxTokens: 900 });
+    if (args.signal.aborted) throw new Error("aborted");
+    if (!res.ok) throw new Error(res.error ?? "provider bridge chat failed");
+    const parsedBridge = extractFirstJson(res.text ?? "");
+    const coercedBridge = coercePickResult(parsedBridge);
+    if (!coercedBridge) throw new Error("could not parse a model pick from the model reply");
+    return coercedBridge;
+  }
+
   let buffer = "";
   let streamError: string | null = null;
   await streamOrchestrator(
