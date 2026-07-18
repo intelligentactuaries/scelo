@@ -434,3 +434,91 @@ describe("heuristicPick · deterministic variant rotation (offline regenerate)",
     expect(rotated.selected.map((s) => s.id)).toEqual(pick.selected.map((s) => s.id));
   });
 });
+
+function mkds(name: string, columns: string[], rows: Array<Array<string | number | null>>) {
+  return {
+    name,
+    columns,
+    rows: rows.map((cells) => {
+      const row: Record<string, string | number | null> = {};
+      columns.forEach((c, i) => {
+        row[c] = cells[i] ?? null;
+      });
+      return row;
+    }),
+  };
+}
+
+const pickOf = (d: ReturnType<typeof mkds>) => heuristicPick(dataSignature(d, summariseDataset(d)));
+
+describe("Tools picker · capital / pensions / yield-curve branches", () => {
+  test("capital aggregates route to capital (scr-standard headline)", () => {
+    const d = mkds(
+      "capital.csv",
+      ["module", "scr", "own_funds", "risk_margin"],
+      [
+        ["market", 120, 300, 20],
+        ["life", 80, 300, 20],
+      ],
+    );
+    const pick = pickOf(d);
+    expect(pick.domain).toBe("capital");
+    expect(pick.selected[0].id).toBe("scr-standard");
+    expect(pick.selected.map((s) => s.id)).toContain("esg");
+  });
+
+  test("pension member data routes to pensions (db-valuation headline)", () => {
+    const d = mkds(
+      "members.csv",
+      ["member_id", "age", "sex", "salary", "service_years", "retirement_age"],
+      [
+        ["M1", 45, "F", 520_000, 12, 65],
+        ["M2", 51, "M", 610_000, 20, 65],
+      ],
+    );
+    const pick = pickOf(d);
+    expect(pick.domain).toBe("pensions");
+    expect(pick.selected[0].id).toBe("db-valuation");
+  });
+
+  test("yield-curve quotes route to life curve tooling", () => {
+    const d = mkds(
+      "curve.csv",
+      ["maturity", "zero_rate"],
+      [
+        [1, 0.061],
+        [5, 0.078],
+        [10, 0.089],
+        [30, 0.094],
+      ],
+    );
+    const pick = pickOf(d);
+    expect(pick.domain).toBe("life");
+    expect(pick.selected[0].id).toBe("smithwilson-curve");
+    expect(pick.selected.map((s) => s.id)).toContain("economic-curves");
+  });
+
+  test("mortality data with age+deaths still beats the pensions branch", () => {
+    const d = mkds(
+      "mort.csv",
+      ["age", "deaths", "exposure", "salary"],
+      [
+        [40, 12, 10_000, 1],
+        [41, 14, 9_800, 1],
+      ],
+    );
+    const pick = pickOf(d);
+    expect(pick.domain).toBe("mortality");
+  });
+
+  test("lifelib model points are untouched by the rates branch", () => {
+    const d = mkds(
+      "mp.csv",
+      ["policy_id", "age_at_entry", "sum_assured", "policy_term", "premium_pp"],
+      [["P1", 35, 1_000_000, 20, 1200]],
+    );
+    const pick = pickOf(d);
+    expect(pick.domain).toBe("life");
+    expect(pick.selected[0].id).toBe("basicterm-projection");
+  });
+});
