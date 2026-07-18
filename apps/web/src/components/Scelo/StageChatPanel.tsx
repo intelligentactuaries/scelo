@@ -26,6 +26,7 @@ export function StageChatPanel({
   badge,
   dataset = null,
   onLocalCommand,
+  onAssistantFinal,
 }: {
   stageContext: string;
   placeholder: string;
@@ -45,10 +46,15 @@ export function StageChatPanel({
    * when the chat backend is unreachable.
    */
   onLocalCommand?: (text: string) => string | null;
+  /** Post-process a completed assistant reply (see useNodeChat). */
+  onAssistantFinal?: (text: string) => string | undefined;
 }) {
   const { chatMemoryPrefix } = useScelo();
   const memoryKey = chatMemoryPrefix ? `${chatMemoryPrefix}:${chatId}` : undefined;
-  const { messages, isStreaming, send, sendLocal, stop } = useNodeChat(stageContext, { memoryKey });
+  const { messages, isStreaming, send, sendLocal, stop } = useNodeChat(stageContext, {
+    memoryKey,
+    onAssistantFinal,
+  });
   const [draft, setDraft] = useState("");
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
