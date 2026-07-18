@@ -1216,9 +1216,281 @@ function TrajectoryOverlay({
 // projections are also year-indexed. Otherwise we just say "category".
 function inferTrajectoryAxis(x: string[]): string {
   if (x.length === 0) return "";
-  const looksLikeYears = x.every((v) => /^\d{4}$/.test(v));
-  if (looksLikeYears) return "origin year";
+  if (x.every((v) => /^\d{4}$/.test(v))) return "origin year";
+  if (x.every((v) => /^y\d+$/i.test(v))) return "projection year";
+  if (x.every((v) => /^t=?\d+$/i.test(v))) return "time (years)";
   return "category";
+}
+
+// ── comparative analytics (left rail, below the trajectory) ─────────────────
+//
+// Derived views computed FROM the run payloads, rendered only when the data
+// for them exists: the shock-dial outcome mix (wmtr-sensitivity sweeps), the
+// fitted GLM drivers with confidence whiskers (statsmodels bridge), and the
+// frequency × severity pure premium per segment when both GLMs grouped by
+// the same rating factor.
+
+type ShockSweepRow = { shock: string; outcomes: Record<string, number> };
+type GlmCoefRow = { name: string; estimate: number; stdErr: number; z: number; pValue: number };
+
+function prettyCoefName(raw: string): string {
+  const m = /^C\((.+?)\)\[T\.(.+)\]$/.exec(raw);
+  return m ? `${m[1]}=${m[2]}` : raw;
+}
+
+function ComparativeCharts({
+  doneRuns,
+  familyPalette,
+  textDim,
+  grid,
+}: {
+  doneRuns: RunResult[];
+  familyPalette: Record<ModelFamily, string>;
+  textDim: string;
+  grid: string;
+}) {
+  const { resolved } = useTheme();
+  const light = resolved === "light";
+  const OUTCOME_COLORS: Record<string, string> = {
+    grew: light ? "#3C6E5A" : "#6EB491",
+    stabilized: light ? "#3760CC" : "#82A0E6",
+    declined: light ? "#B4753C" : "#D7A56E",
+    collapsed: light ? "#B73A3A" : "#E66E6E",
+  };
+
+  const axisBase = {
+    axisLabel: { fontSize: 9, color: textDim },
+    axisLine: { lineStyle: { color: grid } },
+    axisTick: { show: false as const },
+  };
+
+  // ── shock dial: outcome mix per severity band ──────────────────────────
+  const sweep = doneRuns.find((r) => r.modelId === "wmtr-sensitivity")?.detail?.sweep as
+    | ShockSweepRow[]
+    | undefined;
+  const shockOption = useMemo(() => {
+    if (!Array.isArray(sweep) || sweep.length === 0) return null;
+    const bands = sweep.map((r) => r.shock);
+    const outcomes = ["grew", "stabilized", "declined", "collapsed"];
+    return {
+      backgroundColor: "transparent",
+      tooltip: {
+        trigger: "axis" as const,
+        valueFormatter: (v: unknown) => `${Math.round((v as number) * 100)}%`,
+      },
+      grid: { left: 8, right: 8, top: 22, bottom: 4, containLabel: true },
+      legend: {
+        top: 0,
+        left: 0,
+        itemWidth: 8,
+        itemHeight: 8,
+        textStyle: { fontSize: 9, color: textDim },
+      },
+      xAxis: { type: "category" as const, data: bands, ...axisBase },
+      yAxis: {
+        type: "value" as const,
+        max: 1,
+        axisLabel: {
+          fontSize: 9,
+          color: textDim,
+          formatter: (v: number) => `${Math.round(v * 100)}%`,
+        },
+        splitLine: { lineStyle: { color: grid, type: "dashed" as const, opacity: 0.45 } },
+      },
+      series: outcomes.map((o) => ({
+        name: o,
+        type: "bar" as const,
+        stack: "mix",
+        color: OUTCOME_COLORS[o],
+        barWidth: "55%",
+        data: sweep.map((r) => r.outcomes?.[o] ?? 0),
+        animation: false,
+      })),
+    };
+    // biome-ignore lint/correctness/useExhaustiveDependencies: OUTCOME_COLORS derives from `light` alone.
+  }, [sweep, textDim, grid, light]);
+
+  // ── GLM drivers: estimate ± 2·SE, top |z| coefficients ─────────────────
+  const glmRuns = doneRuns.filter(
+    (r) =>
+      (r.modelId === "glm-frequency" || r.modelId === "glm-severity") &&
+      Array.isArray(r.detail?.coefficients),
+  );
+  const glmOptions = useMemo(
+    () =>
+      glmRuns.map((run) => {
+        const coefs = (run.detail?.coefficients as GlmCoefRow[])
+          .filter((c) => c.name !== "Intercept" && Number.isFinite(c.estimate))
+          .sort((a, b) => Math.abs(b.z) - Math.abs(a.z))
+          .slice(0, 6)
+          .reverse();
+        if (coefs.length === 0) return null;
+        const color = familyPalette[run.family];
+        const names = coefs.map((c) => prettyCoefName(c.name));
+        return {
+          id: run.modelId,
+          title: `${MODEL_BY_ID.get(run.modelId)?.name ?? run.modelId} · estimate ± 2·SE`,
+          option: {
+            backgroundColor: "transparent",
+            tooltip: {
+              trigger: "axis" as const,
+              axisPointer: { type: "shadow" as const },
+              formatter: (params: Array<{ dataIndex: number }>) => {
+                const i = params[0]?.dataIndex ?? 0;
+                const c = coefs[i];
+                return `${prettyCoefName(c.name)}<br/>estimate ${c.estimate.toFixed(3)} ± ${(2 * c.stdErr).toFixed(3)}<br/>z ${c.z.toFixed(2)} · p ${c.pValue < 0.001 ? "<0.001" : c.pValue.toFixed(3)}`;
+              },
+            },
+            grid: { left: 8, right: 12, top: 6, bottom: 4, containLabel: true },
+            xAxis: {
+              type: "value" as const,
+              axisLabel: { fontSize: 9, color: textDim, formatter: (v: number) => formatNumber(v) },
+              splitLine: { lineStyle: { color: grid, type: "dashed" as const, opacity: 0.45 } },
+            },
+            yAxis: {
+              type: "category" as const,
+              data: names,
+              axisLabel: { fontSize: 9, color: textDim, width: 110, overflow: "truncate" as const },
+              axisLine: { lineStyle: { color: grid } },
+              axisTick: { show: false as const },
+            },
+            series: [
+              // Boxplot as a CI glyph: [lo, lo, est, hi, hi] draws the ±2·SE
+              // band with a median tick at the estimate. (A stacked-bar float
+              // breaks on negative lower bounds — ECharts stacks negatives on
+              // their own axis side.)
+              {
+                type: "boxplot" as const,
+                data: coefs.map((c) => [
+                  c.estimate - 2 * c.stdErr,
+                  c.estimate - 2 * c.stdErr,
+                  c.estimate,
+                  c.estimate + 2 * c.stdErr,
+                  c.estimate + 2 * c.stdErr,
+                ]),
+                itemStyle: { color: `${color}30`, borderColor: color, borderWidth: 1.2 },
+                boxWidth: [8, 12],
+                silent: true,
+                animation: false,
+              },
+              {
+                type: "scatter" as const,
+                data: coefs.map((c, i) => ({
+                  value: [c.estimate, i],
+                  symbol: c.pValue < 0.05 ? "circle" : "emptyCircle",
+                })),
+                symbolSize: 7,
+                itemStyle: { color, borderColor: color, borderWidth: 1.5 },
+                animation: false,
+                z: 3,
+              },
+            ],
+          },
+        };
+      }),
+    [glmRuns, familyPalette, textDim, grid],
+  );
+
+  // ── pure premium per segment: freq × sev on a shared axis ──────────────
+  const ppOption = useMemo(() => {
+    const freq = doneRuns.find((r) => r.modelId === "glm-frequency" && r.series);
+    const sev = doneRuns.find((r) => r.modelId === "glm-severity" && r.series);
+    if (!freq?.series || !sev?.series) return null;
+    const sevByX = new Map(sev.series.x.map((x, i) => [x, sev.series?.y[i] ?? 0]));
+    const shared = freq.series.x.filter((x) => sevByX.has(x));
+    if (shared.length < 2) return null;
+    const freqByX = new Map(freq.series.x.map((x, i) => [x, freq.series?.y[i] ?? 0]));
+    const data = shared.map((x) => (freqByX.get(x) ?? 0) * (sevByX.get(x) ?? 0));
+    const color = familyPalette.pricing;
+    return {
+      backgroundColor: "transparent",
+      tooltip: {
+        trigger: "axis" as const,
+        valueFormatter: (v: unknown) => formatNumber(v as number),
+      },
+      grid: { left: 8, right: 8, top: 8, bottom: 4, containLabel: true },
+      xAxis: { type: "category" as const, data: shared, ...axisBase },
+      yAxis: {
+        type: "value" as const,
+        axisLabel: { fontSize: 9, color: textDim, formatter: (v: number) => formatNumber(v) },
+        splitLine: { lineStyle: { color: grid, type: "dashed" as const, opacity: 0.45 } },
+      },
+      series: [
+        {
+          type: "bar" as const,
+          data,
+          color,
+          barWidth: "55%",
+          itemStyle: { opacity: 0.85, borderRadius: [3, 3, 0, 0] },
+          animation: false,
+        },
+      ],
+    };
+  }, [doneRuns, familyPalette, textDim, grid]);
+
+  const sections: Array<{ key: string; title: string; hint: string; body: React.ReactNode }> = [];
+  if (shockOption) {
+    sections.push({
+      key: "shock",
+      title: "shock dial",
+      hint: "outcome mix per severity",
+      body: (
+        <ReactECharts
+          option={shockOption}
+          notMerge
+          lazyUpdate
+          style={{ height: 150, width: "100%" }}
+        />
+      ),
+    });
+  }
+  for (const [i, g] of glmOptions.entries()) {
+    if (!g) continue;
+    sections.push({
+      key: g.id,
+      title: i === 0 ? "glm drivers" : "glm drivers · cont.",
+      hint: g.title,
+      body: (
+        <ReactECharts
+          option={g.option}
+          notMerge
+          lazyUpdate
+          style={{ height: 130, width: "100%" }}
+        />
+      ),
+    });
+  }
+  if (ppOption) {
+    sections.push({
+      key: "pp",
+      title: "pure premium",
+      hint: "frequency × severity per segment",
+      body: (
+        <ReactECharts
+          option={ppOption}
+          notMerge
+          lazyUpdate
+          style={{ height: 130, width: "100%" }}
+        />
+      ),
+    });
+  }
+  if (sections.length === 0) return null;
+  return (
+    <>
+      {sections.map((sec) => (
+        <section key={sec.key} className="rounded border border-border bg-bg-1 p-2">
+          <header className="mb-1 flex items-baseline justify-between gap-2">
+            <span className="font-mono text-[9px] uppercase tracking-wider text-fg-dim">
+              {sec.title}
+            </span>
+            <span className="font-mono text-[10px] text-fg-dim">{sec.hint}</span>
+          </header>
+          {sec.body}
+        </section>
+      ))}
+    </>
+  );
 }
 
 function HardLeftStatsPanel({
@@ -1377,6 +1649,15 @@ function HardLeftStatsPanel({
                 grid={grid}
               />
             </section>
+
+            {/* containers 4+: derived comparative analytics — only the
+                sections whose source runs actually produced the data. */}
+            <ComparativeCharts
+              doneRuns={stats.done}
+              familyPalette={familyPalette}
+              textDim={textDim}
+              grid={grid}
+            />
           </>
         )}
       </div>
