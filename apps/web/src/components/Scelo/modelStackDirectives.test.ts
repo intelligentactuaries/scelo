@@ -3,6 +3,7 @@ import {
   applyModelDirective,
   describeDirectiveReport,
   parseModelDirective,
+  parseStackCommand,
   replaceDirectiveBlock,
 } from "./modelStackDirectives";
 import type { SelectedModel } from "./sceloContext";
@@ -98,5 +99,58 @@ describe("confirmation rendering", () => {
     expect(out).not.toContain("scelo-models");
     expect(out).toContain("stack update:");
     expect(out).toContain("added GBM");
+  });
+});
+
+describe("parseStackCommand — deterministic chat commands", () => {
+  const attached: SelectedModel[] = [
+    { id: "wmtr-projection", enabled: true, source: "ai" },
+    { id: "wmtr-sensitivity", enabled: true, source: "ai" },
+    { id: "scr-standard", enabled: true, source: "ai" },
+  ];
+
+  test("the user's exact failure: 'add all suggested' resolves the bot's own recommendations", () => {
+    const suggestionReply = [
+      "1. glm-frequency (Pricing) — claim occurrence probability…",
+      "2. glm-severity (Pricing) — pairs with frequency…",
+      "3. bootstrap-ibnr (Reserving) — distributional reserves…",
+      "4. descriptive (General) — data hygiene…",
+      "5. cluster-modelpoints (Life) — representative model points…",
+    ].join("\n");
+    // The later confirmation only re-lists the attached stack — must be skipped.
+    const botchedConfirmation =
+      "Adding wmtr-projection, wmtr-sensitivity and scr-standard. stack update: — no change.";
+    const d = parseStackCommand(
+      "Please add all of the suggested models",
+      [suggestionReply, botchedConfirmation],
+      attached,
+    );
+    expect(d).not.toBeNull();
+    expect(d?.add.map((a) => a.id).sort()).toEqual([
+      "bootstrap-ibnr",
+      "cluster-modelpoints",
+      "descriptive",
+      "glm-frequency",
+      "glm-severity",
+    ]);
+    expect(d?.remove).toEqual([]);
+  });
+
+  test("explicit ids in the user's message win, by id or display name", () => {
+    const d = parseStackCommand("add glm-frequency and Chain Ladder please", [], attached);
+    expect(d?.add.map((a) => a.id).sort()).toEqual(["chain-ladder", "glm-frequency"]);
+    const r = parseStackCommand("remove wmtr-sensitivity", [], attached);
+    expect(r?.remove).toEqual(["wmtr-sensitivity"]);
+  });
+
+  test("swap X for Y becomes remove+add", () => {
+    const d = parseStackCommand("swap scr-standard for chain-ladder", [], attached);
+    expect(d?.remove).toEqual(["scr-standard"]);
+    expect(d?.add.map((a) => a.id)).toEqual(["chain-ladder"]);
+  });
+
+  test("plain conversation falls through to the provider", () => {
+    expect(parseStackCommand("why did you pick these?", [], attached)).toBeNull();
+    expect(parseStackCommand("add more detail to your explanation", [], attached)).toBeNull();
   });
 });

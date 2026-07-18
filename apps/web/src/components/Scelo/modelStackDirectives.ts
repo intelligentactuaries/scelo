@@ -198,3 +198,96 @@ export function describeDirectiveReport(report: DirectiveReport): string {
 export function replaceDirectiveBlock(text: string, confirmation: string): string {
   return text.replace(FENCE_RE, `**stack update:** ${confirmation}`).trim();
 }
+
+// ── deterministic chat commands ──────────────────────────────────────────────
+//
+// The directive protocol depends on the provider emitting correct ids — and
+// small local models demonstrably lose track of their own suggestions ("add
+// all of them" → re-emits the attached stack). This parser is the
+// no-LLM-required path: it resolves stack commands from the user's text and
+// the assistant's OWN prior replies, deterministic and instant, the same way
+// Soft Data's "clean my data" bypasses the provider.
+
+const normText = (s: string) =>
+  ` ${s
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim()} `;
+
+/** Catalog ids mentioned in a text, by id or display name, in order. */
+export function catalogIdsIn(text: string): string[] {
+  const hay = normText(text);
+  const out: string[] = [];
+  for (const m of MODEL_CATALOG) {
+    const idToken = ` ${m.id.replace(/[^a-z0-9]+/gi, " ").toLowerCase()} `;
+    const nameToken = ` ${m.name.replace(/[^a-z0-9]+/gi, " ").toLowerCase()} `;
+    if (hay.includes(idToken) || hay.includes(nameToken)) out.push(m.id);
+  }
+  return out;
+}
+
+const ADD_VERB = /\b(add|attach|include|apply|adopt|use|bring in|put)\b/;
+const REMOVE_VERB = /\b(remove|drop|delete|detach|take (out|off)|get rid of)\b/;
+const ENABLE_VERB = /\b(enable|turn on|switch on|activate)\b/;
+const DISABLE_VERB = /\b(disable|turn off|switch off|deactivate|mute)\b/;
+const ALL_MARKER =
+  /\b(all( of)?( the| your| them| those| these| five| four| three| it)?|every(thing)?|those|them|these|suggested|suggestions?|recommended|recommendations?|proposed|proposals?)\b/;
+
+/**
+ * Resolve a deterministic stack command. `assistantHistory` is newest-last;
+ * for "add all suggested" the ids come from the most recent assistant reply
+ * that mentions catalog models NOT already attached — skipping confirmations
+ * that only re-list the current stack.
+ */
+export function parseStackCommand(
+  userText: string,
+  assistantHistory: string[],
+  selected: SelectedModel[],
+): ModelDirective | null {
+  const text = ` ${userText.toLowerCase().trim()} `;
+  const attached = new Set(selected.map((m) => m.id));
+  const wantsAdd = ADD_VERB.test(text);
+  const wantsRemove = REMOVE_VERB.test(text);
+  const wantsEnable = ENABLE_VERB.test(text);
+  const wantsDisable = DISABLE_VERB.test(text);
+
+  // "swap X for Y" / "replace X with Y" → remove X, add Y.
+  const swap = /\b(?:swap|replace)\b(.+?)\b(?:for|with)\b(.+)/.exec(text);
+  if (swap) {
+    const from = catalogIdsIn(swap[1]);
+    const to = catalogIdsIn(swap[2]);
+    if (from.length > 0 && to.length > 0) {
+      return { add: to.map((id) => ({ id })), remove: from, enable: [], disable: [] };
+    }
+  }
+
+  const mentioned = catalogIdsIn(userText);
+
+  // Explicit ids in the user's own message win.
+  if (mentioned.length > 0 && (wantsAdd || wantsRemove || wantsEnable || wantsDisable)) {
+    return {
+      add: wantsAdd && !wantsRemove ? mentioned.map((id) => ({ id })) : [],
+      remove: wantsRemove ? mentioned : [],
+      enable: wantsEnable ? mentioned : [],
+      disable: wantsDisable ? mentioned : [],
+    };
+  }
+
+  // "add all (of the) suggested/recommended/them…" → mine the assistant's
+  // prior replies for the suggestion set.
+  if (wantsAdd && ALL_MARKER.test(text)) {
+    for (let i = assistantHistory.length - 1; i >= 0; i--) {
+      const fresh = catalogIdsIn(assistantHistory[i]).filter((id) => !attached.has(id));
+      if (fresh.length > 0) {
+        return {
+          add: fresh.map((id) => ({ id, rationale: "accepted from chat suggestions" })),
+          remove: [],
+          enable: [],
+          disable: [],
+        };
+      }
+    }
+  }
+
+  return null;
+}
