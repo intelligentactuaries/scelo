@@ -1884,6 +1884,7 @@ function guessReadouts(dataset: Dataset): { readouts: string[]; reflexive?: stri
 }
 
 function pctStr(x: number): string {
+  if (!Number.isFinite(x)) return "—";
   return `${(100 * x).toFixed(x < 0.1 ? 1 : 0)}%`;
 }
 
@@ -2294,10 +2295,10 @@ function FairnessAuditCta({ focused: _focused }: { focused: RunResult }) {
           </span>
           <span className="text-fg-mute">group gap</span>
           <span className="text-center font-mono tabular-nums text-fg">
-            {audit.disparityBefore.toFixed(2)}
+            {Number.isFinite(audit.disparityBefore) ? audit.disparityBefore.toFixed(2) : "—"}
           </span>
           <span className="text-center font-mono tabular-nums text-fg">
-            {audit.disparityAfter.toFixed(2)}
+            {Number.isFinite(audit.disparityAfter) ? audit.disparityAfter.toFixed(2) : "—"}
           </span>
           <span className="text-fg-mute">fair-target fit</span>
           <span className="text-center font-mono tabular-nums text-fg">
