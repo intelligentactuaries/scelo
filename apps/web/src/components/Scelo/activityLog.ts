@@ -143,7 +143,7 @@ export type ActivityEvent =
       ts: number;
       stage: "hard";
       kind: "runs.execute";
-      payload: { models: string[] };
+      payload: { models: string[]; wired?: number; cyclicWiring?: boolean };
     }
   | {
       ts: number;

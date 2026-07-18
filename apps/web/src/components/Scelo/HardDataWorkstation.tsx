@@ -78,6 +78,7 @@ import {
   runModelAsync,
 } from "./modelRunner";
 import { modelTheoryFor } from "./modelTheory";
+import { pipelinePlan } from "./pipeline";
 import { type SelectedModel, useScelo } from "./sceloContext";
 import { useNodeChat } from "./useNodeChat";
 import {
@@ -1436,6 +1437,19 @@ function ResultDetailsPanel({
                 {MODEL_BY_ID.get(focused.modelId)?.name ?? focused.modelId}
               </h2>
               <p className="mt-1 text-[11px] text-fg-mute">{focused.blurb}</p>
+              {focused.wiredFrom && focused.wiredFrom.length > 0 && (
+                <div className="mt-1.5 flex flex-wrap gap-1.5">
+                  {focused.wiredFrom.map((w) => (
+                    <span
+                      key={w.id}
+                      title={w.note}
+                      className="inline-flex items-center gap-1 rounded border border-accent-2/40 px-1.5 py-px font-mono text-[9px] text-accent-2"
+                    >
+                      ⤆ wired: {MODEL_BY_ID.get(w.id)?.name ?? w.id}
+                    </span>
+                  ))}
+                </div>
+              )}
             </div>
             <div className="grid grid-cols-2 gap-1 font-mono text-[11px]">
               <Stat
@@ -2610,7 +2624,7 @@ function datasetVersion(dataset: Dataset): number {
 export function HardDataWorkstation() {
   const navigate = useNavigate();
   const { resolved } = useTheme();
-  const { dataset, selectedModels, domain, runs, setRuns, logEvent } = useScelo();
+  const { dataset, selectedModels, domain, runs, setRuns, modelWires, logEvent } = useScelo();
 
   const [focusedId, setFocusedId] = useState<string | null>(null);
   const [narrative, setNarrative] = useState<string | null>(null);
@@ -2673,6 +2687,20 @@ export function HardDataWorkstation() {
         };
       }
       setRuns(staged);
+      // The Tools canvas wiring is an execution plan, not decoration: order
+      // the batch topologically (wire sources run before their targets) and
+      // hand each model the results of the models wired INTO it, so a wired
+      // chain-ladder seeds Bornhuetter-Ferguson's a-priori, a fitted
+      // Lee-Carter table prices the annuity, the wired GBM feeds SHAP, etc.
+      const plan = pipelinePlan(
+        models.map((m) => m.id),
+        modelWires,
+      );
+      const byId = new Map(models.map((m) => [m.id, m] as const));
+      const ordered = plan.order
+        .map((id) => byId.get(id))
+        .filter((m): m is SelectedModel => m !== undefined);
+      const completed = new Map<string, RunResult>();
       // Commit the overlay + staged pips to screen before the first
       // synchronous model blocks the thread. nextPaint (not raw rAF): rAF
       // never fires in hidden/occluded tabs, which would stall the whole
@@ -2680,17 +2708,23 @@ export function HardDataWorkstation() {
       await nextPaint();
       try {
         let done = 0;
-        for (const m of models) {
+        for (const m of ordered) {
           if (runEpoch.current !== epoch) return; // superseded mid-flight
-          setComputeBusy({ done, total: models.length, current: m.id });
+          setComputeBusy({ done, total: ordered.length, current: m.id });
           // One paint so the overlay's model name / progress just set above
           // reaches the screen before this model blocks the thread.
           await nextPaint();
+          // Results of the models wired into this one that have finished.
+          const upstream = new Map<string, RunResult>();
+          for (const src of plan.upstreamOf.get(m.id) ?? []) {
+            const r = completed.get(src);
+            if (r) upstream.set(src, r);
+          }
           let result: RunResult;
           try {
             result = BRIDGED_MODEL_IDS.has(m.id)
-              ? await runModelAsync(m.id, ds)
-              : runModel(m.id, ds);
+              ? await runModelAsync(m.id, ds, upstream)
+              : runModel(m.id, ds, upstream);
           } catch (e) {
             // Both runners catch internally; this guard keeps one unexpected
             // rejection from killing the rest of the batch.
@@ -2710,12 +2744,17 @@ export function HardDataWorkstation() {
           }
           if (runEpoch.current !== epoch) return; // superseded mid-flight
           done++;
+          completed.set(m.id, result);
           setRuns((prev) => ({ ...prev, [m.id]: result }));
         }
         logEvent({
           stage: "hard",
           kind: "runs.execute",
-          payload: { models: models.map((m) => m.id) },
+          payload: {
+            models: ordered.map((m) => m.id),
+            wired: modelWires.length,
+            ...(plan.cyclic ? { cyclicWiring: true } : {}),
+          },
         });
       } finally {
         // Only the batch that owns the overlay may clear it — a superseding
@@ -2727,7 +2766,7 @@ export function HardDataWorkstation() {
         }
       }
     },
-    [setRuns, logEvent],
+    [setRuns, logEvent, modelWires],
   );
 
   // Run all enabled models whenever the (dataset, enabled set) changes.

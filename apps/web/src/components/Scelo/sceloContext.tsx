@@ -17,6 +17,7 @@ import type { Dataset, Filter } from "./SoftDataWorkstation";
 import { type ActivityEvent, isDuplicateOfLast, trimEventsPreservingAnchors } from "./activityLog";
 import type { ModelFamily } from "./modelCatalog";
 import type { RunResult } from "./modelRunner";
+import type { ModelWire } from "./pipeline";
 
 export type SelectedModel = {
   id: string;
@@ -73,6 +74,8 @@ export interface StoredSessionSnapshot {
    *  stale picks left over from a previous dataset — including across a
    *  reload, where a mount-time guess can't. */
   picksDatasetName: string | null;
+  /** Model-to-model wires drawn on the Tools canvas — the execution DAG. */
+  modelWires: ModelWire[];
   runs: Record<string, RunResult>;
   derivedColumns: Record<string, string>;
   /** Serialised as array since JSON doesn't carry Set. */
@@ -87,6 +90,7 @@ const EMPTY_SESSION: StoredSessionSnapshot = {
   domain: null,
   pickSummary: null,
   picksDatasetName: null,
+  modelWires: [],
   runs: {},
   derivedColumns: {},
   transformLog: [],
@@ -133,6 +137,7 @@ function loadStoredSession(): StoredSessionSnapshot {
       pickSummary: typeof parsed.pickSummary === "string" ? parsed.pickSummary : null,
       picksDatasetName:
         typeof parsed.picksDatasetName === "string" ? parsed.picksDatasetName : null,
+      modelWires: Array.isArray(parsed.modelWires) ? (parsed.modelWires as ModelWire[]) : [],
       runs:
         parsed.runs && typeof parsed.runs === "object"
           ? (parsed.runs as Record<string, RunResult>)
@@ -241,6 +246,11 @@ type SceloState = {
   // across a full reload.
   picksDatasetName: string | null;
   setPicksDatasetName: (n: string | null) => void;
+  /** Model→model wires from the Tools canvas. Execution (Hard Data) orders
+   *  runs topologically from these and feeds each wired-in source's result
+   *  to its target's runner. */
+  modelWires: ModelWire[];
+  setModelWires: (w: ModelWire[] | ((prev: ModelWire[]) => ModelWire[])) => void;
   // Additional offline imports staged for combining with the active dataset
   // (at most 2 staged + 1 active = 3). Session-only — deliberately NOT
   // persisted: staged files can be big, and a combine is expected to happen
@@ -310,6 +320,7 @@ export function SceloProvider({ children }: { children: ReactNode }) {
   const [picksDatasetName, setPicksDatasetName] = useState<string | null>(
     storedSession.picksDatasetName,
   );
+  const [modelWires, setModelWires] = useState<ModelWire[]>(storedSession.modelWires);
   const [stagedDatasets, setStagedDatasets] = useState<Dataset[]>([]);
   const [runs, setRuns] = useState<Record<string, RunResult>>(storedSession.runs);
   const [derivedColumns, setDerivedColumns] = useState<Record<string, string>>(
@@ -333,6 +344,7 @@ export function SceloProvider({ children }: { children: ReactNode }) {
         domain,
         pickSummary,
         picksDatasetName,
+        modelWires,
         runs,
         derivedColumns,
         transformLog: Array.from(transformLog),
@@ -347,6 +359,7 @@ export function SceloProvider({ children }: { children: ReactNode }) {
     domain,
     pickSummary,
     picksDatasetName,
+    modelWires,
     runs,
     derivedColumns,
     transformLog,
@@ -399,6 +412,7 @@ export function SceloProvider({ children }: { children: ReactNode }) {
       domain,
       pickSummary,
       picksDatasetName,
+      modelWires,
       runs,
       derivedColumns,
       transformLog: Array.from(transformLog),
@@ -411,6 +425,7 @@ export function SceloProvider({ children }: { children: ReactNode }) {
       domain,
       pickSummary,
       picksDatasetName,
+      modelWires,
       runs,
       derivedColumns,
       transformLog,
@@ -425,6 +440,7 @@ export function SceloProvider({ children }: { children: ReactNode }) {
     setDomain(snap.domain ?? null);
     setPickSummary(snap.pickSummary ?? null);
     setPicksDatasetName(snap.picksDatasetName ?? null);
+    setModelWires(snap.modelWires ?? []);
     setStagedDatasets([]);
     setRuns(snap.runs ?? {});
     setDerivedColumns(snap.derivedColumns ?? {});
@@ -452,6 +468,8 @@ export function SceloProvider({ children }: { children: ReactNode }) {
       setPickSummary,
       picksDatasetName,
       setPicksDatasetName,
+      modelWires,
+      setModelWires,
       stagedDatasets,
       setStagedDatasets,
       runs,
@@ -478,6 +496,7 @@ export function SceloProvider({ children }: { children: ReactNode }) {
       domain,
       pickSummary,
       picksDatasetName,
+      modelWires,
       stagedDatasets,
       runs,
       derivedColumns,
