@@ -2911,6 +2911,48 @@ export function HardDataWorkstation() {
     setEdges(desiredEdges);
   }, [desiredEdges, setEdges]);
 
+  // Result cards are content-sized (charts, tables, bridge-error lines) but
+  // columnLayout spaces them by a FIXED height assumption — tall cards
+  // overlapped their neighbours. Once React Flow reports measured heights,
+  // restack the untouched result nodes with real gaps: keep their current
+  // vertical ORDER, walk cumulative y from the top, and centre the column
+  // on the hub. Nodes the user dragged are left exactly where they were put.
+  const movedIdsRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    // A fresh result set voids old drag history.
+    movedIdsRef.current = new Set();
+  }, [desiredNodes]);
+  useEffect(() => {
+    setNodes((prev) => {
+      const GAP = 32;
+      const stack = prev.filter(
+        (n) =>
+          n.id !== "hub" &&
+          !movedIdsRef.current.has(n.id) &&
+          typeof n.height === "number" &&
+          (n.height ?? 0) > 0,
+      );
+      if (stack.length < 2) return prev;
+      const ordered = [...stack].sort((a, b) => a.position.y - b.position.y);
+      const totalH =
+        ordered.reduce((sum, n) => sum + (n.height ?? RESULT_H), 0) + GAP * (ordered.length - 1);
+      let y = -totalH / 2;
+      const nextY = new Map<string, number>();
+      for (const n of ordered) {
+        nextY.set(n.id, y);
+        y += (n.height ?? RESULT_H) + GAP;
+      }
+      let changed = false;
+      const next = prev.map((n) => {
+        const ny = nextY.get(n.id);
+        if (ny === undefined || Math.abs(n.position.y - ny) < 1) return n;
+        changed = true;
+        return { ...n, position: { ...n.position, y: ny } };
+      });
+      return changed ? next : prev;
+    });
+  }, [nodes, setNodes]);
+
   // Auto-fit once spokes first appear — `fitView` prop only fires on mount,
   // but our nodes are inserted via the sync effect *after* mount.
   const flowInstanceRef = useRef<ReactFlowInstance | null>(null);
@@ -2928,6 +2970,7 @@ export function HardDataWorkstation() {
 
   const relayout = useCallback(() => {
     hasFitRef.current = false;
+    movedIdsRef.current = new Set();
     setNodes(desiredNodes);
     requestAnimationFrame(() => {
       flowInstanceRef.current?.fitView({ padding: 0.2, duration: 300 });
@@ -3079,6 +3122,7 @@ export function HardDataWorkstation() {
           {dataset && enabled.length > 0 ? (
             <ReactFlow
               nodes={nodes}
+              onNodeDragStop={(_, node) => movedIdsRef.current.add(node.id)}
               edges={edges}
               onNodesChange={onNodesChange}
               onEdgesChange={onEdgesChange}
