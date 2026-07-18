@@ -112,20 +112,62 @@ export function buildCondensedCanon(): string {
     .join('\n');
 }
 
+// Field values are brace-counted, not regexed: real BibTeX titles are full
+// of nested case-protection braces ({IFRS 17}, {Bayesian}); a non-greedy
+// regex stops at the first `}` and silently truncates the field. Bare
+// values (`year = 2024,`) are also accepted.
+function parseBibFields(body: string): Record<string, string> {
+  const fields: Record<string, string> = {};
+  const keyRe = /(\w+)\s*=\s*/g;
+  let m: RegExpExecArray | null;
+  while ((m = keyRe.exec(body))) {
+    const key = m[1].toLowerCase();
+    let i = keyRe.lastIndex;
+    if (body[i] === '{') {
+      let depth = 1;
+      let j = i + 1;
+      while (j < body.length && depth > 0) {
+        if (body[j] === '{') depth++;
+        else if (body[j] === '}') depth--;
+        j++;
+      }
+      fields[key] = body.slice(i + 1, j - 1).trim();
+      keyRe.lastIndex = j;
+    } else if (body[i] === '"') {
+      let j = i + 1;
+      while (j < body.length && body[j] !== '"') j++;
+      fields[key] = body.slice(i + 1, j).trim();
+      keyRe.lastIndex = j + 1;
+    } else {
+      let j = i;
+      while (j < body.length && body[j] !== ',' && body[j] !== '\n' && body[j] !== '}') j++;
+      fields[key] = body.slice(i, j).trim();
+      keyRe.lastIndex = j;
+    }
+  }
+  return fields;
+}
+
 export function parseBibTeX(input: string): CanonWork[] {
   const works: CanonWork[] = [];
-  const entryRe = /@(\w+)\s*\{\s*([^,]+),([\s\S]*?)\n\s*\}/g;
+  const entryStart = /@(\w+)\s*\{/g;
   let m: RegExpExecArray | null;
-  while ((m = entryRe.exec(input))) {
-    const body = m[3];
-    const fields: Record<string, string> = {};
-    const fieldRe = /(\w+)\s*=\s*(\{([\s\S]*?)\}|"([\s\S]*?)")\s*,?/g;
-    let f: RegExpExecArray | null;
-    while ((f = fieldRe.exec(body))) {
-      const key = f[1].toLowerCase();
-      const value = (f[3] ?? f[4] ?? '').trim();
-      fields[key] = value;
+  while ((m = entryStart.exec(input))) {
+    const type = m[1].toLowerCase();
+    // Walk to the entry's matching close brace (fields may nest freely).
+    let depth = 1;
+    let i = entryStart.lastIndex;
+    while (i < input.length && depth > 0) {
+      if (input[i] === '{') depth++;
+      else if (input[i] === '}') depth--;
+      i++;
     }
+    const inner = input.slice(entryStart.lastIndex, i - 1);
+    entryStart.lastIndex = i;
+    if (type === 'comment' || type === 'preamble' || type === 'string') continue;
+    const comma = inner.indexOf(',');
+    if (comma === -1) continue; // no fields, just a cite key
+    const fields = parseBibFields(inner.slice(comma + 1));
     if (fields.title) {
       let url: string | undefined;
       if (fields.url) url = fields.url;
