@@ -4,20 +4,13 @@ import { GraphChart } from 'echarts/charts';
 import { LegendComponent, TooltipComponent, TitleComponent, GridComponent, GraphicComponent } from 'echarts/components';
 import { CanvasRenderer } from 'echarts/renderers';
 import type { Run, CouncilAgentResult } from '../../shared/types';
-import { colorsForTheme, PROFESSIONS, PROFESSION_PALETTE, type Profession, type ThemeColors } from '../../shared/constants';
+import { colorsForTheme, PROFESSIONS, professionColor, type Profession, type ThemeColors } from '../../shared/constants';
 import { useTheme } from '../lib/theme';
 import { layoutCells, forceClusterLayout, type Group, type FNode, type FEdge } from '../lib/groupLayout';
 import { installGroupHulls, type HullDatum } from '../lib/groupHulls';
+import { STANCE_LABEL, stanceColors } from '../lib/stance';
 
 echarts.use([GraphChart, LegendComponent, TooltipComponent, TitleComponent, GridComponent, GraphicComponent, CanvasRenderer]);
-
-function stanceBorder(c: ThemeColors): Record<CouncilAgentResult['finalStance'], string> {
-  return {
-    support: c.consensus,
-    oppose: c.adversarial,
-    abstain: c.muted,
-  };
-}
 
 /** Cross-chart highlight payload.
  *
@@ -71,7 +64,7 @@ export function CouncilGraph({
     crossHighlightRef.current = crossHighlight;
   }, [crossHighlight]);
 
-  const built = useMemo(() => buildOption(run, colors, size), [run, colors, size]);
+  const built = useMemo(() => buildOption(run, colors, size, resolved === 'dark'), [run, colors, size, resolved]);
   const option = built.option;
 
   // Agents per profession — for legend → cross-highlight emission and for
@@ -356,7 +349,7 @@ export function CouncilGraph({
             role="button"
             tabIndex={0}
           >
-            <i style={{ background: PROFESSION_PALETTE[p] }} />
+            <i style={{ background: professionColor(p, resolved === 'dark') }} />
             <span className="graph-legend-item-label">{p}</span>
           </span>
         ))}
@@ -369,9 +362,10 @@ function buildOption(
   run: Run,
   colors: ThemeColors,
   size: { w: number; h: number },
+  dark: boolean,
 ): { option: echarts.EChartsCoreOption; hulls: HullDatum[]; basePos: Map<string, { x: number; y: number }> } {
-  const STANCE_BORDER = stanceBorder(colors);
-  const categories = PROFESSIONS.map((p) => ({ name: p, itemStyle: { color: PROFESSION_PALETTE[p] } }));
+  const STANCE_BORDER = stanceColors(colors);
+  const categories = PROFESSIONS.map((p) => ({ name: p, itemStyle: { color: professionColor(p, dark) } }));
   const profIndex = new Map(PROFESSIONS.map((p, i) => [p, i] as const));
 
   // ─── Group cells ─────────────────────────────────────────────────────
@@ -379,7 +373,7 @@ function buildOption(
   // cell centre becomes the anchor for that profession's clump (see below), so
   // the graph reads as grouped shaded regions rather than a force-scattered cloud.
   const present = PROFESSIONS.filter((p) => run.councilResults.some((r) => r.agent.profession === p));
-  const groups: Group[] = present.map((p) => ({ key: p, label: p, color: PROFESSION_PALETTE[p] }));
+  const groups: Group[] = present.map((p) => ({ key: p, label: p, color: professionColor(p, dark) }));
   const W = size.w > 0 ? size.w : 900;
   const H = size.h > 0 ? size.h : 600;
   const cells = layoutCells(groups, W, H);
@@ -442,11 +436,11 @@ function buildOption(
     const s = stat.get(c.key) ?? { internal: 0, external: 0, wSum: 0 };
     const counts: Record<string, number> = { support: 0, oppose: 0, abstain: 0 };
     for (const id of ids) { const st = stanceById.get(id); if (st) counts[st]++; }
-    const domStance = Object.entries(counts).sort((a, b) => b[1] - a[1])[0][0];
+    const domStance = Object.entries(counts).sort((a, b) => b[1] - a[1])[0][0] as CouncilAgentResult['finalStance'];
     const avg = s.internal ? s.wSum / s.internal : 0;
     const statsHtml =
       `<b style="color:${c.color}">${escapeHtml(c.label)}</b><br/>` +
-      `${ids.length} agent${ids.length === 1 ? '' : 's'} · dominant stance <b>${domStance}</b><br/>` +
+      `${ids.length} agent${ids.length === 1 ? '' : 's'} · mostly <b>${STANCE_LABEL[domStance]}</b> the forecast<br/>` +
       `<span style="opacity:.7">shared-reasoning edges</span><br/>` +
       `within group: <b>${s.internal}</b>${s.internal ? ` · avg agreement <b>${avg.toFixed(2)}</b>` : ''}<br/>` +
       `to other groups: <b>${s.external}</b>`;
@@ -469,7 +463,7 @@ function buildOption(
       // to surface "this hub talks to N other agents at average weight W".
       degree: weightedDegree.get(r.agent.id) ?? 0,
       itemStyle: {
-        color: PROFESSION_PALETTE[r.agent.profession],
+        color: professionColor(r.agent.profession, dark),
         borderColor: STANCE_BORDER[r.finalStance],
         borderWidth: 1.8,
         opacity: 1,
@@ -529,7 +523,7 @@ function buildOption(
             conf: number;
             keyRisk: string;
           };
-          return `${d.agent.id}<br/>${d.agent.profession} · ${d.agent.mbti} · ${d.agent.gender}<br/>stance: <b>${d.stance}</b> · conf: <b>${d.conf}</b><br/>risk: ${escapeHtml(d.keyRisk).slice(0, 100)}`;
+          return `${d.agent.id}<br/>${d.agent.profession} · ${d.agent.mbti} · ${d.agent.gender}<br/>verdict: <b>${STANCE_LABEL[d.stance as CouncilAgentResult['finalStance']]}s the forecast</b> · conf: <b>${d.conf}</b><br/>risk: ${escapeHtml(d.keyRisk).slice(0, 100)}`;
         }
         if (p.dataType === 'edge') {
           const e = p.data as { source: string; target: string; value: number };
@@ -543,8 +537,8 @@ function buildOption(
           // the hover explains *why* the wire was drawn instead of just showing
           // a magic number.
           const stanceLine = stancesMatch
-            ? `stances: both <b>${a.finalStance}</b>`
-            : `stances: <b>${a.finalStance}</b> vs <b>${b.finalStance}</b>`;
+            ? `verdict: both <b>${STANCE_LABEL[a.finalStance]}</b>`
+            : `verdict: <b>${STANCE_LABEL[a.finalStance]}</b> vs <b>${STANCE_LABEL[b.finalStance]}</b>`;
           return [
             `<b>shared-reasoning edge</b>`,
             `${a.agent.id} ↔ ${b.agent.id}`,

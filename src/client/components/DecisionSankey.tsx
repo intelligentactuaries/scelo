@@ -7,10 +7,11 @@ import type { Run } from '../../shared/types';
 import {
   colorsForTheme,
   PROFESSIONS,
-  PROFESSION_PALETTE,
+  professionColor,
   type ThemeColors,
 } from '../../shared/constants';
 import { useTheme } from '../lib/theme';
+import { STANCE_LABEL, STANCE_ORDER, stanceColors } from '../lib/stance';
 import type { CrossHighlight } from './CouncilGraph';
 
 echarts.use([SankeyChart, TooltipComponent, TitleComponent, CanvasRenderer]);
@@ -23,14 +24,6 @@ type Props = {
   crossHighlight?: CrossHighlight;
   onCrossHighlight?: (h: CrossHighlight) => void;
 };
-
-function stanceColor(c: ThemeColors) {
-  return {
-    support: c.consensus,
-    oppose: c.adversarial,
-    abstain: c.muted,
-  } as const;
-}
 
 type ConfBand = 'Confident ≥75' | 'Moderate 50–74' | 'Uncertain <50';
 function confColor(c: ThemeColors): Record<ConfBand, string> {
@@ -53,7 +46,7 @@ export function DecisionSankey({ run, crossHighlight, onCrossHighlight }: Props)
   const { resolved } = useTheme();
   const colors = useMemo(() => colorsForTheme(resolved), [resolved]);
 
-  const option = useMemo(() => buildOption(run, colors), [run, colors]);
+  const option = useMemo(() => buildOption(run, colors, resolved === 'dark'), [run, colors, resolved]);
 
   // Keep the live callback + current state in refs so the chart.on(...)
   // handlers (registered once on mount) always see the live values.
@@ -182,9 +175,9 @@ export function DecisionSankey({ run, crossHighlight, onCrossHighlight }: Props)
   return <div ref={ref} className="decision-sankey-canvas" />;
 }
 
-function buildOption(run: Run, colors: ThemeColors): echarts.EChartsCoreOption {
+function buildOption(run: Run, colors: ThemeColors, dark: boolean): echarts.EChartsCoreOption {
   const total = Math.max(1, run.councilResults.length);
-  const STANCE = stanceColor(colors);
+  const STANCE = stanceColors(colors);
   const BANDS_COLOR = confColor(colors);
 
   // ─── nodes ────────────────────────────────────────────────────────────
@@ -194,14 +187,12 @@ function buildOption(run: Run, colors: ThemeColors): echarts.EChartsCoreOption {
   const profNodes = PROFESSIONS.map((p) => ({
     name: `prof:${p}`,
     label: { formatter: p, color: colors.fg, fontSize: 11 },
-    itemStyle: { color: PROFESSION_PALETTE[p] },
+    itemStyle: { color: professionColor(p, dark) },
   }));
-  // Stance labels reframed for the forecast-interrogation run:
-  //   support → trust  | oppose → distrust  | abstain → uncertain.
+  // Stance labels reframed for the forecast-interrogation run (shared
+  // STANCE_LABEL: support → trust | oppose → distrust | abstain → uncertain).
   // The internal id stays `stance:<original>` so existing handlers keep working.
-  const STANCE_LABEL = { support: 'trust', oppose: 'distrust', abstain: 'uncertain' } as const;
-  const stances = ['support', 'oppose', 'abstain'] as const;
-  const stanceNodes = stances.map((s) => ({
+  const stanceNodes = STANCE_ORDER.map((s) => ({
     name: `stance:${s}`,
     label: { formatter: STANCE_LABEL[s], color: colors.fg, fontSize: 11, fontWeight: 500 as const },
     itemStyle: { color: STANCE[s] },
