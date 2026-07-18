@@ -9,30 +9,38 @@
 // The renderer is a copy of the apps/web Vite dist (no dev-server needed in
 // production — the file:// URL points straight at resources/renderer/index.html).
 
-import {
-  app,
-  BrowserWindow,
-  clipboard,
-  dialog,
-  ipcMain,
-  Menu,
-  net,
-  protocol,
-  safeStorage,
-  shell,
-  type IpcMainInvokeEvent,
-} from "electron";
-import log from "electron-log/main";
-import { autoUpdater } from "electron-updater";
 import { type ChildProcess, execFileSync, spawn } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { cp, mkdir, open, readdir, readFile, stat, writeFile } from "node:fs/promises";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
+import { cp, mkdir, open, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { join, normalize, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
+  net,
+  BrowserWindow,
+  type IpcMainInvokeEvent,
+  Menu,
+  app,
+  clipboard,
+  dialog,
+  ipcMain,
+  protocol,
+  safeStorage,
+  shell,
+} from "electron";
+import log from "electron-log/main";
+import { autoUpdater } from "electron-updater";
+import {
+  type WorkspaceUIState,
   migrateWorkspaceStateToV1,
   runStartupMigrations,
-  type WorkspaceUIState,
 } from "./migrations";
 
 // electron-log captures uncaught errors + autoUpdater chatter into
@@ -509,8 +517,9 @@ function execRuntime(
     });
     let stdout = "";
     let stderr = "";
+    let stdinErr = "";
     guardStdin(child, (err) => {
-      stderr += `[stdin] ${String(err)}\n`;
+      stdinErr = `[stdin] ${String(err)}`;
     });
     child.stdout.on("data", (chunk) => {
       stdout += chunk.toString();
@@ -518,7 +527,14 @@ function execRuntime(
     child.stderr.on("data", (chunk) => {
       stderr += chunk.toString();
     });
-    child.on("close", (code) => resolve({ ok: code === 0, stdout, stderr, exitCode: code }));
+    child.on("close", (code) => {
+      // A child that dies before draining stdin raises EPIPE on our side —
+      // pure noise when the child also reported WHY it died. Only surface
+      // the stdin error when there is nothing better, so "bridge failed:
+      // [stdin] write EPIPE" stops masking "No module named statsmodels".
+      const err = stderr.trim().length > 0 ? stderr : stdinErr;
+      resolve({ ok: code === 0, stdout, stderr: err, exitCode: code });
+    });
     child.on("error", (err) =>
       resolve({ ok: false, stdout, stderr: stderr + String(err), exitCode: null }),
     );
@@ -555,10 +571,7 @@ function execRScript(
 ): Promise<ExecResult> {
   return new Promise((resolve) => {
     const args = opts.args ?? [];
-    const flags = [
-      ...(opts.vanilla ? ["--vanilla"] : []),
-      ...(opts.slave ? ["--slave"] : []),
-    ];
+    const flags = [...(opts.vanilla ? ["--vanilla"] : []), ...(opts.slave ? ["--slave"] : [])];
     let bin: string | null;
     let argv: string[] = [];
     let cleanup = (): void => {};
@@ -1723,8 +1736,8 @@ function _parseGitStatus(stdout: string): Omit<GitStatus, "isRepo" | "gitInstall
     } else if (line.startsWith("# branch.ab ")) {
       const m = line.slice("# branch.ab ".length).match(/\+(\d+)\s+-(\d+)/);
       if (m) {
-        ahead = parseInt(m[1], 10);
-        behind = parseInt(m[2], 10);
+        ahead = Number.parseInt(m[1], 10);
+        behind = Number.parseInt(m[2], 10);
       }
     } else if (line.startsWith("1 ") || line.startsWith("u ")) {
       const parts = line.split(" ");
@@ -2621,7 +2634,7 @@ function _dispatchLspChunk(proc: LspProcess, chunk: Buffer): void {
         proc.buffer = proc.buffer.subarray(headerEnd + 4);
         continue;
       }
-      proc.contentLength = parseInt(m[1], 10);
+      proc.contentLength = Number.parseInt(m[1], 10);
       proc.buffer = proc.buffer.subarray(headerEnd + 4);
     }
     if (proc.buffer.length < proc.contentLength) return; // wait for body
