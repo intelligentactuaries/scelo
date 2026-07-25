@@ -36,3 +36,21 @@ test-results/
 
 # Private assets submodule (kept local; lives in a private repo)
 marketing/
+
+# Unreal Engine build output. The local SceloHost / SceloAtlas trees carry
+# ~350MB of these, and individual CachedAssetRegistry blobs exceed GitHub's
+# 100MB hard limit. Source (Source/, Config/, Content/, *.uproject) is not
+# ignored, so a UE project can still be committed deliberately.
+Binaries/
+Intermediate/
+DerivedDataCache/
+Saved/
+.vs/
+*.VC.db
+*.opensdf
+*.sdf
+
+# Separate project with its own repo and history
+# (github.com/intelligentactuaries/soa-county-mortality), checked out here for
+# convenience. ~4GB of raw data; staging it would embed a broken gitlink.
+forSOA/
