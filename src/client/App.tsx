@@ -55,6 +55,7 @@ import {
   CultureInput,
 } from './components/SocietyParams';
 import { AccordionSection } from './components/AccordionSection';
+import { DeliberationOverlay, useElapsed } from './components/DeliberationOverlay';
 import { ViewTabs, type TabId } from './components/ViewTabs';
 import { CouncilGraph } from './components/CouncilGraph';
 import { SocietyGraph, type SocietyPin } from './components/SocietyGraph';
@@ -139,6 +140,12 @@ export function App() {
   }, []);
   const [progress, setProgress] = useState<RoundProgress[]>([]);
   const [society, setSociety] = useState<SocietyProgress | null>(null);
+  // Deliberation overlay: seat hues, the recent-voices feed, and whether the
+  // user has tucked it away (the run keeps going either way).
+  const [seatIds, setSeatIds] = useState<Map<number, string>>(() => new Map());
+  const [recentVoices, setRecentVoices] = useState<Array<{ seq: number; id: string }>>([]);
+  const [overlayHidden, setOverlayHidden] = useState(false);
+  const voiceSeqRef = useRef(0);
   const [selectedAgentId, setSelectedAgentIdRaw] = useState<string | null>(null);
   const [pinnedProfession, setPinnedProfessionRaw] = useState<Profession | null>(null);
   const [societyPin, setSocietyPinRaw] = useState<SocietyPin | null>(null);
@@ -500,6 +507,7 @@ export function App() {
   const onStreamEvent = useCallback((id: string, e: StreamEvent) => {
     lastActivityRef.current = Date.now();
     if (e.type === 'round_start') {
+      setSeatIds(new Map());
       setProgress((p) => {
         const next = p.filter((r) => r.round !== e.round);
         return [...next, { round: e.round, done: 0, total: e.total, finished: false }].sort(
@@ -510,6 +518,17 @@ export function App() {
       setProgress((p) =>
         p.map((r) => (r.round === e.round ? { ...r, done: e.done, total: e.total } : r)),
       );
+      // Seat colour + the scrolling "who just spoke" feed in the overlay.
+      // Keyed by the agent's ordinal in the round so a seat keeps its hue.
+      if (e.agentId) {
+        const idx = e.done - 1;
+        setSeatIds((m) => {
+          const next = new Map(m);
+          next.set(idx, e.agentId);
+          return next;
+        });
+        setRecentVoices((v) => [{ seq: voiceSeqRef.current++, id: e.agentId }, ...v].slice(0, 4));
+      }
     } else if (e.type === 'round_done') {
       setProgress((p) =>
         p.map((r) =>
@@ -1159,6 +1178,9 @@ export function App() {
                       setRunError(null);
                       setProgress([]);
                       setSociety(null);
+                      setSeatIds(new Map());
+                      setRecentVoices([]);
+                      setOverlayHidden(false);
                       const es = streamRun(newRunId, (e) => onStreamEvent(newRunId, e));
                       esRef.current = es;
                     }}
@@ -1408,9 +1430,103 @@ export function App() {
         onLegalJurisdictionChange={setLegalJurisdiction}
       />
       <HelpOverlay open={helpOpen} onClose={() => setHelpOpen(false)} />
+      {runBusy && overlayHidden && (
+        <button
+          type="button"
+          className="delib-resume"
+          onClick={() => setOverlayHidden(false)}
+          title="reopen the deliberation view"
+        >
+          <span className="delib-resume-dot" aria-hidden />
+          run in progress — show
+        </button>
+      )}
+      {runBusy && !overlayHidden && (
+        <CouncilRunOverlay
+          progress={progress}
+          society={society}
+          seatIds={seatIds}
+          recent={recentVoices}
+          onHide={() => setOverlayHidden(true)}
+          onCancel={() => {
+            esRef.current?.close();
+            esRef.current = null;
+            setRunBusy(false);
+            setOverlayHidden(true);
+          }}
+        />
+      )}
     </div>
   );
 }
+
+/** Derives the overlay's shape from the run progress App already tracks.
+ *  Kept next to App rather than inside DeliberationOverlay so the overlay
+ *  itself stays presentational and the simulation view can reuse it. */
+function CouncilRunOverlay({
+  progress,
+  society,
+  seatIds,
+  recent,
+  onHide,
+  onCancel,
+}: {
+  progress: RoundProgress[];
+  society: SocietyProgress | null;
+  seatIds: Map<number, string>;
+  recent: Array<{ seq: number; id: string }>;
+  onHide: () => void;
+  onCancel: () => void;
+}) {
+  const elapsed = useElapsed(true);
+  const cur = progress[progress.length - 1];
+  const inSociety = society != null && !society.finished;
+
+  // Phase drives every label. "starting" is the window between the run being
+  // accepted and the first round_start arriving — real, and often several
+  // seconds on a cold local model, so it gets the indeterminate comet rather
+  // than a 0/0 count that looks broken.
+  const phase = inSociety ? 'society' : cur ? 'council' : 'starting';
+
+  const title =
+    phase === 'starting'
+      ? 'convening the council'
+      : phase === 'society'
+        ? 'society pulse'
+        : `round ${cur?.round ?? 1} · ${ROUND_LABEL[(cur?.round ?? 1) as 1 | 2 | 3]}`;
+
+  const subtitle =
+    phase === 'starting'
+      ? 'seating stratified personas…'
+      : phase === 'society'
+        ? `${society?.done ?? 0} / ${society?.total ?? 0} personas reacted`
+        : `${cur?.done ?? 0} / ${cur?.total ?? 0} agents responded`;
+
+  return (
+    <DeliberationOverlay
+      eyebrow={`council${society ? ' + society' : ''}`}
+      elapsed={elapsed}
+      title={title}
+      subtitle={subtitle}
+      seats={cur?.total ?? 24}
+      litSeats={phase === 'council' ? (cur?.done ?? 0) : phase === 'society' ? (cur?.total ?? 0) : 0}
+      seatIds={seatIds}
+      ticks={3}
+      tickCurrent={phase === 'council' ? (cur?.round ?? 1) : phase === 'society' ? 3 : 1}
+      outerFrac={society ? (society.total > 0 ? society.done / society.total : 0) : null}
+      indeterminate={phase === 'starting'}
+      recent={recent}
+      onHide={onHide}
+      onCancel={onCancel}
+    />
+  );
+}
+
+const ROUND_LABEL: Record<1 | 2 | 3, string> = {
+  1: 'independent views',
+  2: 'peers respond',
+  3: 'votes + interventions',
+};
 
 function DecisionEmpty({
   hasRun,
