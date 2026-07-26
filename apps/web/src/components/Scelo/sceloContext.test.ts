@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { Dataset } from "./SoftDataWorkstation";
+import type { Dataset } from "@scelo/core";
 import { type HistoryEntry, sliceDatasetForPersist, trimHistory } from "./sceloContext";
 
 // ── fixtures ─────────────────────────────────────────────────────────────

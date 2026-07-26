@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { Row } from "./SoftDataWorkstation";
+import type { Row } from "@scelo/core";
 import {
   MONTH_LABELS,
   WEEKDAY_LABELS,

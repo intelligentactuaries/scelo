@@ -4,7 +4,7 @@
 
 import { hasLocalLlmBridge, llmChatActive } from "@/lib/aiProviders";
 import { streamOrchestrator } from "@/lib/api";
-import type { ColumnMeta, Dataset } from "./SoftDataWorkstation";
+import type { ColumnMeta, Dataset } from "@scelo/core";
 import { type CatalogModel, MODEL_BY_ID, MODEL_CATALOG, type ModelFamily } from "./modelCatalog";
 
 export type PickResult = {

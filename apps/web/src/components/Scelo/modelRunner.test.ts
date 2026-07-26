@@ -4,7 +4,7 @@
 // / hp / tar_weight — and, crucially, NO `paid` column).
 
 import { describe, expect, test } from "bun:test";
-import type { Dataset, Row } from "./SoftDataWorkstation";
+import type { Dataset, Row } from "@scelo/core";
 import {
   BRIDGED_MODEL_IDS,
   detectCategoricalCovariates,

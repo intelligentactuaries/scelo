@@ -14,7 +14,12 @@
     "type": "git",
     "url": "git+https://github.com/intelligentactuaries/scelo.git"
   },
-  "workspaces": ["apps/web", "apps/scelo-ide", "apps/web-online"],
+  "workspaces": [
+    "packages/*",
+    "apps/web",
+    "apps/scelo-ide",
+    "apps/web-online"
+  ],
   "scripts": {
     "dev": "bun run --cwd apps/scelo-ide dev",
     "dev:web": "bun run --cwd apps/web dev",

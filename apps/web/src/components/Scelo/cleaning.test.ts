@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import type { Dataset } from "./SoftDataWorkstation";
-import type { ColumnMeta } from "./SoftDataWorkstation";
+import type { Dataset } from "@scelo/core";
+import type { ColumnMeta } from "@scelo/core";
 import {
   AUTO_CLEAN_MAX_PASSES,
   type CleaningPlan,

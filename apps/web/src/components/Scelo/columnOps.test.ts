@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { ColumnMeta, Dataset } from "./SoftDataWorkstation";
+import type { ColumnMeta, Dataset } from "@scelo/core";
 import {
   convertColumnToNumber,
   convertColumnToString,

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { ColumnMeta } from "./SoftDataWorkstation";
+import type { ColumnMeta } from "@scelo/core";
 import { buildColumnStageContext, placeholderHintFor } from "./columnChatHints";
 
 function metaOf(

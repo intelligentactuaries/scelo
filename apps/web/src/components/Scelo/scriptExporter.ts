@@ -7,7 +7,7 @@
 // first-class libraries everywhere, so we mark gaps with TODO comments
 // rather than pretending we generated something the user can run blind.
 
-import type { Filter } from "./SoftDataWorkstation";
+import type { Filter } from "@scelo/core";
 import type { ActivityEvent } from "./activityLog";
 import { MODEL_BY_ID } from "./modelCatalog";
 

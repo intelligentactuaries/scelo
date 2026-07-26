@@ -26,7 +26,7 @@
 // left out of this layer: those decisions should be fit on the training
 // split, not baked into intake.
 
-import type { ColumnMeta, Dataset, Row } from "./SoftDataWorkstation";
+import type { ColumnMeta, Dataset, Row } from "@scelo/core";
 
 // "Missing"-equivalent string tokens we want to normalise to null. Compared
 // case-insensitively against the trimmed cell. Pulled from CSV/parquet

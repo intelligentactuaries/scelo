@@ -9,7 +9,7 @@
 // tripping every cell to the backend.
 
 import { isDesktopIDE } from "../../lib/sceloIDE";
-import type { Dataset, Row } from "./SoftDataWorkstation";
+import type { Dataset, Row } from "@scelo/core";
 import { runForecast, runSensitivity } from "./forecast/runner";
 import { DEFAULT_WMTR_SINGLE_PARAMS, type WmtrSingleParams } from "./forecast/wmtr";
 import { parseModelPoints, runBasicTermProjection } from "./lifelibBasicTerm";

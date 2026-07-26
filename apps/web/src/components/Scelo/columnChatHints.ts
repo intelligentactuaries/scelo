@@ -6,7 +6,7 @@
 // per column shape so it surfaces the action that's most likely to be
 // useful for THIS column rather than a generic "ask anything".
 
-import type { ColumnMeta } from "./SoftDataWorkstation";
+import type { ColumnMeta } from "@scelo/core";
 import { findNearDuplicateLabel } from "./cleaning";
 
 // Pick a single, focused placeholder for the input. Heuristics ordered so
