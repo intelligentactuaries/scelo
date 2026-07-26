@@ -143,6 +143,127 @@ function rscriptBinary(): string | null {
   return existsSync(candidate) ? candidate : null;
 }
 
+
+// ── window zoom (VS Code parity) ───────────────────────────────────────────
+//
+// Ctrl/Cmd with +, -, or 0 scales the WHOLE renderer — chrome, editor,
+// terminal, panels — exactly like VS Code's window zoom, not a CSS zoom on
+// the document. Electron's zoom level is logarithmic: factor = 1.2 ^ level,
+// the same base VS Code uses, so a "step" feels identical in both.
+//
+// The View menu already carried Electron's zoomIn/zoomOut/resetZoom roles,
+// but they only ever half-worked:
+//   • the `zoomIn` role registers `CommandOrControl+Plus`, and on most
+//     layouts "+" is Shift+=, so the way people actually press Ctrl-plus
+//     (Ctrl and the =/+ key, no Shift) did nothing at all;
+//   • the numpad +/-/0 keys were not bound;
+//   • Ctrl+mouse-wheel did nothing;
+//   • the level reset to 100% on every restart.
+//
+// So the menu items below keep their accelerators for DISCOVERABILITY but
+// pass `registerAccelerator: false`, and every keystroke is handled in one
+// place by the `before-input-event` hook. That avoids the double-step you
+// get when a menu accelerator and an input hook both fire for one press.
+
+/** factor = 1.2^level. -8 ≈ 23%, +9 ≈ 516% — matches VS Code's usable range. */
+const ZOOM_MIN = -8;
+const ZOOM_MAX = 9;
+
+function _zoomFile(): string {
+  return join(app.getPath("userData"), "zoom.json");
+}
+
+function _readZoom(): number {
+  try {
+    const raw = readFileSync(_zoomFile(), "utf-8");
+    const level = (JSON.parse(raw) as { level?: unknown }).level;
+    if (typeof level === "number" && Number.isFinite(level)) {
+      return Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, level));
+    }
+  } catch {
+    // no saved level yet, or unreadable — 0 is 100%
+  }
+  return 0;
+}
+
+let _zoomWriteTimer: ReturnType<typeof setTimeout> | null = null;
+function _persistZoom(level: number): void {
+  // Debounced: holding Ctrl+- walks several steps in a few hundred ms and
+  // we don't want a disk write per keystroke.
+  if (_zoomWriteTimer) clearTimeout(_zoomWriteTimer);
+  _zoomWriteTimer = setTimeout(() => {
+    _zoomWriteTimer = null;
+    try {
+      writeFileSync(_zoomFile(), JSON.stringify({ level }), "utf8");
+    } catch {
+      // a failed preference write must never break the window
+    }
+  }, 400);
+}
+
+/** Apply to EVERY open window. VS Code's zoom is a window-level setting
+ *  shared across windows, not per-window state, and a second window opening
+ *  at 100% while the first sits at 130% reads as a bug. */
+function _applyZoom(level: number): void {
+  const clamped = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, level));
+  for (const w of BrowserWindow.getAllWindows()) {
+    if (!w.isDestroyed()) w.webContents.setZoomLevel(clamped);
+  }
+  _persistZoom(clamped);
+}
+
+function _stepZoom(delta: number): void {
+  const current = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+  const base = current && !current.isDestroyed() ? current.webContents.getZoomLevel() : _readZoom();
+  _applyZoom(Math.round(base) + delta);
+}
+
+function _resetZoom(): void {
+  _applyZoom(0);
+}
+
+/** Wire zoom to one window: restore the saved level, and handle every key
+ *  and wheel gesture Chromium reports. */
+function attachZoom(win: BrowserWindow): void {
+  const restore = () => {
+    // Zoom level is per-origin and reset by navigation, so this has to run
+    // on every load, not once at construction.
+    win.webContents.setZoomLevel(_readZoom());
+  };
+  win.webContents.on("did-finish-load", restore);
+  win.webContents.on("did-navigate-in-page", restore);
+
+  win.webContents.on("before-input-event", (event, input) => {
+    if (input.type !== "keyDown") return;
+    const mod = isMac ? input.meta : input.control;
+    if (!mod || input.alt) return;
+
+    // Match on `code` (physical key) as well as `key` (produced character):
+    // "+" is Shift+= on a US layout but its own key elsewhere, and the
+    // numpad reports NumpadAdd / NumpadSubtract regardless of layout.
+    const code = input.code;
+    const key = input.key;
+    const isIn = key === "+" || key === "=" || code === "Equal" || code === "NumpadAdd";
+    const isOut = key === "-" || key === "_" || code === "Minus" || code === "NumpadSubtract";
+    const isReset = key === "0" || code === "Digit0" || code === "Numpad0";
+
+    if (isIn) _stepZoom(1);
+    else if (isOut) _stepZoom(-1);
+    else if (isReset) _resetZoom();
+    else return;
+
+    // Stop the keystroke reaching the page — otherwise Monaco also sees
+    // Ctrl+- and the browser-level zoom would compound with ours.
+    event.preventDefault();
+  });
+
+  // Ctrl + mouse wheel. Chromium reports the intent but does not act on it
+  // in an Electron shell, so we apply the step ourselves.
+  win.webContents.on("zoom-changed", (_event, direction) => {
+    _stepZoom(direction === "in" ? 1 : -1);
+  });
+}
+
 function createMainWindow(): BrowserWindow {
   const win = new BrowserWindow({
     width: 1480,
@@ -171,6 +292,9 @@ function createMainWindow(): BrowserWindow {
   // suggestions, link + image actions). Chromium gives us no menu by default
   // in a custom Electron shell, so the whole IDE felt "dead" on right-click.
   attachContextMenu(win);
+
+  // Ctrl/Cmd +/-/0 and Ctrl+wheel scale the whole renderer; level persists.
+  attachZoom(win);
 
   // A renderer that dies (OOM during a huge import, GPU crash, external
   // kill) would otherwise leave a permanently dead white window. Log why
@@ -415,9 +539,27 @@ function buildMenu(): void {
         { role: "reload" as const },
         { role: "toggleDevTools" as const },
         { type: "separator" as const },
-        { role: "resetZoom" as const },
-        { role: "zoomIn" as const },
-        { role: "zoomOut" as const },
+        // `registerAccelerator: false` — these display the shortcut but do
+        // not claim it, so `before-input-event` in attachZoom() handles every
+        // variant (Ctrl+=, Ctrl+Shift+=, numpad) without double-stepping.
+        {
+          label: "Reset Zoom",
+          accelerator: isMac ? "Cmd+0" : "Ctrl+0",
+          registerAccelerator: false,
+          click: () => _resetZoom(),
+        },
+        {
+          label: "Zoom In",
+          accelerator: isMac ? "Cmd+Plus" : "Ctrl+Plus",
+          registerAccelerator: false,
+          click: () => _stepZoom(1),
+        },
+        {
+          label: "Zoom Out",
+          accelerator: isMac ? "Cmd+-" : "Ctrl+-",
+          registerAccelerator: false,
+          click: () => _stepZoom(-1),
+        },
         { type: "separator" as const },
         { role: "togglefullscreen" as const },
       ],
