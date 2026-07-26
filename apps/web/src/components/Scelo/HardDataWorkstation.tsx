@@ -4636,7 +4636,7 @@ function hypothesisTestsForModel(modelId: string): TestSpec[] {
 }
 
 function ModelDetailChat({ run, modelName }: { run: RunResult; modelName: string }) {
-  const { chatMemoryPrefix } = useScelo();
+  const { chatMemoryPrefix, project } = useScelo();
   const modelId = run.modelId;
   const memoryKey = chatMemoryPrefix ? `${chatMemoryPrefix}:hard-detail:${modelId}` : undefined;
   // The chat must SEE the run it claims to discuss: headline, secondaries,
@@ -4702,7 +4702,11 @@ function ModelDetailChat({ run, modelName }: { run: RunResult; modelName: string
     }
     return lines.join("\n");
   }, [run, modelId, modelName]);
-  const { messages, isStreaming, send, stop } = useNodeChat(stageContext, { memoryKey });
+  const { messages, isStreaming, send, stop } = useNodeChat(stageContext, {
+    memoryKey,
+    logLabel: `hard · model «${modelId}»`,
+    logProject: project?.name,
+  });
   const [draft, setDraft] = useState("");
   const scrollRef = useRef<HTMLDivElement | null>(null);
 

@@ -31,6 +31,7 @@ import {
   type ReactNode,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -43,9 +44,11 @@ import { ResizablePanel } from "./ResizablePanel";
 import { SceloChatMarkdown } from "./SceloChatMarkdown";
 import { SimulateScenarioModal } from "./SimulateScenarioModal";
 import { SmartColumnDashboard } from "./SmartColumnDashboard";
-import { StageChatPanel } from "./StageChatPanel";
+import { type ChatAction, StageChatPanel } from "./StageChatPanel";
 import { UploadIndicator, type UploadState, nextPaint, useMinVisible } from "./UploadIndicator";
 import {
+  AUTO_CLEAN_MAX_PASSES,
+  type AutoCleanResult,
   type CleaningOpKey,
   type CleaningPlan,
   DATE_STYLE_LABEL,
@@ -53,6 +56,7 @@ import {
   analyseCleaning,
   applyCleaning,
   augmentDataset,
+  autoCleanDataset,
   cleanColumnCells,
   clearNonDateCells,
   defaultEnabled,
@@ -128,6 +132,14 @@ export type ColumnMeta = {
   boxHi?: number; // whisker high (max within fences)
   loFence?: number;
   hiFence?: number;
+  // numeric-only — quintile cut points [p20, p40, p60, p80]: the four
+  // boundaries that split the column into five equal-COUNT buckets (each
+  // holding 20% of the values). Note these are not evenly spaced in value
+  // unless the distribution is uniform — that spacing IS the signal.
+  // Omitted below QUINTILE_MIN_N values, where fifths are meaningless.
+  // Same stride sample and therefore the same `sampledStats` caveat as the
+  // quartiles above.
+  quintiles?: [number, number, number, number];
   // numeric-only — outlier values retained for the scatter display, capped
   // at OUTLIER_DISPLAY_CAP by a uniform thin. `outlierCount` keeps the true
   // (or stride-estimated) total when the cap kicked in.
@@ -879,6 +891,18 @@ function summarise(rows: Row[], name: string): ColumnMeta {
         const v = rows[i][name];
         if (typeof v === "number" && Number.isFinite(v)) nums.push(v);
       }
+      // Sorted once here and reused: `quantile` requires ascending order, and
+      // boxStats' own defensive copy-sort degrades to ~linear on sorted input,
+      // so the quintiles below cost no extra full sort.
+      nums.sort((a, b) => a - b);
+      if (nums.length >= QUINTILE_MIN_N) {
+        meta.quintiles = [
+          quantile(nums, 0.2),
+          quantile(nums, 0.4),
+          quantile(nums, 0.6),
+          quantile(nums, 0.8),
+        ];
+      }
       const stats = boxStats(nums);
       if (stats) {
         const [lo, q1, median, q3, hi] = stats.stats;
@@ -1072,6 +1096,11 @@ const CATEGORICAL_PALETTE_DARK = [
 const CATEGORICAL_PALETTE_LIGHT = ["#009669", "#3760cc", "#7649c7", "#ae6614", "#b73a3a"];
 const OTHER_COLOR_DARK = "#5a5a5a";
 const OTHER_COLOR_LIGHT = "#a8a8a4";
+
+/** Fewest values for which reporting fifths is honest. Below five you have
+ *  fewer data points than buckets, so every cut point is an interpolation
+ *  artefact rather than a description of the data. */
+const QUINTILE_MIN_N = 5;
 
 function quantile(sortedAsc: number[], q: number): number {
   if (sortedAsc.length === 0) return 0;
@@ -1669,6 +1698,8 @@ function DataGrid({
   dateColumns,
   onReformatColumnDates,
   onColumnCommand,
+  onUndo,
+  undoLabel,
 }: {
   dataset: Dataset;
   rows: Row[];
@@ -1681,6 +1712,11 @@ function DataGrid({
   dateColumns: string[];
   onReformatColumnDates: (column: string, style: DateStyle) => void;
   onColumnCommand: (column: string, text: string) => string | null;
+  /** Reverse the last dataset change. Returns the reply to show in the
+   *  column chat transcript. */
+  onUndo: () => string;
+  /** Label of the step that would be undone, or null when there is none. */
+  undoLabel: string | null;
 }) {
   const metaByName = useMemo(() => {
     const map = new Map<string, ColumnMeta>();
@@ -1980,7 +2016,10 @@ function DataGrid({
             setLockedCol(null);
             setHoveredCol(null);
           }}
+          onPin={() => pinColumnChat(hoveredMeta.name)}
           onLocalCommand={(text) => onColumnCommand(hoveredMeta.name, text)}
+          onUndo={onUndo}
+          undoLabel={undoLabel}
         />
       )}
     </div>
@@ -2499,6 +2538,65 @@ function ImportFileModal({
   );
 }
 
+// Chat write-up for an autonomous clean. Reports pass by pass, because the
+// whole point of the multi-pass loop is that later passes fix things the
+// earlier ones exposed — collapsing it to one flat list would hide that. Row
+// and column drops are called out separately: they're the destructive part,
+// and the user needs to see them without reading the step list.
+function formatAutoCleanReport(result: AutoCleanResult): string {
+  const lines: string[] = [];
+  const stepCount = result.passes.reduce((n, p) => n + p.opLabels.length, 0);
+
+  lines.push(
+    `Went through the entire dataset and cleaned it — ${stepCount} step${
+      stepCount === 1 ? "" : "s"
+    } over ${result.passes.length} pass${result.passes.length === 1 ? "" : "es"}.`,
+  );
+  lines.push("");
+  for (const pass of result.passes) {
+    lines.push(`**Pass ${pass.pass}**`);
+    for (const label of pass.opLabels) lines.push(`- ${label}`);
+    lines.push("");
+  }
+
+  const rowsDropped = result.rowsBefore - result.rowsAfter;
+  const shape: string[] = [];
+  if (rowsDropped > 0) {
+    shape.push(
+      `${rowsDropped.toLocaleString()} row${rowsDropped === 1 ? "" : "s"} removed (duplicates), ${result.rowsAfter.toLocaleString()} remain`,
+    );
+  }
+  if (result.droppedColumns.length > 0) {
+    shape.push(
+      `${result.droppedColumns.length} column${
+        result.droppedColumns.length === 1 ? "" : "s"
+      } dropped as empty or single-valued (${result.droppedColumns.map((c) => `\`${c}\``).join(", ")})`,
+    );
+  }
+  if (shape.length > 0) lines.push(`Shape: ${shape.join("; ")}.`, "");
+
+  switch (result.outcome) {
+    case "clean":
+      lines.push(
+        "I re-scanned after the last pass and found nothing further — the dataset is clean.",
+      );
+      break;
+    case "stalled":
+      lines.push(
+        `I stopped early: the last pass detected the same issues again without resolving them, so repeating it wouldn't help. Still outstanding: ${result.remaining.join(", ")}. These need a decision rather than a rule — tell me how you'd like them handled.`,
+      );
+      break;
+    case "exhausted":
+      lines.push(
+        `I hit the ${AUTO_CLEAN_MAX_PASSES}-pass ceiling with work still outstanding: ${result.remaining.join(", ")}. Press it again to keep going.`,
+      );
+      break;
+    default:
+      break;
+  }
+  return lines.join("\n");
+}
+
 // ── top-level workstation ────────────────────────────────────────────────────
 
 export function SoftDataWorkstation() {
@@ -2517,7 +2615,35 @@ export function SoftDataWorkstation() {
     setStagedDatasets,
     logEvent,
     clearEvents,
+    pushHistory,
+    undo,
+    undoLabel,
+    canUndo,
+    clearHistory,
   } = useScelo();
+
+  // Snapshot-then-replace. Every dataset TRANSFORM goes through here so it
+  // is reversible; loading or clearing a dataset deliberately does not (see
+  // clearHistory at those sites) because undoing across a file swap would
+  // resurrect the previous file.
+  const commitDataset = useCallback(
+    (label: string, next: Dataset) => {
+      pushHistory(label);
+      setDataset(next);
+    },
+    [pushHistory, setDataset],
+  );
+
+  /** Shared by both chat surfaces: reverse the last transform and report it
+   *  in the transcript. */
+  const runUndo = useCallback((): string => {
+    const label = undo();
+    if (label === null) {
+      return "There's nothing to undo — no changes have been made to this dataset yet.";
+    }
+    logEvent({ stage: "soft", kind: "dataset.undo", payload: { label } });
+    return `Undone — reversed **${label}**. The grid is back to how it was before that step.`;
+  }, [undo, logEvent]);
   // Reset the derived-columns registry and in-place transform log whenever
   // a fresh dataset replaces the current one. A derived formula on the
   // old schema won't apply to the new columns and shouldn't appear in
@@ -2551,6 +2677,7 @@ export function SoftDataWorkstation() {
         ...r,
         [name]: compiled.evaluate(r),
       }));
+      pushHistory(`add derived column \`${name}\``);
       setDataset({
         name: dataset.name,
         columns: [...dataset.columns, name],
@@ -2560,7 +2687,7 @@ export function SoftDataWorkstation() {
       logEvent({ stage: "soft", kind: "derived.add", payload: { name, formula } });
       return { ok: true };
     },
-    [dataset, setDataset, setDerivedColumns, logEvent],
+    [dataset, setDataset, setDerivedColumns, logEvent, pushHistory],
   );
   // No auto-load on first mount — the empty state shows two centred
   // buttons ("import csv / parquet" + "load sample") so the user picks a
@@ -2654,7 +2781,10 @@ export function SoftDataWorkstation() {
       const opLabels = cleaningPlan.ops
         .filter((op) => ops.has(op.key))
         .map((op) => describeOp(op, cleaningPlan.sampled).title);
-      setDataset(cleaned);
+      commitDataset(
+        opLabels.length === 1 ? opLabels[0] : `cleaning (${opLabels.length} steps)`,
+        cleaned,
+      );
       // Recompute happens automatically through the dataset dep. We close the
       // panel so the user immediately sees the cleaner state.
       setCleaningOpen(false);
@@ -2664,7 +2794,7 @@ export function SoftDataWorkstation() {
       logEvent({ stage: "soft", kind: "cleaning.apply", payload: { opLabels } });
       return opLabels;
     },
-    [dataset, cleaningPlan, setDataset, setFilters, logEvent],
+    [dataset, cleaningPlan, setFilters, logEvent, commitDataset],
   );
 
   // Banner "apply cleaning" button — runs whatever the user currently has
@@ -2673,6 +2803,73 @@ export function SoftDataWorkstation() {
   const onApplyCleaning = useCallback(() => {
     applyCleaningOps(enabledOps);
   }, [applyCleaningOps, enabledOps]);
+
+  // ── Autonomous clean ───────────────────────────────────────────────────
+  // Hands the whole dataset to `autoCleanDataset`, which loops
+  // analyse→apply until the analyser stops proposing work. Deliberately does
+  // NOT go through `applyCleaningOps`: that closes over the memoised
+  // `cleaningPlan`, which is a single pass computed from the CURRENT dataset
+  // and would still be the pass-1 plan for every later iteration (React has
+  // not re-rendered mid-loop). The loop re-derives its own plan each pass.
+  const runAutoClean = useCallback((): string => {
+    if (!dataset) return "Load a dataset first, then I can clean it end to end.";
+
+    const result: AutoCleanResult = autoCleanDataset(dataset, getColumnMetas);
+
+    if (result.outcome === "empty") {
+      return "There's nothing to clean yet — the dataset has no rows.";
+    }
+    if (result.passes.length === 0) {
+      // Reached the fixed point without applying anything: already clean.
+      return "I went through the whole dataset and found nothing to fix — no whitespace, missing markers, mistyped columns, duplicate rows, or dead columns. It's already clean.";
+    }
+
+    commitDataset(`auto-clean (${result.passes.length} passes)`, result.dataset);
+    setFilters([]);
+    logEvent({
+      stage: "soft",
+      kind: "cleaning.auto",
+      payload: {
+        passes: result.passes.length,
+        outcome: result.outcome,
+        opLabels: result.passes.flatMap((p) => p.opLabels),
+        rowsBefore: result.rowsBefore,
+        rowsAfter: result.rowsAfter,
+        columnsBefore: result.columnsBefore,
+        columnsAfter: result.columnsAfter,
+        droppedColumns: result.droppedColumns,
+      },
+    });
+    return formatAutoCleanReport(result);
+  }, [dataset, setFilters, logEvent, commitDataset]);
+
+  // One-press affordances in the chat. Kept to the single action that is
+  // genuinely tedious to phrase and has exactly one sensible execution.
+  const softChatActions = useMemo<ChatAction[]>(
+    () => [
+      {
+        id: "undo",
+        label: undoLabel ? `Undo: ${undoLabel}` : "Undo",
+        prompt: "Undo the last change.",
+        hint: undoLabel
+          ? `Reverse "${undoLabel}" and restore the dataset to how it was before that step.`
+          : undefined,
+        disabledReason: canUndo ? null : "Nothing to undo yet.",
+        run: runUndo,
+      },
+      {
+        id: "auto-clean",
+        label: "Auto-clean dataset",
+        prompt: "Go through the entire dataset and clean it until it's fully clean.",
+        hint: dataset
+          ? `Repeatedly scan and fix the whole dataset until nothing is left to fix (up to ${AUTO_CLEAN_MAX_PASSES} passes). Applies every fix it finds, including removing duplicate rows and dropping empty or single-valued columns. This rewrites the dataset and can't be undone.`
+          : undefined,
+        disabledReason: dataset ? null : "Load a dataset first.",
+        run: runAutoClean,
+      },
+    ],
+    [dataset, runAutoClean, runUndo, undoLabel, canUndo],
+  );
 
   const toggleOp = useCallback((key: CleaningOpKey) => {
     setEnabledOps((prev) => {
@@ -2703,7 +2900,7 @@ export function SoftDataWorkstation() {
       if (changed === 0) {
         return `${cols.length === 1 ? `\`${cols[0]}\` is` : "Those date columns are"} already in ${DATE_STYLE_LABEL[style]} format — nothing to change.`;
       }
-      setDataset(next);
+      commitDataset(`reformat dates to ${DATE_STYLE_LABEL[style]}`, next);
       setFilters([]);
       logEvent({
         stage: "soft",
@@ -2723,7 +2920,7 @@ export function SoftDataWorkstation() {
         changed === 1 ? "" : "s"
       }).${caveat} The data grid now shows the new format.`;
     },
-    [dataset, setDataset, setFilters, logEvent],
+    [dataset, setFilters, logEvent, commitDataset],
   );
 
   // Reformat every detected date column at once (global toolbar + soft chat).
@@ -2761,7 +2958,7 @@ export function SoftDataWorkstation() {
     (column: string, intent: ColumnOpIntent): string => {
       if (!dataset) return "Load a dataset first.";
       const commit = (next: Dataset, action: string, affected: number, reply: string): string => {
-        setDataset(next);
+        commitDataset(`${action} on \`${column}\``, next);
         setFilters([]);
         logEvent({ stage: "soft", kind: "cleaning.column", payload: { column, action, affected } });
         return reply;
@@ -2909,7 +3106,7 @@ export function SoftDataWorkstation() {
         }
       }
     },
-    [dataset, rawMetas, setDataset, setDerivedColumns, setFilters, logEvent],
+    [dataset, rawMetas, setDerivedColumns, setFilters, logEvent, commitDataset],
   );
 
   // Per-column natural-language intent (the hover chat popover). Same date-style
@@ -2922,6 +3119,20 @@ export function SoftDataWorkstation() {
       const t = text.toLowerCase().trim();
       const isDateCol = () =>
         dateColumns.includes(column) || detectDateColumns(dataset).includes(column);
+
+      // ── undo ─────────────────────────────────────────────────────────────
+      // Checked first: "undo that" must never be parsed as an operation to
+      // APPLY to the column. Kept deliberately narrow — only an explicit
+      // undo/revert/rollback verb, so "revert the codes to uppercase" (a
+      // real transform request) still falls through to the parsers below.
+      if (
+        /^\s*(undo|revert|rollback|roll back|go back|take that back)\b/.test(t) ||
+        /\b(undo|revert|roll ?back) (that|the )?(last |previous )?(change|step|edit|thing|one|it)?\s*$/.test(
+          t,
+        )
+      ) {
+        return runUndo();
+      }
 
       // ── remove / clear non-date values ───────────────────────────────────
       const removeVerb = /\b(remove|clear|drop|delete|strip|null|blank|get rid of|discard)\b/.test(
@@ -2936,7 +3147,7 @@ export function SoftDataWorkstation() {
         if (cleared === 0) {
           return `Every value in \`${column}\` already parses as a date — nothing to remove.`;
         }
-        setDataset(next);
+        commitDataset(`clear non-dates in \`${column}\``, next);
         setFilters([]);
         logEvent({
           stage: "soft",
@@ -2998,7 +3209,7 @@ export function SoftDataWorkstation() {
             isDateCol() ? ", or non-date" : ""
           } issues to fix.`;
         }
-        setDataset(working);
+        commitDataset(`clean \`${column}\``, working);
         setFilters([]);
         logEvent({
           stage: "soft",
@@ -3010,7 +3221,16 @@ export function SoftDataWorkstation() {
 
       return null;
     },
-    [dataset, dateColumns, reformatColumnsTo, runColumnOpIntent, setDataset, setFilters, logEvent],
+    [
+      dataset,
+      dateColumns,
+      reformatColumnsTo,
+      runColumnOpIntent,
+      setFilters,
+      logEvent,
+      commitDataset,
+      runUndo,
+    ],
   );
 
   // Deterministic chat intents handled client-side, so they work even though
@@ -3023,6 +3243,20 @@ export function SoftDataWorkstation() {
   const handleSoftChatCommand = useCallback(
     (text: string): string | null => {
       const t = text.toLowerCase().trim();
+
+      // ── undo ─────────────────────────────────────────────────────────────
+      // Checked first: "undo that" must never be parsed as an operation to
+      // APPLY to the column. Kept deliberately narrow — only an explicit
+      // undo/revert/rollback verb, so "revert the codes to uppercase" (a
+      // real transform request) still falls through to the parsers below.
+      if (
+        /^\s*(undo|revert|rollback|roll back|go back|take that back)\b/.test(t) ||
+        /\b(undo|revert|roll ?back) (that|the )?(last |previous )?(change|step|edit|thing|one|it)?\s*$/.test(
+          t,
+        )
+      ) {
+        return runUndo();
+      }
 
       // ── data augmentation ────────────────────────────────────────────────
       // "add 1000 more rows through augmentation", "generate synthetic rows",
@@ -3043,7 +3277,7 @@ export function SoftDataWorkstation() {
         const toAdd = Math.min(Math.max(1, requested), CAP);
         const { dataset: next, added } = augmentDataset(dataset, rawMetas, toAdd);
         if (added === 0) return "There's no data to augment yet — load some rows first.";
-        setDataset(next);
+        commitDataset(`augment (+${added.toLocaleString()} rows)`, next);
         setFilters([]);
         logEvent({
           stage: "soft",
@@ -3116,6 +3350,30 @@ export function SoftDataWorkstation() {
         /\b(initial clean|do the cleaning|run (the )?cleaning|fix (the |my )?data)\b/.test(t);
       if (!mentionsClean && !cleanPhrase) return null;
 
+      // ── autonomous clean ─────────────────────────────────────────────────
+      // Same loop the "Auto-clean dataset" chip runs. Checked BEFORE the
+      // single-pass branch below so "clean the whole thing until it's done"
+      // converges instead of applying one pass of the safe defaults. Requires
+      // an explicit exhaustive/autonomous cue — a plain "clean my data" stays
+      // on the conservative single-pass path, which doesn't drop rows or
+      // columns.
+      const wantsAutonomous =
+        /\b(auto[\s-]?clean|automatically|autonomous(ly)?|by yourself|on your own|as you see fit|however you see fit|without me|no input|don'?t ask)\b/.test(
+          t,
+        ) ||
+        /\b(fully|completely|entirely|thoroughly|properly|deep)\b.*\bclean\b/.test(t) ||
+        /\bclean\b.*\b(fully|completely|entirely|thoroughly|properly|everything|all of it)\b/.test(
+          t,
+        ) ||
+        /\b(until|till)\b.*\b(clean|done|nothing|finished|no more)\b/.test(t) ||
+        /\b(entire|whole|all the)\b.*\bdataset\b.*\bclean/.test(t) ||
+        /\bclean\b.*\b(entire|whole)\b.*\b(dataset|data|thing)\b/.test(t) ||
+        /\b(repeat|keep|carry on|again and again)\b.*\bclean/.test(t);
+      if (wantsAutonomous) {
+        if (!dataset) return "Load a dataset first, then I can clean it end to end.";
+        return runAutoClean();
+      }
+
       if (!dataset) return "Load a dataset first, then ask me to clean it.";
       if (!cleaningPlan || cleaningPlan.ops.length === 0) {
         return "I scanned the dataset and found no cleaning steps to apply — it already looks tidy.";
@@ -3138,12 +3396,14 @@ export function SoftDataWorkstation() {
       cleaningPlan,
       enabledOps,
       applyCleaningOps,
+      runAutoClean,
       reformatDatesInDataset,
       runColumnOpIntent,
       rawMetas,
-      setDataset,
       setFilters,
       logEvent,
+      runUndo,
+      commitDataset,
     ],
   );
 
@@ -3220,6 +3480,7 @@ export function SoftDataWorkstation() {
       // the prior log so the new export doesn't replay events from the old
       // dataset that no longer exist.
       clearEvents();
+      clearHistory();
       setDataset(ds);
       setSelected(ds.columns[0]);
       setFilters([]);
@@ -3236,7 +3497,7 @@ export function SoftDataWorkstation() {
       });
       setSamplePickerOpen(false);
     },
-    [clearEvents, setDataset, setFilters, logEvent],
+    [clearEvents, setDataset, setFilters, logEvent, clearHistory],
   );
 
   // Status banner for slow / failed uploads. CSV parsing streams and reports
@@ -3385,6 +3646,7 @@ export function SoftDataWorkstation() {
       try {
         const { dataset: ds, malformedRows } = await parseFileToDataset(file);
         clearEvents();
+        clearHistory();
         setDataset(ds);
         setSelected(ds.columns[0]);
         setFilters([]);
@@ -3419,7 +3681,7 @@ export function SoftDataWorkstation() {
         if (fileRef.current) fileRef.current.value = "";
       }
     },
-    [parseFileToDataset, clearEvents, setDataset, setFilters, logEvent],
+    [parseFileToDataset, clearEvents, setDataset, setFilters, logEvent, clearHistory],
   );
 
   const onPickFile = async (e: ChangeEvent<HTMLInputElement>) => {
@@ -3565,7 +3827,7 @@ export function SoftDataWorkstation() {
     const startedAt = performance.now();
     try {
       const result = combineAll(dataset, others, DEFAULT_IMPORT_ROW_CAP);
-      setDataset(result.dataset);
+      commitDataset("combine datasets", result.dataset);
       setFilters([]);
       setStagedDatasets([]);
       setCombineSteps([]);
@@ -3612,10 +3874,10 @@ export function SoftDataWorkstation() {
     stagedDatasets,
     combineSteps,
     combineSuggestions,
-    setDataset,
     setFilters,
     setStagedDatasets,
     logEvent,
+    commitDataset,
   ]);
 
   return (
@@ -3715,6 +3977,7 @@ export function SoftDataWorkstation() {
             <button
               type="button"
               onClick={() => {
+                pushHistory("clear dataset");
                 setDataset(null);
                 setSelected(null);
                 logEvent({ stage: "soft", kind: "dataset.clear", payload: {} });
@@ -3910,6 +4173,8 @@ export function SoftDataWorkstation() {
                 dateColumns={dateColumns}
                 onReformatColumnDates={onReformatColumnDates}
                 onColumnCommand={handleColumnChatCommand}
+                onUndo={runUndo}
+                undoLabel={undoLabel}
               />
             </div>
           ) : heldUpload ? (
@@ -3968,6 +4233,7 @@ export function SoftDataWorkstation() {
           badge="soft · chat"
           dataset={dataset}
           onLocalCommand={handleSoftChatCommand}
+          actions={softChatActions}
         />
       </div>
 
@@ -3998,6 +4264,7 @@ export function SoftDataWorkstation() {
         existingDataset={dataset}
         onDataset={(ds) => {
           clearEvents();
+          clearHistory();
           setDataset(ds);
           setSelected(ds.columns[0]);
           setFilters([]);
@@ -4800,6 +5067,10 @@ function CombineBanner({
 // purpose: clean / manipulate / convert / encode / derive this ONE
 // column. Memory-keyed per (project, column name) so each column carries
 // its own thread.
+/** Pointer travel (px, Manhattan) before a header press counts as a drag
+ *  rather than a click. */
+const DRAG_THRESHOLD = 4;
+
 function ColumnChatPopover({
   meta,
   anchor,
@@ -4807,7 +5078,10 @@ function ColumnChatPopover({
   onEnter,
   onLeave,
   onClose,
+  onPin,
   onLocalCommand,
+  onUndo,
+  undoLabel,
 }: {
   meta: ColumnMeta;
   anchor: DOMRect;
@@ -4817,16 +5091,30 @@ function ColumnChatPopover({
   onEnter: () => void;
   onLeave: () => void;
   onClose: () => void;
+  /** Pin the chat to its current column. Called when the user starts
+   *  dragging: a panel they positioned by hand must not evaporate on the
+   *  next hover-out. */
+  onPin?: () => void;
   /** Deterministic per-column intent (e.g. "make this american") handled
    *  client-side. Returns a reply to answer locally, or null to fall through
    *  to the provider. */
   onLocalCommand?: (text: string) => string | null;
+  /** Reverse the last dataset change; returns the reply for the transcript.
+   *  Dataset history is global, not per-column — a column chat can undo an
+   *  edit made from the stage chat and vice versa, which is what users
+   *  expect from "undo". */
+  onUndo?: () => string;
+  undoLabel?: string | null;
 }) {
-  const { chatMemoryPrefix } = useScelo();
+  const { chatMemoryPrefix, project } = useScelo();
   const memoryKey = chatMemoryPrefix ? `${chatMemoryPrefix}:soft-col:${meta.name}` : undefined;
   const stageContext = useMemo(() => buildColumnStageContext(meta), [meta]);
   const placeholder = useMemo(() => placeholderHintFor(meta), [meta]);
-  const { messages, isStreaming, send, sendLocal, stop } = useNodeChat(stageContext, { memoryKey });
+  const { messages, isStreaming, send, sendLocal, stop } = useNodeChat(stageContext, {
+    memoryKey,
+    logLabel: `soft · column «${meta.name}»`,
+    logProject: project?.name,
+  });
   const [draft, setDraft] = useState("");
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
@@ -4866,30 +5154,153 @@ function ColumnChatPopover({
     void send(text);
   };
 
-  // Position below the anchor (a `<th>` cell) by default — column headers
-  // are narrow so right-of-anchor would leave the popover off-screen for
-  // most columns. We clamp horizontally to keep it on-screen and flip up
-  // when the popover would crash through the bottom edge.
+  // ── Placement ──────────────────────────────────────────────────────────
+  //
+  // Two modes. By default the popover is ANCHORED under its `<th>`; once the
+  // user drags it, `pos` takes over and it stays exactly where they put it.
+  //
+  // The anchored path measures its own height (`panelH`) rather than
+  // assuming one. The previous version reserved a flat 220px when deciding
+  // whether to open downwards but then allowed the panel to grow to 60vh, so
+  // any column header sitting more than ~220px above the fold opened a
+  // popover that ran off the bottom of the window — and because the compose
+  // box is the LAST child in the flex column, the input was the first thing
+  // to disappear. Clamping against the real height is what fixes that.
   const POPOVER_W = 340;
   const GAP = 8;
-  const POPOVER_MAX_H = Math.round(typeof window !== "undefined" ? window.innerHeight * 0.6 : 480);
   const viewportRight = typeof window !== "undefined" ? window.innerWidth : 1200;
   const viewportBottom = typeof window !== "undefined" ? window.innerHeight : 800;
-  const flowsDown = anchor.bottom + GAP + 220 <= viewportBottom;
-  const left = Math.max(GAP, Math.min(anchor.left, viewportRight - POPOVER_W - GAP));
-  const style: React.CSSProperties = flowsDown
+  const POPOVER_MAX_H = Math.min(Math.round(viewportBottom * 0.6), viewportBottom - GAP * 2);
+
+  const panelRef = useRef<HTMLDivElement | null>(null);
+  const [panelH, setPanelH] = useState(0);
+  /** Explicit top-left once dragged; null = follow the column anchor. */
+  const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
+  /** Pointer is down on the header — may or may not become a drag. */
+  const [armed, setArmed] = useState(false);
+  /** The threshold has been crossed; this is a real drag. */
+  const [dragging, setDragging] = useState(false);
+  const movedRef = useRef(false);
+  const pressRef = useRef<{ sx: number; sy: number; dx: number; dy: number } | null>(null);
+
+  // Track the rendered height so the clamp below uses the truth, not a
+  // guess. The panel grows as replies stream in, so this has to be live.
+  useLayoutEffect(() => {
+    const el = panelRef.current;
+    if (!el) return;
+    setPanelH(el.offsetHeight);
+    if (typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => setPanelH(el.offsetHeight));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  const clampToViewport = useCallback(
+    (x: number, y: number) => {
+      // `||` not `??`: an unmeasured panel reports 0, which is not nullish
+      // but is equally useless as a bound.
+      const w = panelRef.current?.offsetWidth || POPOVER_W;
+      const h = panelRef.current?.offsetHeight || panelH || 240;
+      return {
+        x: Math.min(Math.max(GAP, x), Math.max(GAP, window.innerWidth - w - GAP)),
+        y: Math.min(Math.max(GAP, y), Math.max(GAP, window.innerHeight - h - GAP)),
+      };
+    },
+    [panelH],
+  );
+
+  // Drag from the header. Pointer events (not mouse) so pen/touch work, and
+  // listeners go on `window` so a fast drag that outruns the cursor doesn't
+  // drop the gesture.
+  //
+  // A press only becomes a drag after the pointer travels DRAG_THRESHOLD px.
+  // Without that, a stray click on the header would silently switch the
+  // panel to manual positioning and pin it — surprising, and it would
+  // surface the "reset" control for a gesture the user didn't make.
+  useEffect(() => {
+    if (!armed) return;
+    const onMove = (e: PointerEvent) => {
+      const start = pressRef.current;
+      if (!start) return;
+      if (!movedRef.current) {
+        const travelled = Math.abs(e.clientX - start.sx) + Math.abs(e.clientY - start.sy);
+        if (travelled < DRAG_THRESHOLD) return;
+        movedRef.current = true;
+        setDragging(true);
+        // Moving it away from its column means the pointer leaves that
+        // column, which would otherwise schedule a hover-close mid-drag.
+        // Pin instead: a deliberately-placed panel should stay put.
+        onEnter();
+        onPin?.();
+      }
+      e.preventDefault();
+      setPos(clampToViewport(e.clientX - start.dx, e.clientY - start.dy));
+    };
+    const onUp = () => {
+      setArmed(false);
+      setDragging(false);
+      movedRef.current = false;
+      pressRef.current = null;
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
+    return () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
+    };
+  }, [armed, clampToViewport, onEnter, onPin]);
+
+  // A resize (or the IDE window being un-maximised) must not strand a
+  // dragged popover off-screen.
+  useEffect(() => {
+    if (!pos) return;
+    const onResize = () => setPos((p) => (p ? clampToViewport(p.x, p.y) : p));
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, [pos, clampToViewport]);
+
+  const startDrag = (e: React.PointerEvent) => {
+    if (e.button !== 0) return;
+    const el = panelRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    // Offset is measured from the panel's CURRENT on-screen box, so the
+    // switch from anchored to manual positioning never makes it jump.
+    pressRef.current = {
+      sx: e.clientX,
+      sy: e.clientY,
+      dx: e.clientX - r.left,
+      dy: e.clientY - r.top,
+    };
+    movedRef.current = false;
+    setArmed(true);
+  };
+
+  const anchoredHeight = panelH || 240;
+  const spaceBelow = viewportBottom - anchor.bottom - GAP * 2;
+  const spaceAbove = anchor.top - GAP * 2;
+  const flowsDown = spaceBelow >= anchoredHeight || spaceBelow >= spaceAbove;
+  const anchoredTop = flowsDown ? anchor.bottom + GAP : anchor.top - GAP - anchoredHeight;
+  const style: React.CSSProperties = pos
     ? {
         position: "fixed",
-        left,
-        top: anchor.bottom + GAP,
+        left: pos.x,
+        top: pos.y,
         width: POPOVER_W,
         maxHeight: POPOVER_MAX_H,
         zIndex: 60,
       }
     : {
         position: "fixed",
-        left,
-        bottom: Math.max(GAP, viewportBottom - anchor.top + GAP),
+        left: Math.max(GAP, Math.min(anchor.left, viewportRight - POPOVER_W - GAP)),
+        // Final guard: whichever direction we chose, never let the panel
+        // cross the bottom (or top) edge of the window.
+        top: Math.min(
+          Math.max(GAP, anchoredTop),
+          Math.max(GAP, viewportBottom - anchoredHeight - GAP),
+        ),
         width: POPOVER_W,
         maxHeight: POPOVER_MAX_H,
         zIndex: 60,
@@ -4897,19 +5308,57 @@ function ColumnChatPopover({
 
   return (
     <div
+      ref={panelRef}
       style={style}
       onMouseEnter={onEnter}
-      onMouseLeave={onLeave}
-      className={`flex max-h-[60vh] flex-col overflow-hidden rounded-lg border bg-bg-1 shadow-2xl ${
+      onMouseLeave={dragging ? undefined : onLeave}
+      className={`flex flex-col overflow-hidden rounded-lg border bg-bg-1 shadow-2xl ${
         pinned ? "border-primary/60" : "border-border"
-      }`}
+      } ${dragging ? "select-none" : ""}`}
     >
-      <header className="flex shrink-0 items-center justify-between gap-2 border-b border-border bg-bg-1 px-3 py-1.5">
+      {/* Header doubles as the drag handle. */}
+      <header
+        onPointerDown={startDrag}
+        className={`flex shrink-0 items-center justify-between gap-2 border-b border-border bg-bg-1 px-3 py-1.5 ${
+          dragging ? "cursor-grabbing" : "cursor-grab"
+        }`}
+      >
         <div className="flex min-w-0 items-center gap-2">
+          {/* Grip affordance — the only cue that the panel can be moved. */}
+          <span
+            aria-hidden
+            title="drag to move"
+            className="shrink-0 font-mono text-[10px] leading-none text-fg-dim"
+          >
+            ⠿
+          </span>
           <TypeChip type={meta.type} />
           <span className="truncate font-mono text-xs text-fg">{meta.name}</span>
         </div>
         <div className="flex shrink-0 items-center gap-2">
+          {onUndo && undoLabel && (
+            <button
+              type="button"
+              // Pointer-down would start a drag on the header underneath.
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={() => sendLocal("Undo the last change.", onUndo())}
+              title={`Undo "${undoLabel}"`}
+              className="font-mono text-[9px] uppercase tracking-wider text-warn hover:text-fg"
+            >
+              ↶ undo
+            </button>
+          )}
+          {pos && (
+            <button
+              type="button"
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={() => setPos(null)}
+              title="snap back under the column header"
+              className="font-mono text-[9px] uppercase tracking-wider text-fg-dim hover:text-fg"
+            >
+              reset
+            </button>
+          )}
           <span
             className={`font-mono text-[9px] uppercase tracking-wider ${
               pinned ? "text-primary" : "text-fg-dim"
@@ -4924,6 +5373,7 @@ function ColumnChatPopover({
           </span>
           <button
             type="button"
+            onPointerDown={(e) => e.stopPropagation()}
             onClick={onClose}
             aria-label="close"
             className="font-mono text-[10px] text-fg-dim hover:text-error"

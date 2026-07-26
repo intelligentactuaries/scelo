@@ -169,3 +169,83 @@ describe("summariseDataset · stride sampling above 200k rows", () => {
     expect(meta.mean).toBe(3);
   });
 });
+
+describe("summariseDataset · quintiles", () => {
+  test("cut points on 1..100 land on the textbook fifths", () => {
+    // Linear-interpolated percentiles of 1..100: index = (n-1)*p, so
+    // p20 → 20.8, p40 → 40.6, p60 → 60.4, p80 → 80.2.
+    const [meta] = summariseDataset(
+      ds(
+        "x",
+        Array.from({ length: 100 }, (_, i) => i + 1),
+      ),
+    );
+    expect(meta.quintiles).toBeDefined();
+    const [p20, p40, p60, p80] = meta.quintiles as [number, number, number, number];
+    expect(p20).toBeCloseTo(20.8, 6);
+    expect(p40).toBeCloseTo(40.6, 6);
+    expect(p60).toBeCloseTo(60.4, 6);
+    expect(p80).toBeCloseTo(80.2, 6);
+  });
+
+  test("each cut point really does bound a fifth of the data", () => {
+    // The behavioural claim the UI makes ("20% per bucket"), checked against
+    // the data rather than against the formula that produced it.
+    const values = Array.from({ length: 1000 }, (_, i) => (i * 7919) % 1000);
+    const [meta] = summariseDataset(ds("x", values));
+    const [p20, p40, p60, p80] = meta.quintiles as [number, number, number, number];
+    for (const [cut, want] of [
+      [p20, 0.2],
+      [p40, 0.4],
+      [p60, 0.6],
+      [p80, 0.8],
+    ] as const) {
+      const below = values.filter((v) => v <= cut).length / values.length;
+      expect(Math.abs(below - want)).toBeLessThan(0.02);
+    }
+  });
+
+  test("monotonic, and bracketed by min/median/max", () => {
+    const [meta] = summariseDataset(
+      ds(
+        "x",
+        Array.from({ length: 57 }, (_, i) => Math.sin(i) * 100),
+      ),
+    );
+    const [p20, p40, p60, p80] = meta.quintiles as [number, number, number, number];
+    expect(p20).toBeLessThanOrEqual(p40);
+    expect(p40).toBeLessThanOrEqual(p60);
+    expect(p60).toBeLessThanOrEqual(p80);
+    expect(p20).toBeGreaterThanOrEqual(meta.min as number);
+    expect(p80).toBeLessThanOrEqual(meta.max as number);
+    // p40 and p60 straddle the median by construction.
+    expect(p40).toBeLessThanOrEqual(meta.median as number);
+    expect(p60).toBeGreaterThanOrEqual(meta.median as number);
+  });
+
+  test("omitted below five values, where fifths are meaningless", () => {
+    expect(summariseDataset(ds("x", [1, 2, 3, 4]))[0].quintiles).toBeUndefined();
+    expect(summariseDataset(ds("x", [1, 2, 3, 4, 5]))[0].quintiles).toBeDefined();
+  });
+
+  test("omitted for non-numeric columns", () => {
+    expect(summariseDataset(ds("s", ["a", "b", "c", "d", "e", "f"]))[0].quintiles).toBeUndefined();
+  });
+
+  test("a constant column collapses every cut point onto the value", () => {
+    const [meta] = summariseDataset(ds("x", [7, 7, 7, 7, 7, 7]));
+    expect(meta.quintiles).toEqual([7, 7, 7, 7]);
+  });
+
+  test("survives sampling on a large column", () => {
+    const N = 250_000;
+    const rows = new Array(N);
+    for (let i = 0; i < N; i++) rows[i] = { x: i % 97 };
+    const [meta] = summariseDataset({ name: "big", columns: ["x"], rows });
+    expect(meta.sampledStats).toBe(true);
+    const [p20, , , p80] = meta.quintiles as [number, number, number, number];
+    // Uniform 0..96, so the fifths sit near 19.2 and 76.8 even when sampled.
+    expect(Math.abs(p20 - 19.2)).toBeLessThan(2);
+    expect(Math.abs(p80 - 76.8)).toBeLessThan(2);
+  });
+});

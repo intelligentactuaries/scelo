@@ -5,6 +5,7 @@
 import { type LlmMessage, hasLocalLlmBridge, llmChatActive } from "@/lib/aiProviders";
 import { type OrchestratorMessage, streamOrchestrator } from "@/lib/api";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { appendChatTurns } from "./chatLog";
 
 export type NodeChatMessage = {
   id: string;
@@ -69,9 +70,16 @@ export function useNodeChat(
      *  for a confirmation. Kept in a ref so a stale closure never applies
      *  yesterday's stack. */
     onAssistantFinal?: (text: string) => string | undefined;
+    /** Human label for the audit trail, e.g. `soft · column «premium»`.
+     *  Omit and this chat is not written to the chat log. */
+    logLabel?: string;
+    /** Project name recorded alongside each turn, when the session has one. */
+    logProject?: string;
   },
 ) {
   const memoryKey = opts?.memoryKey ?? null;
+  const logLabel = opts?.logLabel;
+  const logProject = opts?.logProject;
   const onAssistantFinalRef = useRef(opts?.onAssistantFinal);
   useEffect(() => {
     onAssistantFinalRef.current = opts?.onAssistantFinal;
@@ -110,6 +118,52 @@ export function useNodeChat(
     if (!memoryKey) return;
     saveToStorage(memoryKey, messages);
   }, [memoryKey, messages]);
+
+  // ── audit trail ─────────────────────────────────────────────────────────
+  //
+  // Driven off settled state rather than instrumented at each send site.
+  // `send` has three completion paths (local LLM bridge, streamed
+  // orchestrator, and the empty-stream fallback), `sendLocal` a fourth, and
+  // `onAssistantFinal` can REWRITE a reply after the fact — so logging at
+  // the call sites would need five hooks and would still record pre-rewrite
+  // text. Watching the message list instead captures every path once, with
+  // the final displayed content, by construction.
+  const loggedIds = useRef<Set<string>>(new Set());
+  const seededLog = useRef(false);
+  if (!seededLog.current) {
+    // Messages restored from localStorage on mount are HISTORY, not new
+    // turns — they were logged when they originally happened. Seeding on
+    // first render (not in an effect) closes the window in which the effect
+    // below would re-log a rehydrated thread on every page load.
+    for (const m of messages) loggedIds.current.add(m.id);
+    seededLog.current = true;
+  }
+  useEffect(() => {
+    if (!logLabel) return;
+    const thread = memoryKey ?? `ephemeral:${logLabel}`;
+    const pending: Array<{
+      thread: string;
+      label: string;
+      role: "user" | "assistant";
+      content: string;
+      project?: string;
+    }> = [];
+    for (const m of messages) {
+      if (loggedIds.current.has(m.id)) continue;
+      // An assistant bubble is only final once the stream stops; logging it
+      // mid-flight would record a truncated answer as the answer.
+      if (m.role === "assistant" && (isStreaming || m.content.trim().length === 0)) continue;
+      loggedIds.current.add(m.id);
+      pending.push({
+        thread,
+        label: logLabel,
+        role: m.role,
+        content: m.content,
+        ...(logProject ? { project: logProject } : {}),
+      });
+    }
+    if (pending.length > 0) appendChatTurns(pending);
+  }, [messages, isStreaming, logLabel, logProject, memoryKey]);
 
   const send = useCallback(
     async (text: string) => {
