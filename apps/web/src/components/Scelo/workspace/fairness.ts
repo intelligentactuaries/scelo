@@ -95,16 +95,31 @@ export type FairnessInput = {
  */
 export function protectedReadout(input: FairnessInput): FairnessReadout {
   const { rows, protectedCol, legitimateCols, proxyCols, targetCol } = input;
-  const keep = rows.filter(
-    (r) =>
-      Number.isFinite(Number(r[protectedCol])) &&
-      Number.isFinite(Number(r[targetCol])) &&
-      proxyCols.every((c) => Number.isFinite(Number(r[c]))),
-  );
+  // Complete-case filter, consistent with col(): a cell counts only when it
+  // IS a finite number. The old Number(v) coercion let nulls through
+  // (Number(null) === 0) while col() mapped the same nulls to NaN — one
+  // null anywhere poisoned the regression and every reported metric read
+  // NaN. Legitimate columns were not filtered at all.
+  const finite = (v: unknown): boolean => typeof v === "number" && Number.isFinite(v);
+  const needed = [protectedCol, targetCol, ...legitimateCols, ...proxyCols];
+  const keep = rows.filter((r) => needed.every((c) => finite(r[c])));
+  if (keep.length < 10) {
+    throw new Error(
+      `only ${keep.length} complete rows across the chosen columns — pick columns with fewer missing values`,
+    );
+  }
   const a = col(keep, protectedCol);
   const y = col(keep, targetCol);
   const legit = legitimateCols.map((c) => col(keep, c));
   const proxies = proxyCols.map((c) => col(keep, c));
+
+  // Degenerate inputs produce meaningless (or NaN) audits — refuse loudly.
+  if (varOf(a) < 1e-30) {
+    throw new Error(`protected column \`${protectedCol}\` has no variation in the complete rows`);
+  }
+  if (varOf(col(keep, targetCol)) < 1e-30) {
+    throw new Error(`target column \`${targetCol}\` has no variation in the complete rows`);
+  }
 
   // The model: fit on proxy features only (never on A).
   const model = ols(proxies, y);

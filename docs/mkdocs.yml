@@ -5,6 +5,10 @@ copyright: Copyright © 2026 Intelligent Actuaries
 
 extra_css:
   - stylesheets/extra.css
+  - stylesheets/scelo-demos.css
+
+extra_javascript:
+  - assets/js/scelo-demos.js
 
 theme:
   name: material

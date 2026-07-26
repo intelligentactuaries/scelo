@@ -10,7 +10,7 @@
 // on object identity gives automatic invalidation: one profiling pass per
 // dataset version, shared by everyone.
 
-import { type ColumnMeta, type Dataset, summariseDataset } from "./SoftDataWorkstation";
+import { type ColumnMeta, type Dataset, summariseDataset } from "@scelo/core";
 
 const cache = new WeakMap<Dataset, ColumnMeta[]>();
 

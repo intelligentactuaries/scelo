@@ -14,7 +14,7 @@ You reach it two ways:
 - From **Hard Data → Convene council → Open in swarm** (the pipeline route).
 - Directly from the **swarm** view in the workspace.
 
-![The swarm — the Forecast tab and the deliberation tabs](../assets/img/swarm-forecast.png){ .shadow }
+<div class="scelo-demo" data-scelo-demo="swarm"><p class="sd-fallback">The swarm: the Forecast tab and the deliberation tabs, with eight professional agents landing a stance over three rounds. The animated illustration needs JavaScript.</p></div>
 
 ## The tabs
 

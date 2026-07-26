@@ -44,6 +44,7 @@ import { useSwarmProbe } from "../SwarmStatus";
 import { SWARM_DOCS_URL, swarmStartCommand } from "../workspace/SwarmPanel";
 import { ChatInputPill } from "./ChatInputPill";
 import { ClimateDataPanel, isClimateFamilyModel } from "./ClimateDataPanel";
+import { CouncilDeliberationOverlay } from "./CouncilDeliberationOverlay";
 import { ExportButton } from "./ExportScreen";
 import { FlowControls } from "./FlowControls";
 import { ResizablePanel } from "./ResizablePanel";
@@ -53,7 +54,7 @@ import { ScrollFade } from "./ScrollFade";
 import { type Dataset, formatNumber } from "./SoftDataWorkstation";
 import { StageChatPanel } from "./StageChatPanel";
 import { UploadIndicator, nextPaint } from "./UploadIndicator";
-import { type CouncilSynthesis, conveneCouncil } from "./forecast/councilClient";
+import { type CouncilSynthesis, conveneCouncil, swarmApiUrl } from "./forecast/councilClient";
 import { forecastConfigFor } from "./forecast/derive";
 import { hasForecastDomain } from "./forecast/domainLabels";
 import { runForecast } from "./forecast/runner";
@@ -78,6 +79,7 @@ import {
   runModelAsync,
 } from "./modelRunner";
 import { modelTheoryFor } from "./modelTheory";
+import { pipelinePlan } from "./pipeline";
 import { type SelectedModel, useScelo } from "./sceloContext";
 import { useNodeChat } from "./useNodeChat";
 import {
@@ -667,9 +669,17 @@ function buildHardStageContext(args: {
   if (runs.length === 0) {
     lines.push("RUNS: no models have run yet.");
   } else {
-    lines.push("MODEL RUNS:");
+    lines.push("MODEL RUNS (id · family · status · headline · provenance):");
     for (const r of runs) {
-      lines.push(`  • ${r.modelId} (${r.family}, ${r.status}): ${r.blurb}`);
+      const headline = `${r.headline.label} = ${formatHeadline(r.headline)}`;
+      const wired =
+        r.wiredFrom && r.wiredFrom.length > 0
+          ? ` [wired ← ${r.wiredFrom.map((w) => w.id).join(", ")}]`
+          : "";
+      const src = r.source === "python-bridge" ? " · python-bridge" : "";
+      lines.push(
+        `  • ${r.modelId} (${r.family}, ${r.status}${src}): ${headline}${wired} — ${r.blurb}`,
+      );
     }
   }
   if (narrative) lines.push(`EXECUTIVE NARRATIVE: ${narrative}`);
@@ -1215,9 +1225,281 @@ function TrajectoryOverlay({
 // projections are also year-indexed. Otherwise we just say "category".
 function inferTrajectoryAxis(x: string[]): string {
   if (x.length === 0) return "";
-  const looksLikeYears = x.every((v) => /^\d{4}$/.test(v));
-  if (looksLikeYears) return "origin year";
+  if (x.every((v) => /^\d{4}$/.test(v))) return "origin year";
+  if (x.every((v) => /^y\d+$/i.test(v))) return "projection year";
+  if (x.every((v) => /^t=?\d+$/i.test(v))) return "time (years)";
   return "category";
+}
+
+// ── comparative analytics (left rail, below the trajectory) ─────────────────
+//
+// Derived views computed FROM the run payloads, rendered only when the data
+// for them exists: the shock-dial outcome mix (wmtr-sensitivity sweeps), the
+// fitted GLM drivers with confidence whiskers (statsmodels bridge), and the
+// frequency × severity pure premium per segment when both GLMs grouped by
+// the same rating factor.
+
+type ShockSweepRow = { shock: string; outcomes: Record<string, number> };
+type GlmCoefRow = { name: string; estimate: number; stdErr: number; z: number; pValue: number };
+
+function prettyCoefName(raw: string): string {
+  const m = /^C\((.+?)\)\[T\.(.+)\]$/.exec(raw);
+  return m ? `${m[1]}=${m[2]}` : raw;
+}
+
+function ComparativeCharts({
+  doneRuns,
+  familyPalette,
+  textDim,
+  grid,
+}: {
+  doneRuns: RunResult[];
+  familyPalette: Record<ModelFamily, string>;
+  textDim: string;
+  grid: string;
+}) {
+  const { resolved } = useTheme();
+  const light = resolved === "light";
+  const OUTCOME_COLORS: Record<string, string> = {
+    grew: light ? "#3C6E5A" : "#6EB491",
+    stabilized: light ? "#3760CC" : "#82A0E6",
+    declined: light ? "#B4753C" : "#D7A56E",
+    collapsed: light ? "#B73A3A" : "#E66E6E",
+  };
+
+  const axisBase = {
+    axisLabel: { fontSize: 9, color: textDim },
+    axisLine: { lineStyle: { color: grid } },
+    axisTick: { show: false as const },
+  };
+
+  // ── shock dial: outcome mix per severity band ──────────────────────────
+  const sweep = doneRuns.find((r) => r.modelId === "wmtr-sensitivity")?.detail?.sweep as
+    | ShockSweepRow[]
+    | undefined;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: OUTCOME_COLORS/axisBase derive from `light`/`textDim`/`grid`, all listed.
+  const shockOption = useMemo(() => {
+    if (!Array.isArray(sweep) || sweep.length === 0) return null;
+    const bands = sweep.map((r) => r.shock);
+    const outcomes = ["grew", "stabilized", "declined", "collapsed"];
+    return {
+      backgroundColor: "transparent",
+      tooltip: {
+        trigger: "axis" as const,
+        valueFormatter: (v: unknown) => `${Math.round((v as number) * 100)}%`,
+      },
+      grid: { left: 8, right: 8, top: 22, bottom: 4, containLabel: true },
+      legend: {
+        top: 0,
+        left: 0,
+        itemWidth: 8,
+        itemHeight: 8,
+        textStyle: { fontSize: 9, color: textDim },
+      },
+      xAxis: { type: "category" as const, data: bands, ...axisBase },
+      yAxis: {
+        type: "value" as const,
+        max: 1,
+        axisLabel: {
+          fontSize: 9,
+          color: textDim,
+          formatter: (v: number) => `${Math.round(v * 100)}%`,
+        },
+        splitLine: { lineStyle: { color: grid, type: "dashed" as const, opacity: 0.45 } },
+      },
+      series: outcomes.map((o) => ({
+        name: o,
+        type: "bar" as const,
+        stack: "mix",
+        color: OUTCOME_COLORS[o],
+        barWidth: "55%",
+        data: sweep.map((r) => r.outcomes?.[o] ?? 0),
+        animation: false,
+      })),
+    };
+  }, [sweep, textDim, grid, light]);
+
+  // ── GLM drivers: estimate ± 2·SE, top |z| coefficients ─────────────────
+  const glmRuns = doneRuns.filter(
+    (r) =>
+      (r.modelId === "glm-frequency" || r.modelId === "glm-severity") &&
+      Array.isArray(r.detail?.coefficients),
+  );
+  const glmOptions = useMemo(
+    () =>
+      glmRuns.map((run) => {
+        const coefs = (run.detail?.coefficients as GlmCoefRow[])
+          .filter((c) => c.name !== "Intercept" && Number.isFinite(c.estimate))
+          .sort((a, b) => Math.abs(b.z) - Math.abs(a.z))
+          .slice(0, 6)
+          .reverse();
+        if (coefs.length === 0) return null;
+        const color = familyPalette[run.family];
+        const names = coefs.map((c) => prettyCoefName(c.name));
+        return {
+          id: run.modelId,
+          title: `${MODEL_BY_ID.get(run.modelId)?.name ?? run.modelId} · estimate ± 2·SE`,
+          option: {
+            backgroundColor: "transparent",
+            tooltip: {
+              trigger: "axis" as const,
+              axisPointer: { type: "shadow" as const },
+              formatter: (params: Array<{ dataIndex: number }>) => {
+                const i = params[0]?.dataIndex ?? 0;
+                const c = coefs[i];
+                return `${prettyCoefName(c.name)}<br/>estimate ${c.estimate.toFixed(3)} ± ${(2 * c.stdErr).toFixed(3)}<br/>z ${c.z.toFixed(2)} · p ${c.pValue < 0.001 ? "<0.001" : c.pValue.toFixed(3)}`;
+              },
+            },
+            grid: { left: 8, right: 12, top: 6, bottom: 4, containLabel: true },
+            xAxis: {
+              type: "value" as const,
+              axisLabel: { fontSize: 9, color: textDim, formatter: (v: number) => formatNumber(v) },
+              splitLine: { lineStyle: { color: grid, type: "dashed" as const, opacity: 0.45 } },
+            },
+            yAxis: {
+              type: "category" as const,
+              data: names,
+              axisLabel: { fontSize: 9, color: textDim, width: 110, overflow: "truncate" as const },
+              axisLine: { lineStyle: { color: grid } },
+              axisTick: { show: false as const },
+            },
+            series: [
+              // Boxplot as a CI glyph: [lo, lo, est, hi, hi] draws the ±2·SE
+              // band with a median tick at the estimate. (A stacked-bar float
+              // breaks on negative lower bounds — ECharts stacks negatives on
+              // their own axis side.)
+              {
+                type: "boxplot" as const,
+                data: coefs.map((c) => [
+                  c.estimate - 2 * c.stdErr,
+                  c.estimate - 2 * c.stdErr,
+                  c.estimate,
+                  c.estimate + 2 * c.stdErr,
+                  c.estimate + 2 * c.stdErr,
+                ]),
+                itemStyle: { color: `${color}30`, borderColor: color, borderWidth: 1.2 },
+                boxWidth: [8, 12],
+                silent: true,
+                animation: false,
+              },
+              {
+                type: "scatter" as const,
+                data: coefs.map((c, i) => ({
+                  value: [c.estimate, i],
+                  symbol: c.pValue < 0.05 ? "circle" : "emptyCircle",
+                })),
+                symbolSize: 7,
+                itemStyle: { color, borderColor: color, borderWidth: 1.5 },
+                animation: false,
+                z: 3,
+              },
+            ],
+          },
+        };
+      }),
+    [glmRuns, familyPalette, textDim, grid],
+  );
+
+  // ── pure premium per segment: freq × sev on a shared axis ──────────────
+  const ppOption = useMemo(() => {
+    const freq = doneRuns.find((r) => r.modelId === "glm-frequency" && r.series);
+    const sev = doneRuns.find((r) => r.modelId === "glm-severity" && r.series);
+    if (!freq?.series || !sev?.series) return null;
+    const sevByX = new Map(sev.series.x.map((x, i) => [x, sev.series?.y[i] ?? 0]));
+    const shared = freq.series.x.filter((x) => sevByX.has(x));
+    if (shared.length < 2) return null;
+    const freqByX = new Map(freq.series.x.map((x, i) => [x, freq.series?.y[i] ?? 0]));
+    const data = shared.map((x) => (freqByX.get(x) ?? 0) * (sevByX.get(x) ?? 0));
+    const color = familyPalette.pricing;
+    return {
+      backgroundColor: "transparent",
+      tooltip: {
+        trigger: "axis" as const,
+        valueFormatter: (v: unknown) => formatNumber(v as number),
+      },
+      grid: { left: 8, right: 8, top: 8, bottom: 4, containLabel: true },
+      xAxis: { type: "category" as const, data: shared, ...axisBase },
+      yAxis: {
+        type: "value" as const,
+        axisLabel: { fontSize: 9, color: textDim, formatter: (v: number) => formatNumber(v) },
+        splitLine: { lineStyle: { color: grid, type: "dashed" as const, opacity: 0.45 } },
+      },
+      series: [
+        {
+          type: "bar" as const,
+          data,
+          color,
+          barWidth: "55%",
+          itemStyle: { opacity: 0.85, borderRadius: [3, 3, 0, 0] },
+          animation: false,
+        },
+      ],
+    };
+  }, [doneRuns, familyPalette, textDim, grid]);
+
+  const sections: Array<{ key: string; title: string; hint: string; body: React.ReactNode }> = [];
+  if (shockOption) {
+    sections.push({
+      key: "shock",
+      title: "shock dial",
+      hint: "outcome mix per severity",
+      body: (
+        <ReactECharts
+          option={shockOption}
+          notMerge
+          lazyUpdate
+          style={{ height: 150, width: "100%" }}
+        />
+      ),
+    });
+  }
+  for (const [i, g] of glmOptions.entries()) {
+    if (!g) continue;
+    sections.push({
+      key: g.id,
+      title: i === 0 ? "glm drivers" : "glm drivers · cont.",
+      hint: g.title,
+      body: (
+        <ReactECharts
+          option={g.option}
+          notMerge
+          lazyUpdate
+          style={{ height: 130, width: "100%" }}
+        />
+      ),
+    });
+  }
+  if (ppOption) {
+    sections.push({
+      key: "pp",
+      title: "pure premium",
+      hint: "frequency × severity per segment",
+      body: (
+        <ReactECharts
+          option={ppOption}
+          notMerge
+          lazyUpdate
+          style={{ height: 130, width: "100%" }}
+        />
+      ),
+    });
+  }
+  if (sections.length === 0) return null;
+  return (
+    <>
+      {sections.map((sec) => (
+        <section key={sec.key} className="rounded border border-border bg-bg-1 p-2">
+          <header className="mb-1 flex items-baseline justify-between gap-2">
+            <span className="font-mono text-[9px] uppercase tracking-wider text-fg-dim">
+              {sec.title}
+            </span>
+            <span className="font-mono text-[10px] text-fg-dim">{sec.hint}</span>
+          </header>
+          {sec.body}
+        </section>
+      ))}
+    </>
+  );
 }
 
 function HardLeftStatsPanel({
@@ -1376,6 +1658,15 @@ function HardLeftStatsPanel({
                 grid={grid}
               />
             </section>
+
+            {/* containers 4+: derived comparative analytics — only the
+                sections whose source runs actually produced the data. */}
+            <ComparativeCharts
+              doneRuns={stats.done}
+              familyPalette={familyPalette}
+              textDim={textDim}
+              grid={grid}
+            />
           </>
         )}
       </div>
@@ -1436,6 +1727,19 @@ function ResultDetailsPanel({
                 {MODEL_BY_ID.get(focused.modelId)?.name ?? focused.modelId}
               </h2>
               <p className="mt-1 text-[11px] text-fg-mute">{focused.blurb}</p>
+              {focused.wiredFrom && focused.wiredFrom.length > 0 && (
+                <div className="mt-1.5 flex flex-wrap gap-1.5">
+                  {focused.wiredFrom.map((w) => (
+                    <span
+                      key={w.id}
+                      title={w.note}
+                      className="inline-flex items-center gap-1 rounded border border-accent-2/40 px-1.5 py-px font-mono text-[9px] text-accent-2"
+                    >
+                      ⤆ wired: {MODEL_BY_ID.get(w.id)?.name ?? w.id}
+                    </span>
+                  ))}
+                </div>
+              )}
             </div>
             <div className="grid grid-cols-2 gap-1 font-mono text-[11px]">
               <Stat
@@ -1581,6 +1885,7 @@ function guessReadouts(dataset: Dataset): { readouts: string[]; reflexive?: stri
 }
 
 function pctStr(x: number): string {
+  if (!Number.isFinite(x)) return "—";
   return `${(100 * x).toFixed(x < 0.1 ? 1 : 0)}%`;
 }
 
@@ -1991,10 +2296,10 @@ function FairnessAuditCta({ focused: _focused }: { focused: RunResult }) {
           </span>
           <span className="text-fg-mute">group gap</span>
           <span className="text-center font-mono tabular-nums text-fg">
-            {audit.disparityBefore.toFixed(2)}
+            {Number.isFinite(audit.disparityBefore) ? audit.disparityBefore.toFixed(2) : "—"}
           </span>
           <span className="text-center font-mono tabular-nums text-fg">
-            {audit.disparityAfter.toFixed(2)}
+            {Number.isFinite(audit.disparityAfter) ? audit.disparityAfter.toFixed(2) : "—"}
           </span>
           <span className="text-fg-mute">fair-target fit</span>
           <span className="text-center font-mono tabular-nums text-fg">
@@ -2246,6 +2551,11 @@ function CouncilAttachCta({ focused }: { focused: RunResult }) {
   const [error, setError] = useState<string | null>(null);
   const [progressId, setProgressId] = useState<string | null>(null);
   const [subset, setSubset] = useState<12 | 24 | 48 | 96 | 192>(12);
+  // Full-screen deliberation overlay — owns the screen while the council
+  // runs (minutes on a local LLM); Esc/hide tucks it away without touching
+  // the run, cancel aborts. Re-open by clicking the "Deliberating…" button.
+  const [overlayOpen, setOverlayOpen] = useState(false);
+  const abortRef = useRef<AbortController | null>(null);
   const probe = useSwarmProbe();
   // Society pulse defaults ON so the swarm app's Society tab is populated
   // when the user clicks "open in swarm ↗". Adds ~30s of Ollama time on a
@@ -2257,6 +2567,9 @@ function CouncilAttachCta({ focused }: { focused: RunResult }) {
     setBusy(true);
     setError(null);
     setProgressId(null);
+    setOverlayOpen(true);
+    const ac = new AbortController();
+    abortRef.current = ac;
     const labelName = MODEL_BY_ID.get(focused.modelId)?.name ?? focused.modelId;
     const scenarioContext =
       `${labelName} (${focused.family}) result on dataset \`${dataset?.name ?? "unknown"}\`: ` +
@@ -2265,6 +2578,7 @@ function CouncilAttachCta({ focused }: { focused: RunResult }) {
       scenario: scenarioContext,
       subset,
       skipSociety,
+      signal: ac.signal,
       onStart: (id) => setProgressId(id),
     })
       .then((s) => {
@@ -2283,8 +2597,17 @@ function CouncilAttachCta({ focused }: { focused: RunResult }) {
           createdAt: Date.now(),
         });
       })
-      .catch((e) => setError(e instanceof Error ? e.message : "council failed"))
-      .finally(() => setBusy(false));
+      .catch((e) => {
+        const aborted =
+          (e instanceof Error && e.message === "aborted") ||
+          (e instanceof DOMException && e.name === "AbortError");
+        setError(aborted ? "cancelled" : e instanceof Error ? e.message : "council failed");
+      })
+      .finally(() => {
+        setBusy(false);
+        setOverlayOpen(false);
+        abortRef.current = null;
+      });
   }, [focused, dataset, subset, skipSociety]);
 
   return (
@@ -2389,8 +2712,8 @@ function CouncilAttachCta({ focused }: { focused: RunResult }) {
           </div>
           <button
             type="button"
-            onClick={convene}
-            disabled={busy || probe === "down"}
+            onClick={busy ? () => setOverlayOpen(true) : convene}
+            disabled={(!busy && probe === "down") || (busy && overlayOpen)}
             className="ia-btn ia-btn-md ia-btn-secondary group w-full justify-between"
             title={
               probe === "down"
@@ -2413,6 +2736,24 @@ function CouncilAttachCta({ focused }: { focused: RunResult }) {
               swarm view as soon as the run has an id, not only when the
               synthesis lands. */}
           {busy && progressId && <OpenInSwarmLink runId={progressId} live />}
+          {busy && overlayOpen && (
+            <CouncilDeliberationOverlay
+              runId={progressId}
+              swarmBase={swarmApiUrl()}
+              agents={subset}
+              skipSociety={skipSociety}
+              modelLabel={MODEL_BY_ID.get(focused.modelId)?.name ?? focused.modelId}
+              onHide={() => setOverlayOpen(false)}
+              onCancel={() => {
+                abortRef.current?.abort();
+                setOverlayOpen(false);
+              }}
+              onWatchLive={() => {
+                setOverlayOpen(false);
+                navigate("/swarm");
+              }}
+            />
+          )}
         </div>
       )}
       {error && (
@@ -2610,7 +2951,7 @@ function datasetVersion(dataset: Dataset): number {
 export function HardDataWorkstation() {
   const navigate = useNavigate();
   const { resolved } = useTheme();
-  const { dataset, selectedModels, domain, runs, setRuns, logEvent } = useScelo();
+  const { dataset, selectedModels, domain, runs, setRuns, modelWires, logEvent } = useScelo();
 
   const [focusedId, setFocusedId] = useState<string | null>(null);
   const [narrative, setNarrative] = useState<string | null>(null);
@@ -2673,6 +3014,20 @@ export function HardDataWorkstation() {
         };
       }
       setRuns(staged);
+      // The Tools canvas wiring is an execution plan, not decoration: order
+      // the batch topologically (wire sources run before their targets) and
+      // hand each model the results of the models wired INTO it, so a wired
+      // chain-ladder seeds Bornhuetter-Ferguson's a-priori, a fitted
+      // Lee-Carter table prices the annuity, the wired GBM feeds SHAP, etc.
+      const plan = pipelinePlan(
+        models.map((m) => m.id),
+        modelWires,
+      );
+      const byId = new Map(models.map((m) => [m.id, m] as const));
+      const ordered = plan.order
+        .map((id) => byId.get(id))
+        .filter((m): m is SelectedModel => m !== undefined);
+      const completed = new Map<string, RunResult>();
       // Commit the overlay + staged pips to screen before the first
       // synchronous model blocks the thread. nextPaint (not raw rAF): rAF
       // never fires in hidden/occluded tabs, which would stall the whole
@@ -2680,17 +3035,23 @@ export function HardDataWorkstation() {
       await nextPaint();
       try {
         let done = 0;
-        for (const m of models) {
+        for (const m of ordered) {
           if (runEpoch.current !== epoch) return; // superseded mid-flight
-          setComputeBusy({ done, total: models.length, current: m.id });
+          setComputeBusy({ done, total: ordered.length, current: m.id });
           // One paint so the overlay's model name / progress just set above
           // reaches the screen before this model blocks the thread.
           await nextPaint();
+          // Results of the models wired into this one that have finished.
+          const upstream = new Map<string, RunResult>();
+          for (const src of plan.upstreamOf.get(m.id) ?? []) {
+            const r = completed.get(src);
+            if (r) upstream.set(src, r);
+          }
           let result: RunResult;
           try {
             result = BRIDGED_MODEL_IDS.has(m.id)
-              ? await runModelAsync(m.id, ds)
-              : runModel(m.id, ds);
+              ? await runModelAsync(m.id, ds, upstream)
+              : runModel(m.id, ds, upstream);
           } catch (e) {
             // Both runners catch internally; this guard keeps one unexpected
             // rejection from killing the rest of the batch.
@@ -2710,12 +3071,17 @@ export function HardDataWorkstation() {
           }
           if (runEpoch.current !== epoch) return; // superseded mid-flight
           done++;
+          completed.set(m.id, result);
           setRuns((prev) => ({ ...prev, [m.id]: result }));
         }
         logEvent({
           stage: "hard",
           kind: "runs.execute",
-          payload: { models: models.map((m) => m.id) },
+          payload: {
+            models: ordered.map((m) => m.id),
+            wired: modelWires.length,
+            ...(plan.cyclic ? { cyclicWiring: true } : {}),
+          },
         });
       } finally {
         // Only the batch that owns the overlay may clear it — a superseding
@@ -2727,7 +3093,7 @@ export function HardDataWorkstation() {
         }
       }
     },
-    [setRuns, logEvent],
+    [setRuns, logEvent, modelWires],
   );
 
   // Run all enabled models whenever the (dataset, enabled set) changes.
@@ -2837,7 +3203,7 @@ export function HardDataWorkstation() {
   ]);
 
   const desiredEdges: Edge[] = useMemo(() => {
-    return runsList.map((r): Edge => {
+    const spokes = runsList.map((r): Edge => {
       const color = r.status === "done" ? palette[r.family] : edgeBase;
       return {
         id: `e-${r.modelId}`,
@@ -2852,7 +3218,30 @@ export function HardDataWorkstation() {
         markerEnd: { type: MarkerType.ArrowClosed, color, width: 14, height: 14 },
       };
     });
-  }, [runsList, palette, edgeBase]);
+    // The Tools wiring that ordered this batch and fed results downstream
+    // is part of the story the canvas tells — draw it here too, dashed and
+    // labelled, so "why does BF cite chain-ladder ultimates?" is visible
+    // where the results live.
+    const present = new Set(runsList.map((r) => r.modelId));
+    const wireEdges: Edge[] = modelWires
+      .filter((w) => present.has(w.source) && present.has(w.target))
+      .map((w) => {
+        const src = runsList.find((r) => r.modelId === w.source);
+        const color = src && src.status === "done" ? palette[src.family] : edgeBase;
+        return {
+          id: `wire-${w.source}->${w.target}`,
+          source: `result-${w.source}`,
+          target: `result-${w.target}`,
+          animated: false,
+          label: "feeds",
+          labelStyle: { fill: color, fontSize: 8, fontFamily: "'SN Pro', sans-serif" },
+          labelBgStyle: { fill: "rgb(var(--rgb-bg))", opacity: 0.8 },
+          style: { stroke: color, strokeWidth: 1.1, strokeDasharray: "5 4", opacity: 0.75 },
+          markerEnd: { type: MarkerType.ArrowClosed, color, width: 11, height: 11 },
+        };
+      });
+    return [...spokes, ...wireEdges];
+  }, [runsList, palette, edgeBase, modelWires]);
 
   // Controlled state — required for nodes to actually be draggable. The sync
   // effect below carries id-by-id positions across renders so a node the user
@@ -2872,6 +3261,48 @@ export function HardDataWorkstation() {
     setEdges(desiredEdges);
   }, [desiredEdges, setEdges]);
 
+  // Result cards are content-sized (charts, tables, bridge-error lines) but
+  // columnLayout spaces them by a FIXED height assumption — tall cards
+  // overlapped their neighbours. Once React Flow reports measured heights,
+  // restack the untouched result nodes with real gaps: keep their current
+  // vertical ORDER, walk cumulative y from the top, and centre the column
+  // on the hub. Nodes the user dragged are left exactly where they were put.
+  const movedIdsRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    // A fresh result set voids old drag history.
+    movedIdsRef.current = new Set();
+  }, [desiredNodes]);
+  useEffect(() => {
+    setNodes((prev) => {
+      const GAP = 32;
+      const stack = prev.filter(
+        (n) =>
+          n.id !== "hub" &&
+          !movedIdsRef.current.has(n.id) &&
+          typeof n.height === "number" &&
+          (n.height ?? 0) > 0,
+      );
+      if (stack.length < 2) return prev;
+      const ordered = [...stack].sort((a, b) => a.position.y - b.position.y);
+      const totalH =
+        ordered.reduce((sum, n) => sum + (n.height ?? RESULT_H), 0) + GAP * (ordered.length - 1);
+      let y = -totalH / 2;
+      const nextY = new Map<string, number>();
+      for (const n of ordered) {
+        nextY.set(n.id, y);
+        y += (n.height ?? RESULT_H) + GAP;
+      }
+      let changed = false;
+      const next = prev.map((n) => {
+        const ny = nextY.get(n.id);
+        if (ny === undefined || Math.abs(n.position.y - ny) < 1) return n;
+        changed = true;
+        return { ...n, position: { ...n.position, y: ny } };
+      });
+      return changed ? next : prev;
+    });
+  }, [nodes, setNodes]);
+
   // Auto-fit once spokes first appear — `fitView` prop only fires on mount,
   // but our nodes are inserted via the sync effect *after* mount.
   const flowInstanceRef = useRef<ReactFlowInstance | null>(null);
@@ -2889,6 +3320,7 @@ export function HardDataWorkstation() {
 
   const relayout = useCallback(() => {
     hasFitRef.current = false;
+    movedIdsRef.current = new Set();
     setNodes(desiredNodes);
     requestAnimationFrame(() => {
       flowInstanceRef.current?.fitView({ padding: 0.2, duration: 300 });
@@ -3040,6 +3472,7 @@ export function HardDataWorkstation() {
           {dataset && enabled.length > 0 ? (
             <ReactFlow
               nodes={nodes}
+              onNodeDragStop={(_, node) => movedIdsRef.current.add(node.id)}
               edges={edges}
               onNodesChange={onNodesChange}
               onEdgesChange={onEdgesChange}
@@ -3601,6 +4034,19 @@ function ModelDetailModal({
               {run.blurb && (
                 <p className="mt-3 text-[12px] leading-relaxed text-fg-mute">{run.blurb}</p>
               )}
+              {run.wiredFrom && run.wiredFrom.length > 0 && (
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {run.wiredFrom.map((w) => (
+                    <span
+                      key={w.id}
+                      title={w.note}
+                      className="inline-flex items-center gap-1 rounded border border-accent-2/40 px-1.5 py-px font-mono text-[9px] text-accent-2"
+                    >
+                      ⤆ wired: {MODEL_BY_ID.get(w.id)?.name ?? w.id} — {w.note}
+                    </span>
+                  ))}
+                </div>
+              )}
             </section>
 
             {/* diagnostics — model-specific where we know how to render */}
@@ -3629,7 +4075,7 @@ function ModelDetailModal({
 
           {/* chat — scoped to this model, memory-keyed if a project is on */}
           <aside className="flex w-[36%] min-w-0 shrink-0 flex-col border-l border-border bg-bg">
-            <ModelDetailChat modelId={run.modelId} modelName={model?.name ?? run.modelId} />
+            <ModelDetailChat run={run} modelName={model?.name ?? run.modelId} />
           </aside>
         </div>
       </div>
@@ -3724,6 +4170,140 @@ function ModelDiagnostics({ run, color }: { run: RunResult; color: string }) {
   // bullet-style range bar speaks the point + range in one row.
   if (typeof d.p5 === "number" && typeof d.p95 === "number" && typeof d.ibnr === "number") {
     return <BootstrapRange p5={d.p5} p95={d.p95} centre={d.ibnr} color={color} />;
+  }
+
+  // Bridged GLMs: the fitted coefficient table IS the report artifact.
+  if (Array.isArray(d.coefficients) && (d.coefficients as unknown[]).length > 0) {
+    const coefs = d.coefficients as Array<{
+      name: string;
+      estimate: number;
+      stdErr: number;
+      z: number;
+      pValue: number;
+    }>;
+    return (
+      <div className="overflow-auto rounded border border-border">
+        <table className="w-full font-mono text-[10px]">
+          <thead className="bg-bg-2 text-fg-dim">
+            <tr>
+              {["term", "estimate", "std err", "z", "p"].map((h) => (
+                <th key={h} className="px-2 py-1 text-left font-normal uppercase tracking-wider">
+                  {h}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {coefs.map((c) => (
+              <tr key={c.name} className="border-t border-border/60">
+                <td className="px-2 py-1 text-fg">{prettyCoefName(c.name)}</td>
+                <td className="px-2 py-1 text-right text-fg">{c.estimate.toFixed(4)}</td>
+                <td className="px-2 py-1 text-right text-fg-mute">{c.stdErr.toFixed(4)}</td>
+                <td className="px-2 py-1 text-right text-fg-mute">{c.z.toFixed(2)}</td>
+                <td
+                  className={`px-2 py-1 text-right ${c.pValue < 0.05 ? "text-primary" : "text-fg-dim"}`}
+                >
+                  {c.pValue < 0.001 ? "<0.001" : c.pValue.toFixed(3)}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    );
+  }
+
+  // WMTR sensitivity: outcome mix per shock band.
+  if (Array.isArray(d.sweep) && (d.sweep as unknown[]).length > 0) {
+    const sweep = d.sweep as Array<{ shock: string; outcomes: Record<string, number> }>;
+    const outcomes = ["grew", "stabilized", "declined", "collapsed"];
+    return (
+      <div className="overflow-auto rounded border border-border">
+        <table className="w-full font-mono text-[10px]">
+          <thead className="bg-bg-2 text-fg-dim">
+            <tr>
+              <th className="px-2 py-1 text-left font-normal uppercase tracking-wider">shock</th>
+              {outcomes.map((o) => (
+                <th key={o} className="px-2 py-1 text-right font-normal uppercase tracking-wider">
+                  {o}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {sweep.map((row) => (
+              <tr key={row.shock} className="border-t border-border/60">
+                <td className="px-2 py-1 text-fg">{row.shock}</td>
+                {outcomes.map((o) => (
+                  <td key={o} className="px-2 py-1 text-right text-fg-mute">
+                    {`${Math.round((row.outcomes?.[o] ?? 0) * 100)}%`}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    );
+  }
+
+  // GBM: the variance-screen feature ranking that feeds a wired SHAP.
+  if (Array.isArray(d.importances) && (d.importances as unknown[]).length > 0) {
+    const imp = d.importances as Array<{ feature: string; weight: number }>;
+    return (
+      <SmallBarPanel
+        title="feature screen — between-group variance share (feeds wired SHAP)"
+        xs={imp.map((i) => i.feature)}
+        ys={imp.map((i) => i.weight)}
+        color={color}
+      />
+    );
+  }
+
+  // Fallback completeness: the card's own chart/table always appears in the
+  // report, even for models without a bespoke diagnostics renderer.
+  if (run.series && run.series.x.length > 0) {
+    return (
+      <SmallBarPanel
+        title={`${run.headline.label} — per ${run.series.kind === "line" ? "period" : "cohort"}`}
+        xs={run.series.x}
+        ys={run.series.y}
+        color={color}
+      />
+    );
+  }
+  if (run.tableSpec) {
+    return (
+      <div className="overflow-auto rounded border border-border">
+        <table className="w-full font-mono text-[10px]">
+          <thead className="bg-bg-2 text-fg-dim">
+            <tr>
+              {run.tableSpec.headers.map((h) => (
+                <th key={h} className="px-2 py-1 text-left font-normal uppercase tracking-wider">
+                  {h}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {run.tableSpec.rows.map((row, ri) => (
+              // biome-ignore lint/suspicious/noArrayIndexKey: positional display rows.
+              <tr key={ri} className="border-t border-border/60">
+                {row.map((cell, ci) => (
+                  // biome-ignore lint/suspicious/noArrayIndexKey: positional display cells.
+                  <td
+                    key={ci}
+                    className={`px-2 py-1 ${typeof cell === "number" ? "text-right" : "text-left"} text-fg-mute`}
+                  >
+                    {typeof cell === "number" ? formatNumber(cell) : String(cell)}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    );
   }
 
   // Generic fallback — show the keys as a definition list. Null/empty entries
@@ -4055,11 +4635,78 @@ function hypothesisTestsForModel(modelId: string): TestSpec[] {
   }
 }
 
-function ModelDetailChat({ modelId, modelName }: { modelId: string; modelName: string }) {
-  const { chatMemoryPrefix } = useScelo();
+function ModelDetailChat({ run, modelName }: { run: RunResult; modelName: string }) {
+  const { chatMemoryPrefix, project } = useScelo();
+  const modelId = run.modelId;
   const memoryKey = chatMemoryPrefix ? `${chatMemoryPrefix}:hard-detail:${modelId}` : undefined;
-  const stageContext = `You are Scelo at the Hard Data stage, focused specifically on the \`${modelId}\` (${modelName}) result. Help the user interpret the diagnostics, theory, and hypothesis-test results shown alongside this conversation. Suggest enhancements when relevant. Stay focused on this model — don't pre-empt other models in the run.`;
-  const { messages, isStreaming, send, stop } = useNodeChat(stageContext, { memoryKey });
+  // The chat must SEE the run it claims to discuss: headline, secondaries,
+  // provenance, and the decision-grade slices of `detail` (coefficient
+  // tables, shock sweeps, development factors…) — previously it got only
+  // the model's name and could not answer a single question about the
+  // numbers on screen.
+  const stageContext = useMemo(() => {
+    const lines = [
+      `You are Scelo at the Hard Data stage, focused specifically on the \`${modelId}\` (${modelName}) result.`,
+      "Help the user interpret the diagnostics, theory, and hypothesis-test results shown alongside this conversation.",
+      "Answer FROM THE RUN DATA below; if something isn't in it, say so. Stay focused on this model.",
+      "",
+      `RUN: ${modelId} (${run.family}, ${run.status}${run.source === "python-bridge" ? ", canonical python-bridge" : ", in-browser approximation"})`,
+      `HEADLINE: ${run.headline.label} = ${formatHeadline(run.headline)}`,
+    ];
+    for (const sec of run.secondary) lines.push(`  • ${sec.label}: ${sec.value}`);
+    if (run.blurb) lines.push(`SUMMARY: ${run.blurb}`);
+    if (run.wiredFrom && run.wiredFrom.length > 0) {
+      lines.push(
+        `WIRED INPUTS: ${run.wiredFrom.map((w) => `${w.id} (${w.note})`).join("; ")} — results flowed in from these upstream models via the Tools canvas wiring.`,
+      );
+    }
+    if (run.bridgeError) lines.push(`BRIDGE ERROR (fell back to in-browser): ${run.bridgeError}`);
+    const d = run.detail as Record<string, unknown> | undefined;
+    if (d) {
+      if (Array.isArray(d.coefficients)) {
+        const coefs = d.coefficients as Array<{
+          name: string;
+          estimate: number;
+          stdErr: number;
+          pValue: number;
+        }>;
+        lines.push("FITTED COEFFICIENTS (term · estimate · se · p):");
+        for (const c of coefs.slice(0, 12)) {
+          lines.push(
+            `  • ${c.name}: ${c.estimate.toFixed(4)} ± ${c.stdErr.toFixed(4)} (p=${c.pValue < 0.001 ? "<0.001" : c.pValue.toFixed(3)})`,
+          );
+        }
+      }
+      if (Array.isArray(d.sweep)) {
+        lines.push("SHOCK SWEEP (band → outcome fractions):");
+        for (const row of d.sweep as Array<{ shock: string; outcomes: Record<string, number> }>) {
+          const mix = Object.entries(row.outcomes ?? {})
+            .map(([k, v]) => `${k} ${Math.round((v as number) * 100)}%`)
+            .join(", ");
+          lines.push(`  • ${row.shock}: ${mix}`);
+        }
+      }
+      if (Array.isArray(d.factors)) {
+        lines.push(`ATA FACTORS: ${(d.factors as number[]).map((f) => f.toFixed(3)).join(" → ")}`);
+      }
+      if (Array.isArray(d.importances)) {
+        lines.push(
+          `FEATURE SCREEN: ${(d.importances as Array<{ feature: string; weight: number }>)
+            .map((i) => `${i.feature} ${(i.weight * 100).toFixed(0)}%`)
+            .join(", ")}`,
+        );
+      }
+      if (typeof d.purePremium === "number") {
+        lines.push(`PURE PREMIUM (freq × sev, wired): ${formatNumber(d.purePremium)}`);
+      }
+    }
+    return lines.join("\n");
+  }, [run, modelId, modelName]);
+  const { messages, isStreaming, send, stop } = useNodeChat(stageContext, {
+    memoryKey,
+    logLabel: `hard · model «${modelId}»`,
+    logProject: project?.name,
+  });
   const [draft, setDraft] = useState("");
   const scrollRef = useRef<HTMLDivElement | null>(null);
 

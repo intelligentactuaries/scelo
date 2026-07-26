@@ -129,6 +129,7 @@ export function parseSce(text: string): ParsedSce {
     domain: session.domain ?? null,
     pickSummary: session.pickSummary ?? null,
     picksDatasetName: session.picksDatasetName ?? null,
+    modelWires: Array.isArray(session.modelWires) ? session.modelWires : [],
     runs: session.runs && typeof session.runs === "object" ? session.runs : {},
     derivedColumns:
       session.derivedColumns && typeof session.derivedColumns === "object"

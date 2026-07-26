@@ -6,7 +6,7 @@
 // per column shape so it surfaces the action that's most likely to be
 // useful for THIS column rather than a generic "ask anything".
 
-import type { ColumnMeta } from "./SoftDataWorkstation";
+import type { ColumnMeta } from "@scelo/core";
 import { findNearDuplicateLabel } from "./cleaning";
 
 // Pick a single, focused placeholder for the input. Heuristics ordered so
@@ -66,6 +66,10 @@ export function summariseColumnForPrompt(meta: ColumnMeta): string {
     if (meta.mean !== undefined) parts.push(`mean=${meta.mean}`);
     if (meta.outliers) parts.push(`outliers=${meta.outliers.length}`);
     if (parts.length > 0) lines.push(`Stats: ${parts.join(", ")}.`);
+    if (meta.quintiles) {
+      const [p20, p40, p60, p80] = meta.quintiles;
+      lines.push(`Quintile cut points: p20=${p20}, p40=${p40}, p60=${p60}, p80=${p80}.`);
+    }
   } else if (meta.topValues && meta.topValues.length > 0) {
     const sample = meta.topValues
       .slice(0, 8)

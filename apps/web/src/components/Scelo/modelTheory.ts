@@ -173,7 +173,7 @@ Pair with a frequency model and $\\mathbb{E}[\\text{Loss}] = \\mathbb{E}[N] \\cd
 **Caveat** — black-box by default. Use SHAP for per-prediction attribution, partial dependence for global interpretation, and out-of-time validation to avoid overfitting the training period.
 `.trim(),
 
-  "shap-explainability": `
+  shap: `
 **SHAP (SHapley Additive exPlanations)** decomposes any model's prediction into an additive sum of feature contributions, with theoretical guarantees from cooperative game theory.
 
 **Why it matters** — for black-box models (GBM, neural nets), SHAP is how you say "this customer's premium is high because age and zip-code each added X to the base rate".
@@ -212,7 +212,7 @@ Compute the AAL / PML separately under each reanalysis. The pairwise spread is a
 - Convective precipitation in the tropics is under-parameterised in all three reanalyses — heavy-rain return periods will be biased low; consider radar-based downscaling for the lower tail.
 `.trim(),
 
-  "parametric-climate": `
+  "parametric-design": `
 **Parametric** policies trigger on an observed weather index (rainfall, temperature, hurricane wind speed) rather than indemnifying actual loss. Pricing reduces to: simulate the index → compute payout distribution → discount.
 
 **Trigger calibration on reanalysis**
@@ -262,7 +262,7 @@ $$
 **Caveat** — calibration cliff: small changes in the implied vol surface fit can flip risk numbers materially. Always report the calibration date + market basket.
 `.trim(),
 
-  "db-dc-valuation": `
+  "db-valuation": `
 **DB / DC Pension Valuation** projects future benefit payments and discounts them at an appropriate rate (AA-corporate for IFRS / IAS 19; risk-free for solvency).
 
 **Mechanics**
@@ -409,6 +409,120 @@ The Hard Data card relabels M / T / R per source family.
 **Caveat** — interpolation between liquid points injects model risk in the long end. For solvency reporting use Smith-Wilson to the UFR (see \`smithwilson-curve\`); for IFRS 17 discount the configurable methodology.
 `.trim(),
 };
+
+const EXTRA_THEORY: Record<string, string> = {
+  mack: `
+**Mack's model** wraps the chain-ladder point estimate in a distribution-free standard error: the same development factors, plus an explicit variance assumption, give an estimation + process error for each origin's reserve without assuming any claim-count distribution.
+
+**Assumptions**
+- Chain-ladder's independence assumptions hold.
+- \`Var(C_{o,k+1} | C_{o,k}) = σ_k² · C_{o,k}\` — next-period variance scales with current cumulative.
+
+**Formula**
+$$
+\hat\sigma_k^2 = \frac{1}{n_k-1}\sum_o C_{o,k}\Big(\frac{C_{o,k+1}}{C_{o,k}} - \hat f_k\Big)^2,
+\qquad
+\widehat{\mathrm{mse}}(\hat R_o) = \hat C_{o,n}^2 \sum_{k} \frac{\hat\sigma_k^2/\hat f_k^2}{\hat C_{o,k}}\Big(1 + \frac{1}{\sum_j C_{j,k}}\Big).
+$$
+
+**Caveat** — the in-app run reports an illustrative damped SE; the bundled-Python path computes the full Mack MSE. Both inherit chain-ladder's blindness to calendar-year effects.
+`.trim(),
+
+  cbd: `
+**Cairns–Blake–Dowd (CBD)** models the logit of old-age mortality as linear in age with two period factors — a level and a slope — projected forward as a random walk with drift. Built for annuity and longevity work where the 60+ fit matters more than childhood rates.
+
+**Assumptions**
+- \`logit q(x,t)\` is approximately linear in age across the fitted range (reasonable 55–90, poor below).
+- The period factors follow a two-dimensional random walk with drift.
+
+**Formula**
+$$
+\operatorname{logit}\, q(x,t) = \kappa_t^{(1)} + \kappa_t^{(2)}\,(x - \bar x).
+$$
+
+**Caveat** — the in-app run is a deterministic contrast against Lee-Carter, not a fitted CBD; use the exported script for a real fit with parameter uncertainty.
+`.trim(),
+
+  lifecontingencies: `
+**Life contingencies** turn a survival model into prices: every annuity or assurance is an expected present value — discount each cash flow by interest AND by the probability it is paid.
+
+**Assumptions**
+- Deaths are governed by the supplied life table (wired Lee-Carter projection when connected; canned survival otherwise).
+- A flat deterministic discount rate; no expense or selection loadings.
+
+**Formula**
+$$
+\ddot a_x = \sum_{t\ge 0} v^t\,{}_tp_x, \qquad A_x = \sum_{t\ge 0} v^{t+1}\,{}_tp_x\,q_{x+t}, \qquad v = \tfrac{1}{1+i}.
+$$
+
+**Caveat** — EPVs are only as good as the mortality behind them: wire Lee-Carter in to price on the projected table instead of the canned curve.
+`.trim(),
+
+  esg: `
+**Economic scenario generators** simulate joint paths of rates (and other drivers) so that anything valued on them — capital, liabilities, guarantees — can be measured at a percentile rather than a point.
+
+**Assumptions**
+- A short-rate style process with mean reversion generates the nominal-rate paths.
+- Percentile paths summarise the simulation; dependence across drivers is preserved within each path.
+
+**Formula**
+$$
+dr_t = a(b - r_t)\,dt + \sigma\,dW_t
+$$
+with the reported curve the 1st-percentile path of \`r_t\` across simulations.
+
+**Caveat** — the in-app path is a canned illustrative percentile, not a calibrated ESG; wire it into SCR to see the stress mechanics, then export for a real calibration.
+`.trim(),
+
+  climada: `
+**CLIMADA** computes climate risk as the interaction of three layers: hazard (event footprints), exposure (what sits where, at what value) and vulnerability (how damaged a given intensity leaves it). The annual average loss integrates event losses over frequency.
+
+**Assumptions**
+- Exposure values and geocoding are current; vulnerability curves transfer to the portfolio.
+- Event set frequency is representative of the forward-looking climate.
+
+**Formula**
+$$
+\mathrm{AAL} = \sum_{e} f_e \sum_{i} V\big(I_{e,i}\big)\, E_i
+$$
+over events \`e\` with frequency \`f_e\`, sites \`i\`, intensity \`I\`, vulnerability \`V\`, exposure \`E\`.
+
+**Caveat** — the in-app number scales exposure by a flat factor (labelled approximation); the bundled-Python path runs the real hazard machinery when the datasets are installed.
+`.trim(),
+
+  gbm: `
+**Gradient boosting** fits an additive ensemble of shallow trees, each one trained on the gradient of the loss left by the ensemble so far — the workhorse for tabular pricing where interactions and non-linearities defeat a GLM's linear predictor.
+
+**Assumptions**
+- Enough rows per leaf to estimate splits (regularisation via depth, learning rate, subsampling).
+- Features are informative as supplied; boosting will happily memorise leakage.
+
+**Formula**
+$$
+F_m(x) = F_{m-1}(x) + \nu\, h_m(x), \qquad h_m \approx -\nabla_{F} \mathcal{L}\big(y, F_{m-1}\big).
+$$
+
+**Caveat** — the in-app run is a screening approximation (its label says so): the score drifts with row count and the feature ranking is a between-group variance screen, not a fitted model. Export the script for a real LightGBM fit.
+`.trim(),
+
+  descriptive: `
+**Descriptive statistics** are the hygiene pass before any model: moments, quantiles and missingness per column, so distributional oddities are seen *before* they bend a fit.
+
+**Assumptions**
+- None beyond "the sample at hand is what you intend to model".
+
+**Formula**
+$$
+\bar x = \tfrac{1}{n}\sum_i x_i, \qquad s^2 = \tfrac{1}{n-1}\sum_i (x_i-\bar x)^2, \qquad Q_p = F^{-1}(p).
+$$
+
+**Caveat** — description is not inference: an outlier that survives scrutiny here still needs a robustness check in the downstream model.
+`.trim(),
+};
+
+for (const [id, text] of Object.entries(EXTRA_THEORY)) {
+  MODEL_THEORY[id] = text;
+}
 
 export function modelTheoryFor(modelId: string): string | null {
   return MODEL_THEORY[modelId] ?? null;

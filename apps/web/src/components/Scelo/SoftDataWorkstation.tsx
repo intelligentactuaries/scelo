@@ -31,20 +31,24 @@ import {
   type ReactNode,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
 } from "react";
 import { useNavigate } from "react-router-dom";
 import { ChatInputPill } from "./ChatInputPill";
+import { CombineDiagram } from "./CombineDiagram";
 import { ExportButton } from "./ExportScreen";
 import { ResizablePanel } from "./ResizablePanel";
 import { SceloChatMarkdown } from "./SceloChatMarkdown";
 import { SimulateScenarioModal } from "./SimulateScenarioModal";
 import { SmartColumnDashboard } from "./SmartColumnDashboard";
-import { StageChatPanel } from "./StageChatPanel";
+import { type ChatAction, StageChatPanel } from "./StageChatPanel";
 import { UploadIndicator, type UploadState, nextPaint, useMinVisible } from "./UploadIndicator";
 import {
+  AUTO_CLEAN_MAX_PASSES,
+  type AutoCleanResult,
   type CleaningOpKey,
   type CleaningPlan,
   DATE_STYLE_LABEL,
@@ -52,6 +56,7 @@ import {
   analyseCleaning,
   applyCleaning,
   augmentDataset,
+  autoCleanDataset,
   cleanColumnCells,
   clearNonDateCells,
   defaultEnabled,
@@ -59,7 +64,6 @@ import {
   detectDateColumns,
   reformatDateColumns,
 } from "./cleaning";
-import { CLIMATE_SAMPLE } from "./climateSampleData";
 import { buildColumnStageContext, placeholderHintFor } from "./columnChatHints";
 import { getColumnMetas } from "./columnMetaCache";
 import {
@@ -74,21 +78,22 @@ import {
   roundColumnValues,
   transformColumnCase,
 } from "./columnOps";
+import type { CombinePreview } from "./combineData";
 import {
   type CombineStats,
   type CombineStep,
   type CombineStrategy,
   type CombineSuggestion,
   combineAll,
+  combinePair,
+  previewCombine,
   suggestCombine,
 } from "./combineData";
-import { buildDirtySample } from "./dirtySampleData";
 import { type ExportFormat, exportDataset } from "./exportDataset";
 import { compileFormula, previewFormula, validateColumnName } from "./formulaEvaluator";
 import { useScelo } from "./sceloContext";
 import { useNodeChat } from "./useNodeChat";
 import { columnRelevance, numericColumns as workspaceNumericColumns } from "./workspace";
-import { buildWorkspaceDemo } from "./workspaceSampleData";
 
 echarts.use([
   TitleComponent,
@@ -102,120 +107,43 @@ echarts.use([
 
 // ── data model ───────────────────────────────────────────────────────────────
 
-export type CellValue = number | string | null;
-export type Row = Record<string, CellValue>;
-export type ColumnType = "number" | "string" | "date";
-
-export type ColumnMeta = {
-  name: string;
-  type: ColumnType;
-  count: number;
-  missing: number;
-  unique: number;
-  // numeric-only — basic descriptive stats
-  min?: number;
-  max?: number;
-  mean?: number;
-  // numeric-only — Tukey five-number summary + fences for outlier filtering
-  q1?: number;
-  median?: number;
-  q3?: number;
-  boxLo?: number; // whisker low (min within fences)
-  boxHi?: number; // whisker high (max within fences)
-  loFence?: number;
-  hiFence?: number;
-  // numeric-only — outlier values retained for the scatter display, capped
-  // at OUTLIER_DISPLAY_CAP by a uniform thin. `outlierCount` keeps the true
-  // (or stride-estimated) total when the cap kicked in.
-  outliers?: number[];
-  outlierCount?: number;
-  // numeric-only — count of non-null cells that are NOT numeric ("6+",
-  // "unknown") in a number-typed column. They're excluded from every
-  // numeric stat, so without this they'd be invisible (missing stays 0).
-  mixedCount?: number;
-  // numeric-only — coarse-binned histogram shape for the in-tooltip
-  // sparkline. 12 bins between min and max, value = row count per bin.
-  // Kept short so we can ship it on every column without bloating meta.
-  histogramBins?: number[];
-  // categorical-only — top values by frequency
-  topValues?: Array<{ value: string; count: number }>;
-  // date-only — ISO-string range + compact per-year counts (replaces
-  // topValues, which is useless for ~18k distinct dates)
-  dateMin?: string;
-  dateMax?: string;
-  yearHistogram?: Array<{ year: number; count: number }>;
-  // True when order statistics (quantiles / histogram / topValues /
-  // yearHistogram) came from a stride sample rather than every row.
-  // count / missing / unique / min / max / mean stay exact regardless.
-  sampledStats?: boolean;
-};
-
-export type Dataset = {
-  name: string;
-  rows: Row[];
-  columns: string[];
-  /** True when `rows` holds a subset of a larger full-fidelity source. */
-  sampled?: boolean;
-  /** Row count of the full-fidelity source (import file / pre-snapshot data). */
-  sourceTotalRows?: number;
-  /** How the subset was taken: uniform reservoir (CSV import / snapshot
-   *  restore) or the file's leading rows (parquet import). */
-  sampleKind?: "uniform" | "first";
-};
-
-// Hard cap on rows retained at import. 250k rows × ~25 columns of interned
-// cells measures ~170 MB live heap — comfortably inside the renderer's ~4 GB
-// budget, where the old uncapped whole-file parse measured 4.26 GB on a
-// 2M-row CSV and killed the window. Beyond the cap the CSV path keeps a
-// uniform reservoir sample; parquet keeps the first N rows.
-export const DEFAULT_IMPORT_ROW_CAP = 250_000;
-
-// Combine staging cap: at most 2 staged datasets on top of the active one —
-// the user-facing "combine no more than 3 datasets" rule. Mirrors the note on
-// sceloContext's `stagedDatasets`.
-const MAX_STAGED_DATASETS = 2;
-
-// ── parsing + synthesis ──────────────────────────────────────────────────────
+// ─── dataset core ─────────────────────────────────────────────────────────
 //
-// The actual CSV state machine lives in lib/csvStream (streaming, RFC-4180,
-// row-capped). This section owns only what happens to each cell after it
-// comes back as a raw string: missing-token nulling and strict numeric
-// coercion.
+// Profiling, typing, coercion and filtering now live in @scelo/core. They
+// were always pure; keeping them in this file meant 25 modules had to import
+// from a .tsx to get a type, and nothing outside the browser build could use
+// any of it.
+//
+// Re-exported here so the existing `from "./SoftDataWorkstation"` imports in
+// the .tsx layer keep working — the pure .ts modules import the package
+// directly.
+import {
+  type CellValue,
+  type ColumnMeta,
+  type ColumnType,
+  type Dataset,
+  type Filter,
+  type Row,
+  DEFAULT_IMPORT_ROW_CAP,
+  applyFilters,
+  coerceCsvCell,
+  describeFilter,
+  filterId,
+  formatNumber,
+  minMax,
+  summarise,
+  summariseDataset,
+  SAMPLES as CORE_SAMPLES,
+} from "@scelo/core";
+import type { SampleKey } from "@scelo/core";
 
-// Missing-value tokens nulled at parse time so `missing` counts are honest
-// from the first profile — leaving literal "NULL" strings in place reported
-// missing=0 on columns that were 14% empty. Deliberately a small,
-// unambiguous set; cleaning.ts's missing-markers op handles the long tail
-// ("?", "TBD", …) as an explicit user action. Do not import that set here —
-// the two evolve independently.
-const MISSING_CELL_TOKENS = new Set(["null", "na", "n/a", "nan", "none", "-"]);
-// Strict numeric shape — plain int / decimal / scientific only. Number()'s
-// looser coercions ("0x1f", "Infinity", whitespace) are exactly what we're
-// avoiding.
-const NUMERIC_STRING_RE = /^[+-]?(\d+(\.\d*)?|\.\d+)([eE][+-]?\d+)?$/;
-const PLAIN_INTEGER_RE = /^[+-]?\d+$/;
+export type { CellValue, ColumnMeta, ColumnType, Dataset, Filter, Row };
 
-/** Coerce one raw CSV cell into our CellValue shape. Exported for tests. */
-export function coerceCsvCell(raw: string): CellValue {
-  const s = raw.trim();
-  if (s === "") return null;
-  // Length guard skips the toLowerCase allocation on the vast majority of
-  // cells (longest token is 4 chars).
-  if (s.length <= 4 && MISSING_CELL_TOKENS.has(s.toLowerCase())) return null;
-  if (!NUMERIC_STRING_RE.test(s)) return s;
-  // Id-like guards: leading-zero integers ("007") and integers that don't
-  // survive the float round-trip (> 2^53) stay strings.
-  if (PLAIN_INTEGER_RE.test(s)) {
-    if (/^[+-]?0\d/.test(s)) return s;
-    const n = Number(s);
-    return Number.isSafeInteger(n) ? n : s;
-  }
-  const n = Number(s);
-  return Number.isFinite(n) ? n : s;
-}
+/** How many extra datasets may be staged for combining. UI capacity, not
+ *  dataset logic, so it stays with the component. */
+const MAX_STAGED_DATASETS = 2;
+export { applyFilters, coerceCsvCell, describeFilter, formatNumber, minMax, summariseDataset };
 
-// Materialise streamed string cells into Row objects. Kept separate from
-// streamParseCsv, which stays type-agnostic by design.
 function rowsFromCsvCells(header: string[], cells: string[][]): Row[] {
   const out: Row[] = new Array(cells.length);
   for (let r = 0; r < cells.length; r++) {
@@ -335,49 +263,10 @@ async function parseParquet(file: File): Promise<{
   };
 }
 
-// Tiny seeded LCG so the synthetic dataset is stable across reloads.
-function lcg(seed: number): () => number {
-  let s = seed >>> 0;
-  return () => {
-    s = (s * 1664525 + 1013904223) >>> 0;
-    return s / 0xffffffff;
-  };
-}
-
-// Build the bundled climate reanalysis sample as a Dataset. The 30-day
-// Pretoria ERA5 / MERRA-2 / JRA-3Q preview we use in the Hard Data
-// model-detail panel doubles as a useful Soft Data workstation sample —
-// the user can filter on a particular reanalysis, derive a heat-index
-// column, or pipe the slice through the Tools workstation to pick a
-// parametric model. We reuse the exact bundled rows so the numbers stay
-// consistent with the climate-data lineage panel downstream.
-function syntheticClimate(): Dataset {
-  const rows: Row[] = CLIMATE_SAMPLE.map((r) => ({
-    date: r.date,
-    t2m_era5: r.t2m_era5,
-    t2m_merra2: r.t2m_merra2,
-    t2m_jra3q: r.t2m_jra3q,
-    pr_era5: r.pr_era5,
-    pr_merra2: r.pr_merra2,
-    pr_jra3q: r.pr_jra3q,
-  }));
-  return {
-    name: "climate_pretoria_jan2024 (era5 / merra-2 / jra-3q)",
-    columns: ["date", "t2m_era5", "t2m_merra2", "t2m_jra3q", "pr_era5", "pr_merra2", "pr_jra3q"],
-    rows,
-  };
-}
-
 // Registry of the in-app sample datasets the "load sample" picker offers.
 // Adding a new sample is one entry here — the picker modal renders cards
 // from this list and the load action dispatches by key.
-export type SampleKey =
-  | "claims"
-  | "climate"
-  | "dirty"
-  | "lifelib-mp"
-  | "wmtr-scenarios"
-  | "workspace-demo";
+export type { SampleKey } from "@scelo/core";
 
 export type SampleOption = {
   key: SampleKey;
@@ -393,381 +282,23 @@ export type SampleOption = {
 
 export const SAMPLE_OPTIONS_LIST = (): SampleOption[] => SAMPLE_OPTIONS;
 
-const SAMPLE_OPTIONS: Array<{
-  key: SampleKey;
-  build: () => Dataset;
-  title: string;
-  subtitle: string;
-  blurb: string;
-  rows: number;
-  cols: number;
-  accent: "accent-2" | "warn" | "error" | "accent-3";
-  badge: string;
-}> = [
-  {
-    key: "claims",
-    build: () => syntheticClaims(),
-    title: "Synthetic claims",
-    subtitle: "P&C reserving / pricing demo",
-    blurb:
-      "~80-row mixed-type dataset shaped as a proper INCOMPLETE claims triangle (origins 2018–2024, dev periods truncated to the latest calendar period). Columns: policy_id, origin_year, dev_period, line, SA province, age, sex, paid, incurred, settled. Ideal for chain-ladder / Mack / BF + GLM models.",
-    rows: 80,
-    cols: 10,
-    accent: "accent-2",
-    badge: "claims",
-  },
-  {
-    key: "climate",
-    build: () => syntheticClimate(),
-    title: "Climate reanalysis ensemble",
-    subtitle: "ERA5 / MERRA-2 / JRA-3Q · Pretoria · Jan 2024",
-    blurb:
-      "30 daily records over a single grid-cell with 2-m temperature and total precipitation under all three reanalyses. Same data the Hard Data climate-lineage panel renders downstream; ready for parametric trigger calibration and CLIMADA-style work.",
-    rows: 30,
-    cols: 7,
-    accent: "warn",
-    badge: "climate",
-  },
-  {
-    key: "dirty",
-    build: () => buildDirtySample(),
-    title: "Messy intake (dirty demo)",
-    subtitle: "exercises every cleaning op in one sample",
-    blurb:
-      "53-row customer ledger with the full real-world mess: $/comma/parens currency strings, %-suffixed numbers, -999 / 9999 sentinel ages, mixed Y/N/yes/no/1/0 booleans, mixed date formats (ISO + DD/MM/YYYY + 'Jan 5, 2024'), case-only region duplicates (WEST/west/West), a constant `country` column, two near-empty columns, headers with spaces, mojibake (UTF-8↔Latin-1), BOM/NBSP/zero-width characters, missing markers (N/A, ?, -, TBD, null), and three exact duplicate rows. Load it and the cleaning banner lights up with every op.",
-    rows: 53,
-    cols: 11,
-    accent: "error",
-    badge: "dirty",
-  },
-  {
-    key: "wmtr-scenarios",
-    build: () => syntheticWmtrScenarios(),
-    title: "WMTR · forecast scenarios",
-    subtitle: "domain-agnostic survival projection · α/w parameters",
-    blurb:
-      "12-row scenario table for the W(M, T, R) Monte Carlo forecast engine. Each row is a different actuarial entity (life book · pension scheme · reserve position · community) parameterised with α_M / α_T / α_R, relational weights, shock severity, and horizon. Picker routes straight to the `forecast` family.",
-    rows: 12,
-    cols: 12,
-    accent: "warn",
-    badge: "wmtr",
-  },
-  {
-    key: "lifelib-mp",
-    build: () => syntheticLifelibMP(),
-    title: "Lifelib · model points",
-    subtitle: "term life MP file · lifelib basiclife/BasicTerm_M",
-    blurb:
-      "100-row in-force model-point file shaped like lifelib's basic_term_sample: policy_id, age_at_entry, sex, sum_assured, policy_term, duration_mth, premium_pp. Loads straight into the lifelib BasicTerm_M projection (in-browser TS port) and routes the AI picker to the `life` family. Same structure works for CashValue / IFRS17 / Solvency II life nodes.",
-    rows: 100,
-    cols: 7,
-    accent: "accent-3",
-    badge: "lifelib",
-  },
-  {
-    key: "workspace-demo",
-    build: () => buildWorkspaceDemo(),
-    title: "Workspace demo",
-    subtitle: "decision-relevant is not max-variance · global workspace",
-    blurb:
-      "2,000-policy synthetic annuity book with three genuine low-variance drivers (mortality trend, cohort, smoking) acting through nonlinear channels on annuity_60 / life_exp_60 / survival_to_80, a directly readable crude_rate level, and ten high-variance but irrelevant operational columns (premium band, web logins, survey score, ...). Run a model, then the Hard-Data 'validate workspace' action to watch the active subspace recover the three real drivers while PCA chases the noise.",
-    rows: 2000,
-    cols: 17,
-    accent: "accent-2",
-    badge: "workspace",
-  },
-];
+const SAMPLE_PRESENTATION: Record<SampleKey, { accent: SampleOption["accent"]; badge: string }> = {
+  claims: { accent: "accent-2", badge: "claims" },
+  climate: { accent: "warn", badge: "climate" },
+  dirty: { accent: "error", badge: "dirty" },
+  "wmtr-scenarios": { accent: "warn", badge: "wmtr" },
+  "lifelib-mp": { accent: "accent-3", badge: "lifelib" },
+  "workspace-demo": { accent: "accent-2", badge: "workspace" },
+};
 
-// WMTR forecast scenarios sample — 12 rows, one per actuarial entity
-// type, parameterised with the W(M,T,R) Cobb-Douglas survival engine's
-// α / w / shock columns. The picker recognises (α_M, α_T, α_R) as the
-// `forecast` family signature and lands the user straight on
-// wmtr-projection + wmtr-sensitivity in Tools.
-function syntheticWmtrScenarios(): Dataset {
-  const rows: Row[] = [
-    // domain · αM · αT · αR · wF · wRel · wS · pProd · pFam · pRel · init_family · init_religion · shock · horizon
-    {
-      entity: "rural village",
-      alpha_m: 0.3,
-      alpha_t: 0.3,
-      alpha_r: 0.4,
-      w_f: 0.5,
-      w_rel: 0.3,
-      w_s: 0.2,
-      init_family: 0.8,
-      init_religion: 0.7,
-      shock: "severe",
-      horizon: 30,
-    },
-    {
-      entity: "urban district",
-      alpha_m: 0.5,
-      alpha_t: 0.3,
-      alpha_r: 0.2,
-      w_f: 0.3,
-      w_rel: 0.2,
-      w_s: 0.5,
-      init_family: 0.5,
-      init_religion: 0.4,
-      shock: "moderate",
-      horizon: 30,
-    },
-    {
-      entity: "coastal town",
-      alpha_m: 0.4,
-      alpha_t: 0.3,
-      alpha_r: 0.3,
-      w_f: 0.4,
-      w_rel: 0.3,
-      w_s: 0.3,
-      init_family: 0.65,
-      init_religion: 0.55,
-      shock: "severe",
-      horizon: 30,
-    },
-    {
-      entity: "term life book",
-      alpha_m: 0.55,
-      alpha_t: 0.2,
-      alpha_r: 0.25,
-      w_f: 0.3,
-      w_rel: 0.2,
-      w_s: 0.5,
-      init_family: 0.55,
-      init_religion: 0.45,
-      shock: "moderate",
-      horizon: 20,
-    },
-    {
-      entity: "annuity book",
-      alpha_m: 0.45,
-      alpha_t: 0.25,
-      alpha_r: 0.3,
-      w_f: 0.35,
-      w_rel: 0.25,
-      w_s: 0.4,
-      init_family: 0.6,
-      init_religion: 0.5,
-      shock: "moderate",
-      horizon: 40,
-    },
-    {
-      entity: "DB pension scheme",
-      alpha_m: 0.35,
-      alpha_t: 0.25,
-      alpha_r: 0.4,
-      w_f: 0.45,
-      w_rel: 0.25,
-      w_s: 0.3,
-      init_family: 0.7,
-      init_religion: 0.5,
-      shock: "moderate",
-      horizon: 30,
-    },
-    {
-      entity: "GI reserves · long-tail",
-      alpha_m: 0.6,
-      alpha_t: 0.3,
-      alpha_r: 0.1,
-      w_f: 0.2,
-      w_rel: 0.1,
-      w_s: 0.7,
-      init_family: 0.4,
-      init_religion: 0.3,
-      shock: "moderate",
-      horizon: 15,
-    },
-    {
-      entity: "GI reserves · short-tail",
-      alpha_m: 0.65,
-      alpha_t: 0.25,
-      alpha_r: 0.1,
-      w_f: 0.2,
-      w_rel: 0.1,
-      w_s: 0.7,
-      init_family: 0.45,
-      init_religion: 0.3,
-      shock: "mild",
-      horizon: 5,
-    },
-    {
-      entity: "health LTH book",
-      alpha_m: 0.5,
-      alpha_t: 0.3,
-      alpha_r: 0.2,
-      w_f: 0.3,
-      w_rel: 0.3,
-      w_s: 0.4,
-      init_family: 0.55,
-      init_religion: 0.45,
-      shock: "severe",
-      horizon: 20,
-    },
-    {
-      entity: "agrarian community · drought",
-      alpha_m: 0.25,
-      alpha_t: 0.3,
-      alpha_r: 0.45,
-      w_f: 0.55,
-      w_rel: 0.3,
-      w_s: 0.15,
-      init_family: 0.85,
-      init_religion: 0.75,
-      shock: "severe",
-      horizon: 30,
-    },
-    {
-      entity: "post-conflict town",
-      alpha_m: 0.3,
-      alpha_t: 0.3,
-      alpha_r: 0.4,
-      w_f: 0.45,
-      w_rel: 0.25,
-      w_s: 0.3,
-      init_family: 0.55,
-      init_religion: 0.45,
-      shock: "severe",
-      horizon: 30,
-    },
-    {
-      entity: "stable urban hub",
-      alpha_m: 0.5,
-      alpha_t: 0.3,
-      alpha_r: 0.2,
-      w_f: 0.25,
-      w_rel: 0.15,
-      w_s: 0.6,
-      init_family: 0.6,
-      init_religion: 0.45,
-      shock: "mild",
-      horizon: 30,
-    },
-  ];
-  return {
-    name: "wmtr_scenarios (synthetic)",
-    columns: [
-      "entity",
-      "alpha_m",
-      "alpha_t",
-      "alpha_r",
-      "w_f",
-      "w_rel",
-      "w_s",
-      "init_family",
-      "init_religion",
-      "shock",
-      "horizon",
-    ],
-    rows,
-  };
-}
-
-// Lifelib model-point sample. Structure mirrors
-// github.com/lifelib-dev/lifelib · basiclife / basic_term_sample.xlsx so an
-// actuary already using lifelib can drop their real MP file in and get the
-// same projection. 100 policies spread across age 25-65, mixed sex, mixed
-// term, with `duration_mth` non-zero on a third of the book so the
-// projection starts mid-coverage on those rows.
-function syntheticLifelibMP(): Dataset {
-  const rand = lcg(0xbeefcafe);
-  const rows: Row[] = [];
-  for (let i = 0; i < 100; i++) {
-    const age = 25 + Math.floor(rand() * 41); // 25-65
-    const sex = rand() > 0.5 ? "M" : "F";
-    const term = [10, 15, 20, 25, 30][Math.floor(rand() * 5)];
-    const sa = Math.round((100_000 + rand() * 900_000) / 1000) * 1000;
-    // ~1/3 of book already in force: duration up to half the term
-    const inForce = rand() < 0.33;
-    const durationMth = inForce ? Math.max(1, Math.floor(rand() * (term * 12) * 0.5)) : 0;
-    // crude premium = SA * qx * loading / 12, with qx_male slightly higher
-    const qx = 0.00022 + 2.7e-6 * Math.pow(1.124, age) * (sex === "M" ? 1.05 : 1.0);
-    const monthly = Math.round(((sa * qx * 1.2) / 12) * 100) / 100;
-    rows.push({
-      policy_id: `MP${(10000 + i).toString()}`,
-      age_at_entry: age,
-      sex,
-      sum_assured: sa,
-      policy_term: term,
-      duration_mth: durationMth,
-      premium_pp: monthly,
-    });
-  }
-  return {
-    name: "lifelib_basic_term_mp (synthetic)",
-    columns: [
-      "policy_id",
-      "age_at_entry",
-      "sex",
-      "sum_assured",
-      "policy_term",
-      "duration_mth",
-      "premium_pp",
-    ],
-    rows,
-  };
-}
-
-function syntheticClaims(): Dataset {
-  const rand = lcg(0xdeadbeef);
-  const states = ["GP", "WC", "KZN", "EC", "FS", "MP", "LP", "NW", "NC"];
-  const lines = ["motor", "household", "liability", "engineering", "marine"];
-  // Build a proper INCOMPLETE triangle: for each origin year, only emit
-  // claim rows where (origin + dev) ≤ latest calendar period. The latest
-  // origin gets only dev=0 (one diagonal of a real triangle), the earliest
-  // origin gets the full development tail. Chain-ladder + Mack +
-  // Bornhuetter-Ferguson all collapse to IBNR=0 on a square / fully-developed
-  // triangle, so without this constraint the reserving runners report
-  // misleading 0.00 headlines on Hard Data.
-  const origins = [2018, 2019, 2020, 2021, 2022, 2023, 2024];
-  const latestCal = origins[origins.length - 1]; // 2024
-  const rows: Row[] = [];
-  let i = 0;
-  for (const origin of origins) {
-    const maxDev = latestCal - origin; // 0..6
-    for (let dev = 0; dev <= maxDev; dev++) {
-      // 2-4 claim rows per (origin, dev) cell so each cell is non-trivial,
-      // and the overall row count lands around ~70 — close to the prior
-      // sample size for stable Soft Data stats.
-      const cellRows = 2 + Math.floor(rand() * 3);
-      for (let k = 0; k < cellRows; k++) {
-        const sev = Math.exp(8 + rand() * 3) * (1 + dev * 0.1);
-        const age = 18 + Math.floor(rand() * 60);
-        const sex = rand() > 0.5 ? "M" : "F";
-        const settled = dev >= 3 ? rand() > 0.15 : rand() > 0.6;
-        const incurred = rand() < 0.05 ? null : Math.round(sev * (1.05 + rand() * 0.25));
-        rows.push({
-          policy_id: `P${10000 + i}`,
-          origin_year: origin,
-          dev_period: dev,
-          line: lines[Math.floor(rand() * lines.length)],
-          state: states[Math.floor(rand() * states.length)],
-          age,
-          sex,
-          paid: Math.round(sev),
-          incurred,
-          settled: settled ? "yes" : "no",
-        });
-        i++;
-      }
-    }
-  }
-  return {
-    name: "claims_sample (synthetic)",
-    columns: [
-      "policy_id",
-      "origin_year",
-      "dev_period",
-      "line",
-      "state",
-      "age",
-      "sex",
-      "paid",
-      "incurred",
-      "settled",
-    ],
-    rows,
-  };
-}
+// The samples themselves live in @scelo/core (shared with the TUI — one
+// definition or the two surfaces drift apart on what claims to be the same
+// data). This registry is that list plus the card presentation only this
+// app has a use for.
+const SAMPLE_OPTIONS: SampleOption[] = CORE_SAMPLES.map((spec) => ({
+  ...spec,
+  ...SAMPLE_PRESENTATION[spec.key],
+}));
 
 // ── type detection + stats ───────────────────────────────────────────────────
 
@@ -777,217 +308,6 @@ function syntheticClaims(): Dataset {
 // the profile and the plan agree on what "sampled" means. Exact scalars
 // (count / missing / unique / min / max / mean) still come from a full pass
 // — they're one comparison per cell.
-const SUMMARY_SAMPLE_THRESHOLD = 200_000;
-const SUMMARY_SAMPLE_TARGET = 100_000;
-
-// Outlier values retained on the meta for the scatter display. The true
-// count lives in `outlierCount`; retaining every value turned discrete
-// columns into hundreds of thousands of scatter dots.
-const OUTLIER_DISPLAY_CAP = 500;
-
-// Strict date shapes: ISO yyyy-MM-dd / yyyy/MM/dd, optionally followed by a
-// time part. Deliberately excludes DD/MM vs MM/DD forms — those are
-// ambiguous and stay with the cleaning banner's parse-dates op rather than
-// silent type detection.
-const DATE_SHAPE_RE = /^(\d{4})[-/](\d{2})[-/](\d{2})([T ]\S.*)?$/;
-// Minimum matching values before a column may re-type to date — keeps a
-// three-row toy column of coincidental matches from flipping type.
-const DATE_PROBE_MIN = 8;
-const DATE_PROBE_TARGET = 200;
-
-// Year of a strictly date-shaped string (with a month/day sanity check so
-// numeric codes like "2024-99-99" don't pass), or null when not a date.
-function dateShapeYear(s: string): number | null {
-  const m = DATE_SHAPE_RE.exec(s);
-  if (!m) return null;
-  const month = Number(m[2]);
-  const day = Number(m[3]);
-  if (month < 1 || month > 12 || day < 1 || day > 31) return null;
-  return Number(m[1]);
-}
-
-// Uniform thin of the (sorted) outlier list down to the display cap so the
-// scatter keeps the tail's shape without drawing every point.
-function capOutliers(outliers: number[]): number[] {
-  if (outliers.length <= OUTLIER_DISPLAY_CAP) return outliers;
-  const step = outliers.length / OUTLIER_DISPLAY_CAP;
-  const kept: number[] = new Array(OUTLIER_DISPLAY_CAP);
-  for (let k = 0; k < OUTLIER_DISPLAY_CAP; k++) kept[k] = outliers[Math.floor(k * step)];
-  return kept;
-}
-
-export function summariseDataset(dataset: Dataset): ColumnMeta[] {
-  return dataset.columns.map((c) => summarise(dataset.rows, c));
-}
-
-function summarise(rows: Row[], name: string): ColumnMeta {
-  const total = rows.length;
-  const sampledStats = total > SUMMARY_SAMPLE_THRESHOLD;
-  const stride = sampledStats ? Math.ceil(total / SUMMARY_SAMPLE_TARGET) : 1;
-
-  // Exact pass — every row, constant work per cell: presence, uniqueness,
-  // numeric-vs-string tally, and exact numeric min / max / mean.
-  let missing = 0;
-  let numericCount = 0;
-  const uniqueSet = new Set<string | number>();
-  let mn = Number.POSITIVE_INFINITY;
-  let mx = Number.NEGATIVE_INFINITY;
-  let sum = 0;
-  for (let i = 0; i < total; i++) {
-    const v = rows[i][name];
-    if (v === null || v === "") {
-      missing++;
-      continue;
-    }
-    uniqueSet.add(v);
-    if (typeof v === "number" && Number.isFinite(v)) {
-      numericCount++;
-      if (v < mn) mn = v;
-      if (v > mx) mx = v;
-      sum += v;
-    }
-  }
-  const nonNullCount = total - missing;
-
-  const meta: ColumnMeta = {
-    name,
-    type: "string",
-    count: total,
-    missing,
-    unique: uniqueSet.size,
-  };
-  if (sampledStats) meta.sampledStats = true;
-
-  if (nonNullCount > 0 && numericCount / nonNullCount >= 0.8) {
-    meta.type = "number";
-    // Mixed cells: present but non-numeric in a number-typed column ("6+").
-    // They're excluded from every numeric stat below, so surface the count
-    // instead of letting them vanish (missing stays 0 for them).
-    const mixed = nonNullCount - numericCount;
-    if (mixed > 0) meta.mixedCount = mixed;
-    if (numericCount > 0) {
-      meta.min = mn;
-      meta.max = mx;
-      meta.mean = sum / numericCount;
-      // Order statistics from the stride sample.
-      const nums: number[] = [];
-      for (let i = 0; i < total; i += stride) {
-        const v = rows[i][name];
-        if (typeof v === "number" && Number.isFinite(v)) nums.push(v);
-      }
-      const stats = boxStats(nums);
-      if (stats) {
-        const [lo, q1, median, q3, hi] = stats.stats;
-        meta.boxLo = lo;
-        meta.q1 = q1;
-        meta.median = median;
-        meta.q3 = q3;
-        meta.boxHi = hi;
-        const iqr = q3 - q1;
-        meta.loFence = q1 - 1.5 * iqr;
-        meta.hiFence = q3 + 1.5 * iqr;
-        // True (stride-scaled when sampled) count, then cap what we retain.
-        meta.outlierCount = stats.outliers.length * stride;
-        meta.outliers = capOutliers(stats.outliers);
-      }
-      // Coarse-binned histogram for the tooltip sparkline. 12 equal-width
-      // bins between min and max — wide enough that the shape reads, narrow
-      // enough that the SVG stays compact. Skip degenerate single-value
-      // columns (min === max) since a histogram of one bucket is uninformative.
-      if (meta.min !== undefined && meta.max !== undefined && meta.max > meta.min) {
-        const BINS = 12;
-        const width = (meta.max - meta.min) / BINS;
-        const bins = new Array<number>(BINS).fill(0);
-        for (const v of nums) {
-          let idx = Math.floor((v - meta.min) / width);
-          if (idx === BINS) idx = BINS - 1;
-          if (idx >= 0 && idx < BINS) bins[idx]++;
-        }
-        meta.histogramBins = bins;
-      }
-    }
-    return meta;
-  }
-
-  // Date detection — conservative: probe up to DATE_PROBE_TARGET non-null
-  // string values; ≥80% must match a strict unambiguous date shape (and at
-  // least DATE_PROBE_MIN matches seen) before re-typing. Categorical codes
-  // ("LIM", "GP") and mixed-format date columns fall through to categorical.
-  let probed = 0;
-  let dateShaped = 0;
-  const probeStride = Math.max(1, Math.floor(total / DATE_PROBE_TARGET));
-  for (let i = 0; i < total && probed < DATE_PROBE_TARGET; i += probeStride) {
-    const v = rows[i][name];
-    if (typeof v !== "string" || v === "") continue;
-    probed++;
-    if (dateShapeYear(v) !== null) dateShaped++;
-  }
-  if (probed >= DATE_PROBE_MIN && dateShaped / probed >= 0.8) {
-    meta.type = "date";
-    // Range + per-year counts from the stride sample. ISO strings sort
-    // lexicographically, so string comparison IS date comparison.
-    let dMin: string | undefined;
-    let dMax: string | undefined;
-    const yearCounts = new Map<number, number>();
-    for (let i = 0; i < total; i += stride) {
-      const v = rows[i][name];
-      if (typeof v !== "string") continue;
-      const year = dateShapeYear(v);
-      if (year === null) continue;
-      if (dMin === undefined || v < dMin) dMin = v;
-      if (dMax === undefined || v > dMax) dMax = v;
-      yearCounts.set(year, (yearCounts.get(year) ?? 0) + 1);
-    }
-    meta.dateMin = dMin;
-    meta.dateMax = dMax;
-    meta.yearHistogram = [...yearCounts.entries()]
-      .sort((a, b) => a[0] - b[0])
-      .map(([year, count]) => ({ year, count: count * stride }));
-    return meta;
-  }
-
-  // Categorical top values from the stride sample; counts are scaled back
-  // to dataset scale so proportions against the exact non-null total stay
-  // honest in the stacked header bar.
-  const counts = new Map<string, number>();
-  for (let i = 0; i < total; i += stride) {
-    const v = rows[i][name];
-    if (v === null || v === "") continue;
-    const k = String(v);
-    counts.set(k, (counts.get(k) ?? 0) + 1);
-  }
-  meta.topValues = Array.from(counts.entries())
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 8)
-    .map(([value, count]) => ({ value, count: count * stride }));
-  return meta;
-}
-
-// Stack-safe min/max for large arrays. `Math.min(...arr)` and
-// `Math.max(...arr)` use call-site argument spread, which most JS engines
-// implement by pushing each value onto the call stack — RangeError at
-// ~100k elements. A real `.parquet` upload trivially exceeds that, so any
-// numeric-summary path has to use a plain loop.
-export function minMax(values: number[]): { min: number; max: number } | null {
-  if (values.length === 0) return null;
-  let mn = values[0];
-  let mx = values[0];
-  for (let i = 1; i < values.length; i++) {
-    const v = values[i];
-    if (v < mn) mn = v;
-    if (v > mx) mx = v;
-  }
-  return { min: mn, max: mx };
-}
-
-export function formatNumber(n: number): string {
-  if (!Number.isFinite(n)) return "—";
-  const abs = Math.abs(n);
-  if (abs >= 10000) return n.toLocaleString(undefined, { maximumFractionDigits: 0 });
-  if (abs >= 1) return n.toLocaleString(undefined, { maximumFractionDigits: 2 });
-  return n.toPrecision(3);
-}
-
 function fmtCell(v: CellValue): string {
   if (v === null) return "";
   if (typeof v === "number") return formatNumber(v);
@@ -1003,35 +323,6 @@ function fmtCell(v: CellValue): string {
 //
 // At most one filter per column; clicking the same selection twice toggles
 // it off, clicking a different selection on the same column replaces.
-
-export type Filter =
-  | { kind: "eq"; column: string; value: string | number }
-  | { kind: "iqr"; column: string; min: number; max: number }
-  | { kind: "outliers"; column: string; loFence: number; hiFence: number };
-
-function filterId(f: Filter): string {
-  if (f.kind === "eq") return `${f.column}|eq|${String(f.value)}`;
-  if (f.kind === "iqr") return `${f.column}|iqr`;
-  return `${f.column}|outliers`;
-}
-
-export function describeFilter(f: Filter): string {
-  if (f.kind === "eq") return `${f.column} = ${f.value}`;
-  if (f.kind === "iqr") return `${f.column} ∈ IQR [${formatNumber(f.min)}, ${formatNumber(f.max)}]`;
-  return `${f.column} outliers`;
-}
-
-function matchesFilter(row: Row, f: Filter): boolean {
-  const v = row[f.column];
-  if (f.kind === "eq") return v === f.value;
-  if (f.kind === "iqr") return typeof v === "number" && v >= f.min && v <= f.max;
-  return typeof v === "number" && (v < f.loFence || v > f.hiFence);
-}
-
-export function applyFilters(rows: Row[], filters: Filter[]): Row[] {
-  if (filters.length === 0) return rows;
-  return rows.filter((row) => filters.every((f) => matchesFilter(row, f)));
-}
 
 // ── UI ───────────────────────────────────────────────────────────────────────
 
@@ -1069,44 +360,6 @@ const CATEGORICAL_PALETTE_LIGHT = ["#009669", "#3760cc", "#7649c7", "#ae6614", "
 const OTHER_COLOR_DARK = "#5a5a5a";
 const OTHER_COLOR_LIGHT = "#a8a8a4";
 
-function quantile(sortedAsc: number[], q: number): number {
-  if (sortedAsc.length === 0) return 0;
-  if (sortedAsc.length === 1) return sortedAsc[0];
-  const idx = (sortedAsc.length - 1) * q;
-  const lo = Math.floor(idx);
-  const hi = Math.ceil(idx);
-  if (lo === hi) return sortedAsc[lo];
-  return sortedAsc[lo] + (sortedAsc[hi] - sortedAsc[lo]) * (idx - lo);
-}
-
-function boxStats(values: number[]): {
-  stats: [number, number, number, number, number];
-  outliers: number[];
-} | null {
-  if (values.length === 0) return null;
-  const sorted = [...values].sort((a, b) => a - b);
-  const q1 = quantile(sorted, 0.25);
-  const median = quantile(sorted, 0.5);
-  const q3 = quantile(sorted, 0.75);
-  const iqr = q3 - q1;
-  // Degenerate spread (≥50% of values identical → IQR 0) collapses the
-  // Tukey fences onto the quartiles and flags every other value as an
-  // outlier — a discrete gears/airbags column would light up 25% of its
-  // rows. No spread, no outlier classification: whiskers span the range.
-  if (iqr === 0) {
-    return {
-      stats: [sorted[0], q1, median, q3, sorted[sorted.length - 1]],
-      outliers: [],
-    };
-  }
-  const loFence = q1 - 1.5 * iqr;
-  const hiFence = q3 + 1.5 * iqr;
-  const inFence = sorted.filter((v) => v >= loFence && v <= hiFence);
-  const outliers = sorted.filter((v) => v < loFence || v > hiFence);
-  const lo = inFence.length > 0 ? inFence[0] : sorted[0];
-  const hi = inFence.length > 0 ? inFence[inFence.length - 1] : sorted[sorted.length - 1];
-  return { stats: [lo, q1, median, q3, hi], outliers };
-}
 
 export type Palette = {
   primary: string;
@@ -1665,6 +918,8 @@ function DataGrid({
   dateColumns,
   onReformatColumnDates,
   onColumnCommand,
+  onUndo,
+  undoLabel,
 }: {
   dataset: Dataset;
   rows: Row[];
@@ -1677,6 +932,11 @@ function DataGrid({
   dateColumns: string[];
   onReformatColumnDates: (column: string, style: DateStyle) => void;
   onColumnCommand: (column: string, text: string) => string | null;
+  /** Reverse the last dataset change. Returns the reply to show in the
+   *  column chat transcript. */
+  onUndo: () => string;
+  /** Label of the step that would be undone, or null when there is none. */
+  undoLabel: string | null;
 }) {
   const metaByName = useMemo(() => {
     const map = new Map<string, ColumnMeta>();
@@ -1706,12 +966,27 @@ function DataGrid({
     setPage((p) => Math.min(p, Math.max(0, totalPages - 1)));
   }, [totalPages]);
 
-  // Per-column hover chat — hovering the `<th>` opens a scoped popover. State
-  // lives at the grid level (rather than on each `<th>`) so we share one close
-  // timer across all headers; moving from one column to another cancels the
-  // pending close on the previous, giving a smooth slide between popovers.
+  // Per-column chat — hovering a `<th>` opens a scoped popover; CLICKING the
+  // header pins it. State lives at the grid level (rather than on each `<th>`)
+  // so we share one close timer across all headers; moving from one column to
+  // another cancels the pending close on the previous, giving a smooth slide
+  // between popovers.
+  //
+  // The pin exists because hover-only chat was fragile: drift the pointer one
+  // row too far mid-thought and the popover (and your draft) vanished.
+  // Clicking IN a column — its header or any of its body cells — is the ONE
+  // pin gesture: it locks the chat to that column, and clicking a different
+  // column moves the pin there (old chat closes, new one opens, anchored to
+  // the new column's header). While pinned, hover changes and mouse-leave
+  // are ignored — release via ✕ / Esc / re-clicking the pinned header.
   const [hoveredCol, setHoveredCol] = useState<string | null>(null);
+  const [lockedCol, setLockedCol] = useState<string | null>(null);
   const [hoverAnchor, setHoverAnchor] = useState<DOMRect | null>(null);
+  const thRefs = useRef<Map<string, HTMLTableCellElement>>(new Map());
+  const lockedRef = useRef<string | null>(null);
+  useEffect(() => {
+    lockedRef.current = lockedCol;
+  }, [lockedCol]);
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const cancelClose = useCallback(() => {
     if (closeTimer.current) {
@@ -1721,11 +996,32 @@ function DataGrid({
   }, []);
   const scheduleClose = useCallback(() => {
     cancelClose();
-    closeTimer.current = setTimeout(() => setHoveredCol(null), 220);
+    closeTimer.current = setTimeout(() => {
+      if (!lockedRef.current) setHoveredCol(null);
+    }, 220);
   }, [cancelClose]);
   useEffect(() => cancelClose, [cancelClose]);
 
-  const hoveredMeta = hoveredCol ? (metaByName.get(hoveredCol) ?? null) : null;
+  // A cleaning op or combine can rename the pinned column away — release.
+  useEffect(() => {
+    if (lockedCol && !dataset.columns.includes(lockedCol)) {
+      setLockedCol(null);
+      setHoveredCol(null);
+    }
+  }, [dataset.columns, lockedCol]);
+
+  // Pin the chat to a column, anchored to that column's header cell. The
+  // single entry point for both header and body-cell clicks, so "click in
+  // column B" always closes the previous pin and opens B's chat.
+  const pinColumnChat = useCallback((c: string, fallbackRect?: DOMRect) => {
+    const rect = thRefs.current.get(c)?.getBoundingClientRect() ?? fallbackRect ?? null;
+    setLockedCol(c);
+    setHoveredCol(c);
+    if (rect) setHoverAnchor(rect);
+  }, []);
+
+  const activeChatCol = lockedCol ?? hoveredCol;
+  const hoveredMeta = activeChatCol ? (metaByName.get(activeChatCol) ?? null) : null;
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -1744,18 +1040,37 @@ function DataGrid({
                 // The column whose scoped chat popover is open is "in play" —
                 // frame the whole column in green so it's obvious which one
                 // you're working on.
-                const chatActive = hoveredCol === c;
+                const chatActive = activeChatCol === c;
+                const pinnedThis = lockedCol === c;
                 return (
                   // biome-ignore lint/a11y/useKeyWithClickEvents: clicking anywhere in the header cell (mini chart, chips, padding) selects the column — the name button inside remains the keyboard-accessible path.
                   <th
                     key={c}
-                    onClick={() => onSelectColumn(c)}
+                    ref={(el) => {
+                      if (el) thRefs.current.set(c, el);
+                      else thRefs.current.delete(c);
+                    }}
+                    onClick={(e) => {
+                      onSelectColumn(c);
+                      // Interactive children (mini-chart filters, the date
+                      // format menu) shouldn't toggle the chat pin.
+                      if ((e.target as HTMLElement).closest("[data-chat-nolock]")) return;
+                      if (lockedCol === c) {
+                        setLockedCol(null);
+                      } else {
+                        pinColumnChat(c, e.currentTarget.getBoundingClientRect());
+                      }
+                    }}
                     onMouseEnter={(e) => {
+                      if (lockedRef.current) return;
                       cancelClose();
                       setHoveredCol(c);
                       setHoverAnchor(e.currentTarget.getBoundingClientRect());
                     }}
                     onMouseLeave={scheduleClose}
+                    title={
+                      pinnedThis ? "chat pinned — click to unpin" : "click to pin the column chat"
+                    }
                     className={`cursor-pointer p-0 text-left align-bottom ${
                       chatActive
                         ? "border-x-2 border-t-2 border-primary bg-primary/10"
@@ -1767,7 +1082,7 @@ function DataGrid({
                   >
                     <div className="flex flex-col">
                       {meta && (
-                        <div className="border-b border-border/60 pt-1">
+                        <div data-chat-nolock className="border-b border-border/60 pt-1">
                           <MiniColumnChart
                             meta={meta}
                             activeFilter={activeFilter}
@@ -1818,15 +1133,18 @@ function DataGrid({
                             </span>
                           ) : null}
                         </button>
-                        {meta &&
-                          (dateColSet.has(c) ? (
-                            <ColumnFormatMenu
-                              column={c}
-                              onPick={(style) => onReformatColumnDates(c, style)}
-                            />
-                          ) : (
-                            <TypeChip type={meta.type} />
-                          ))}
+                        {meta && (
+                          <span data-chat-nolock className="contents">
+                            {dateColSet.has(c) ? (
+                              <ColumnFormatMenu
+                                column={c}
+                                onPick={(style) => onReformatColumnDates(c, style)}
+                              />
+                            ) : (
+                              <TypeChip type={meta.type} />
+                            )}
+                          </span>
+                        )}
                       </div>
                     </div>
                   </th>
@@ -1843,12 +1161,18 @@ function DataGrid({
                 </td>
                 {dataset.columns.map((c) => {
                   const v = row[c];
-                  const chatActive = hoveredCol === c;
+                  const chatActive = activeChatCol === c;
                   return (
                     // biome-ignore lint/a11y/useKeyWithClickEvents: clicking a body cell selects its column for the summary panel — a convenience mirror of the header button, which remains the keyboard-accessible path.
                     <td
                       key={c}
-                      onClick={() => onSelectColumn(c)}
+                      onClick={() => {
+                        onSelectColumn(c);
+                        // Clicking in a column pins its chat there; a click in
+                        // an already-pinned column keeps it pinned (no toggle —
+                        // cell clicks are how you inspect values).
+                        if (lockedCol !== c) pinColumnChat(c);
+                      }}
                       className={`cursor-pointer px-2 py-1 ${
                         chatActive
                           ? "border-b border-x-2 border-primary bg-primary/[0.06]"
@@ -1905,10 +1229,17 @@ function DataGrid({
         <ColumnChatPopover
           meta={hoveredMeta}
           anchor={hoverAnchor}
+          pinned={lockedCol !== null}
           onEnter={cancelClose}
           onLeave={scheduleClose}
-          onClose={() => setHoveredCol(null)}
+          onClose={() => {
+            setLockedCol(null);
+            setHoveredCol(null);
+          }}
+          onPin={() => pinColumnChat(hoveredMeta.name)}
           onLocalCommand={(text) => onColumnCommand(hoveredMeta.name, text)}
+          onUndo={onUndo}
+          undoLabel={undoLabel}
         />
       )}
     </div>
@@ -2427,6 +1758,65 @@ function ImportFileModal({
   );
 }
 
+// Chat write-up for an autonomous clean. Reports pass by pass, because the
+// whole point of the multi-pass loop is that later passes fix things the
+// earlier ones exposed — collapsing it to one flat list would hide that. Row
+// and column drops are called out separately: they're the destructive part,
+// and the user needs to see them without reading the step list.
+function formatAutoCleanReport(result: AutoCleanResult): string {
+  const lines: string[] = [];
+  const stepCount = result.passes.reduce((n, p) => n + p.opLabels.length, 0);
+
+  lines.push(
+    `Went through the entire dataset and cleaned it — ${stepCount} step${
+      stepCount === 1 ? "" : "s"
+    } over ${result.passes.length} pass${result.passes.length === 1 ? "" : "es"}.`,
+  );
+  lines.push("");
+  for (const pass of result.passes) {
+    lines.push(`**Pass ${pass.pass}**`);
+    for (const label of pass.opLabels) lines.push(`- ${label}`);
+    lines.push("");
+  }
+
+  const rowsDropped = result.rowsBefore - result.rowsAfter;
+  const shape: string[] = [];
+  if (rowsDropped > 0) {
+    shape.push(
+      `${rowsDropped.toLocaleString()} row${rowsDropped === 1 ? "" : "s"} removed (duplicates), ${result.rowsAfter.toLocaleString()} remain`,
+    );
+  }
+  if (result.droppedColumns.length > 0) {
+    shape.push(
+      `${result.droppedColumns.length} column${
+        result.droppedColumns.length === 1 ? "" : "s"
+      } dropped as empty or single-valued (${result.droppedColumns.map((c) => `\`${c}\``).join(", ")})`,
+    );
+  }
+  if (shape.length > 0) lines.push(`Shape: ${shape.join("; ")}.`, "");
+
+  switch (result.outcome) {
+    case "clean":
+      lines.push(
+        "I re-scanned after the last pass and found nothing further — the dataset is clean.",
+      );
+      break;
+    case "stalled":
+      lines.push(
+        `I stopped early: the last pass detected the same issues again without resolving them, so repeating it wouldn't help. Still outstanding: ${result.remaining.join(", ")}. These need a decision rather than a rule — tell me how you'd like them handled.`,
+      );
+      break;
+    case "exhausted":
+      lines.push(
+        `I hit the ${AUTO_CLEAN_MAX_PASSES}-pass ceiling with work still outstanding: ${result.remaining.join(", ")}. Press it again to keep going.`,
+      );
+      break;
+    default:
+      break;
+  }
+  return lines.join("\n");
+}
+
 // ── top-level workstation ────────────────────────────────────────────────────
 
 export function SoftDataWorkstation() {
@@ -2445,7 +1835,35 @@ export function SoftDataWorkstation() {
     setStagedDatasets,
     logEvent,
     clearEvents,
+    pushHistory,
+    undo,
+    undoLabel,
+    canUndo,
+    clearHistory,
   } = useScelo();
+
+  // Snapshot-then-replace. Every dataset TRANSFORM goes through here so it
+  // is reversible; loading or clearing a dataset deliberately does not (see
+  // clearHistory at those sites) because undoing across a file swap would
+  // resurrect the previous file.
+  const commitDataset = useCallback(
+    (label: string, next: Dataset) => {
+      pushHistory(label);
+      setDataset(next);
+    },
+    [pushHistory, setDataset],
+  );
+
+  /** Shared by both chat surfaces: reverse the last transform and report it
+   *  in the transcript. */
+  const runUndo = useCallback((): string => {
+    const label = undo();
+    if (label === null) {
+      return "There's nothing to undo — no changes have been made to this dataset yet.";
+    }
+    logEvent({ stage: "soft", kind: "dataset.undo", payload: { label } });
+    return `Undone — reversed **${label}**. The grid is back to how it was before that step.`;
+  }, [undo, logEvent]);
   // Reset the derived-columns registry and in-place transform log whenever
   // a fresh dataset replaces the current one. A derived formula on the
   // old schema won't apply to the new columns and shouldn't appear in
@@ -2479,6 +1897,7 @@ export function SoftDataWorkstation() {
         ...r,
         [name]: compiled.evaluate(r),
       }));
+      pushHistory(`add derived column \`${name}\``);
       setDataset({
         name: dataset.name,
         columns: [...dataset.columns, name],
@@ -2488,7 +1907,7 @@ export function SoftDataWorkstation() {
       logEvent({ stage: "soft", kind: "derived.add", payload: { name, formula } });
       return { ok: true };
     },
-    [dataset, setDataset, setDerivedColumns, logEvent],
+    [dataset, setDataset, setDerivedColumns, logEvent, pushHistory],
   );
   // No auto-load on first mount — the empty state shows two centred
   // buttons ("import csv / parquet" + "load sample") so the user picks a
@@ -2582,7 +2001,10 @@ export function SoftDataWorkstation() {
       const opLabels = cleaningPlan.ops
         .filter((op) => ops.has(op.key))
         .map((op) => describeOp(op, cleaningPlan.sampled).title);
-      setDataset(cleaned);
+      commitDataset(
+        opLabels.length === 1 ? opLabels[0] : `cleaning (${opLabels.length} steps)`,
+        cleaned,
+      );
       // Recompute happens automatically through the dataset dep. We close the
       // panel so the user immediately sees the cleaner state.
       setCleaningOpen(false);
@@ -2592,7 +2014,7 @@ export function SoftDataWorkstation() {
       logEvent({ stage: "soft", kind: "cleaning.apply", payload: { opLabels } });
       return opLabels;
     },
-    [dataset, cleaningPlan, setDataset, setFilters, logEvent],
+    [dataset, cleaningPlan, setFilters, logEvent, commitDataset],
   );
 
   // Banner "apply cleaning" button — runs whatever the user currently has
@@ -2601,6 +2023,73 @@ export function SoftDataWorkstation() {
   const onApplyCleaning = useCallback(() => {
     applyCleaningOps(enabledOps);
   }, [applyCleaningOps, enabledOps]);
+
+  // ── Autonomous clean ───────────────────────────────────────────────────
+  // Hands the whole dataset to `autoCleanDataset`, which loops
+  // analyse→apply until the analyser stops proposing work. Deliberately does
+  // NOT go through `applyCleaningOps`: that closes over the memoised
+  // `cleaningPlan`, which is a single pass computed from the CURRENT dataset
+  // and would still be the pass-1 plan for every later iteration (React has
+  // not re-rendered mid-loop). The loop re-derives its own plan each pass.
+  const runAutoClean = useCallback((): string => {
+    if (!dataset) return "Load a dataset first, then I can clean it end to end.";
+
+    const result: AutoCleanResult = autoCleanDataset(dataset, getColumnMetas);
+
+    if (result.outcome === "empty") {
+      return "There's nothing to clean yet — the dataset has no rows.";
+    }
+    if (result.passes.length === 0) {
+      // Reached the fixed point without applying anything: already clean.
+      return "I went through the whole dataset and found nothing to fix — no whitespace, missing markers, mistyped columns, duplicate rows, or dead columns. It's already clean.";
+    }
+
+    commitDataset(`auto-clean (${result.passes.length} passes)`, result.dataset);
+    setFilters([]);
+    logEvent({
+      stage: "soft",
+      kind: "cleaning.auto",
+      payload: {
+        passes: result.passes.length,
+        outcome: result.outcome,
+        opLabels: result.passes.flatMap((p) => p.opLabels),
+        rowsBefore: result.rowsBefore,
+        rowsAfter: result.rowsAfter,
+        columnsBefore: result.columnsBefore,
+        columnsAfter: result.columnsAfter,
+        droppedColumns: result.droppedColumns,
+      },
+    });
+    return formatAutoCleanReport(result);
+  }, [dataset, setFilters, logEvent, commitDataset]);
+
+  // One-press affordances in the chat. Kept to the single action that is
+  // genuinely tedious to phrase and has exactly one sensible execution.
+  const softChatActions = useMemo<ChatAction[]>(
+    () => [
+      {
+        id: "undo",
+        label: undoLabel ? `Undo: ${undoLabel}` : "Undo",
+        prompt: "Undo the last change.",
+        hint: undoLabel
+          ? `Reverse "${undoLabel}" and restore the dataset to how it was before that step.`
+          : undefined,
+        disabledReason: canUndo ? null : "Nothing to undo yet.",
+        run: runUndo,
+      },
+      {
+        id: "auto-clean",
+        label: "Auto-clean dataset",
+        prompt: "Go through the entire dataset and clean it until it's fully clean.",
+        hint: dataset
+          ? `Repeatedly scan and fix the whole dataset until nothing is left to fix (up to ${AUTO_CLEAN_MAX_PASSES} passes). Applies every fix it finds, including removing duplicate rows and dropping empty or single-valued columns. This rewrites the dataset and can't be undone.`
+          : undefined,
+        disabledReason: dataset ? null : "Load a dataset first.",
+        run: runAutoClean,
+      },
+    ],
+    [dataset, runAutoClean, runUndo, undoLabel, canUndo],
+  );
 
   const toggleOp = useCallback((key: CleaningOpKey) => {
     setEnabledOps((prev) => {
@@ -2631,7 +2120,7 @@ export function SoftDataWorkstation() {
       if (changed === 0) {
         return `${cols.length === 1 ? `\`${cols[0]}\` is` : "Those date columns are"} already in ${DATE_STYLE_LABEL[style]} format — nothing to change.`;
       }
-      setDataset(next);
+      commitDataset(`reformat dates to ${DATE_STYLE_LABEL[style]}`, next);
       setFilters([]);
       logEvent({
         stage: "soft",
@@ -2651,7 +2140,7 @@ export function SoftDataWorkstation() {
         changed === 1 ? "" : "s"
       }).${caveat} The data grid now shows the new format.`;
     },
-    [dataset, setDataset, setFilters, logEvent],
+    [dataset, setFilters, logEvent, commitDataset],
   );
 
   // Reformat every detected date column at once (global toolbar + soft chat).
@@ -2689,7 +2178,7 @@ export function SoftDataWorkstation() {
     (column: string, intent: ColumnOpIntent): string => {
       if (!dataset) return "Load a dataset first.";
       const commit = (next: Dataset, action: string, affected: number, reply: string): string => {
-        setDataset(next);
+        commitDataset(`${action} on \`${column}\``, next);
         setFilters([]);
         logEvent({ stage: "soft", kind: "cleaning.column", payload: { column, action, affected } });
         return reply;
@@ -2837,7 +2326,7 @@ export function SoftDataWorkstation() {
         }
       }
     },
-    [dataset, rawMetas, setDataset, setDerivedColumns, setFilters, logEvent],
+    [dataset, rawMetas, setDerivedColumns, setFilters, logEvent, commitDataset],
   );
 
   // Per-column natural-language intent (the hover chat popover). Same date-style
@@ -2850,6 +2339,20 @@ export function SoftDataWorkstation() {
       const t = text.toLowerCase().trim();
       const isDateCol = () =>
         dateColumns.includes(column) || detectDateColumns(dataset).includes(column);
+
+      // ── undo ─────────────────────────────────────────────────────────────
+      // Checked first: "undo that" must never be parsed as an operation to
+      // APPLY to the column. Kept deliberately narrow — only an explicit
+      // undo/revert/rollback verb, so "revert the codes to uppercase" (a
+      // real transform request) still falls through to the parsers below.
+      if (
+        /^\s*(undo|revert|rollback|roll back|go back|take that back)\b/.test(t) ||
+        /\b(undo|revert|roll ?back) (that|the )?(last |previous )?(change|step|edit|thing|one|it)?\s*$/.test(
+          t,
+        )
+      ) {
+        return runUndo();
+      }
 
       // ── remove / clear non-date values ───────────────────────────────────
       const removeVerb = /\b(remove|clear|drop|delete|strip|null|blank|get rid of|discard)\b/.test(
@@ -2864,7 +2367,7 @@ export function SoftDataWorkstation() {
         if (cleared === 0) {
           return `Every value in \`${column}\` already parses as a date — nothing to remove.`;
         }
-        setDataset(next);
+        commitDataset(`clear non-dates in \`${column}\``, next);
         setFilters([]);
         logEvent({
           stage: "soft",
@@ -2926,7 +2429,7 @@ export function SoftDataWorkstation() {
             isDateCol() ? ", or non-date" : ""
           } issues to fix.`;
         }
-        setDataset(working);
+        commitDataset(`clean \`${column}\``, working);
         setFilters([]);
         logEvent({
           stage: "soft",
@@ -2938,7 +2441,16 @@ export function SoftDataWorkstation() {
 
       return null;
     },
-    [dataset, dateColumns, reformatColumnsTo, runColumnOpIntent, setDataset, setFilters, logEvent],
+    [
+      dataset,
+      dateColumns,
+      reformatColumnsTo,
+      runColumnOpIntent,
+      setFilters,
+      logEvent,
+      commitDataset,
+      runUndo,
+    ],
   );
 
   // Deterministic chat intents handled client-side, so they work even though
@@ -2951,6 +2463,20 @@ export function SoftDataWorkstation() {
   const handleSoftChatCommand = useCallback(
     (text: string): string | null => {
       const t = text.toLowerCase().trim();
+
+      // ── undo ─────────────────────────────────────────────────────────────
+      // Checked first: "undo that" must never be parsed as an operation to
+      // APPLY to the column. Kept deliberately narrow — only an explicit
+      // undo/revert/rollback verb, so "revert the codes to uppercase" (a
+      // real transform request) still falls through to the parsers below.
+      if (
+        /^\s*(undo|revert|rollback|roll back|go back|take that back)\b/.test(t) ||
+        /\b(undo|revert|roll ?back) (that|the )?(last |previous )?(change|step|edit|thing|one|it)?\s*$/.test(
+          t,
+        )
+      ) {
+        return runUndo();
+      }
 
       // ── data augmentation ────────────────────────────────────────────────
       // "add 1000 more rows through augmentation", "generate synthetic rows",
@@ -2971,7 +2497,7 @@ export function SoftDataWorkstation() {
         const toAdd = Math.min(Math.max(1, requested), CAP);
         const { dataset: next, added } = augmentDataset(dataset, rawMetas, toAdd);
         if (added === 0) return "There's no data to augment yet — load some rows first.";
-        setDataset(next);
+        commitDataset(`augment (+${added.toLocaleString()} rows)`, next);
         setFilters([]);
         logEvent({
           stage: "soft",
@@ -3044,6 +2570,30 @@ export function SoftDataWorkstation() {
         /\b(initial clean|do the cleaning|run (the )?cleaning|fix (the |my )?data)\b/.test(t);
       if (!mentionsClean && !cleanPhrase) return null;
 
+      // ── autonomous clean ─────────────────────────────────────────────────
+      // Same loop the "Auto-clean dataset" chip runs. Checked BEFORE the
+      // single-pass branch below so "clean the whole thing until it's done"
+      // converges instead of applying one pass of the safe defaults. Requires
+      // an explicit exhaustive/autonomous cue — a plain "clean my data" stays
+      // on the conservative single-pass path, which doesn't drop rows or
+      // columns.
+      const wantsAutonomous =
+        /\b(auto[\s-]?clean|automatically|autonomous(ly)?|by yourself|on your own|as you see fit|however you see fit|without me|no input|don'?t ask)\b/.test(
+          t,
+        ) ||
+        /\b(fully|completely|entirely|thoroughly|properly|deep)\b.*\bclean\b/.test(t) ||
+        /\bclean\b.*\b(fully|completely|entirely|thoroughly|properly|everything|all of it)\b/.test(
+          t,
+        ) ||
+        /\b(until|till)\b.*\b(clean|done|nothing|finished|no more)\b/.test(t) ||
+        /\b(entire|whole|all the)\b.*\bdataset\b.*\bclean/.test(t) ||
+        /\bclean\b.*\b(entire|whole)\b.*\b(dataset|data|thing)\b/.test(t) ||
+        /\b(repeat|keep|carry on|again and again)\b.*\bclean/.test(t);
+      if (wantsAutonomous) {
+        if (!dataset) return "Load a dataset first, then I can clean it end to end.";
+        return runAutoClean();
+      }
+
       if (!dataset) return "Load a dataset first, then ask me to clean it.";
       if (!cleaningPlan || cleaningPlan.ops.length === 0) {
         return "I scanned the dataset and found no cleaning steps to apply — it already looks tidy.";
@@ -3066,12 +2616,14 @@ export function SoftDataWorkstation() {
       cleaningPlan,
       enabledOps,
       applyCleaningOps,
+      runAutoClean,
       reformatDatesInDataset,
       runColumnOpIntent,
       rawMetas,
-      setDataset,
       setFilters,
       logEvent,
+      runUndo,
+      commitDataset,
     ],
   );
 
@@ -3148,6 +2700,7 @@ export function SoftDataWorkstation() {
       // the prior log so the new export doesn't replay events from the old
       // dataset that no longer exist.
       clearEvents();
+      clearHistory();
       setDataset(ds);
       setSelected(ds.columns[0]);
       setFilters([]);
@@ -3164,7 +2717,7 @@ export function SoftDataWorkstation() {
       });
       setSamplePickerOpen(false);
     },
-    [clearEvents, setDataset, setFilters, logEvent],
+    [clearEvents, setDataset, setFilters, logEvent, clearHistory],
   );
 
   // Status banner for slow / failed uploads. CSV parsing streams and reports
@@ -3313,6 +2866,7 @@ export function SoftDataWorkstation() {
       try {
         const { dataset: ds, malformedRows } = await parseFileToDataset(file);
         clearEvents();
+        clearHistory();
         setDataset(ds);
         setSelected(ds.columns[0]);
         setFilters([]);
@@ -3347,7 +2901,7 @@ export function SoftDataWorkstation() {
         if (fileRef.current) fileRef.current.value = "";
       }
     },
-    [parseFileToDataset, clearEvents, setDataset, setFilters, logEvent],
+    [parseFileToDataset, clearEvents, setDataset, setFilters, logEvent, clearHistory],
   );
 
   const onPickFile = async (e: ChangeEvent<HTMLInputElement>) => {
@@ -3493,7 +3047,7 @@ export function SoftDataWorkstation() {
     const startedAt = performance.now();
     try {
       const result = combineAll(dataset, others, DEFAULT_IMPORT_ROW_CAP);
-      setDataset(result.dataset);
+      commitDataset("combine datasets", result.dataset);
       setFilters([]);
       setStagedDatasets([]);
       setCombineSteps([]);
@@ -3540,10 +3094,10 @@ export function SoftDataWorkstation() {
     stagedDatasets,
     combineSteps,
     combineSuggestions,
-    setDataset,
     setFilters,
     setStagedDatasets,
     logEvent,
+    commitDataset,
   ]);
 
   return (
@@ -3643,6 +3197,7 @@ export function SoftDataWorkstation() {
             <button
               type="button"
               onClick={() => {
+                pushHistory("clear dataset");
                 setDataset(null);
                 setSelected(null);
                 logEvent({ stage: "soft", kind: "dataset.clear", payload: {} });
@@ -3838,6 +3393,8 @@ export function SoftDataWorkstation() {
                 dateColumns={dateColumns}
                 onReformatColumnDates={onReformatColumnDates}
                 onColumnCommand={handleColumnChatCommand}
+                onUndo={runUndo}
+                undoLabel={undoLabel}
               />
             </div>
           ) : heldUpload ? (
@@ -3896,6 +3453,7 @@ export function SoftDataWorkstation() {
           badge="soft · chat"
           dataset={dataset}
           onLocalCommand={handleSoftChatCommand}
+          actions={softChatActions}
         />
       </div>
 
@@ -3926,6 +3484,7 @@ export function SoftDataWorkstation() {
         existingDataset={dataset}
         onDataset={(ds) => {
           clearEvents();
+          clearHistory();
           setDataset(ds);
           setSelected(ds.columns[0]);
           setFilters([]);
@@ -4465,6 +4024,37 @@ function CombineBanner({
     [base, staged, suggestions],
   );
 
+  // Exact combine previews driving the per-file diagram. Unlike the sampled
+  // suggestion heuristics these walk the full datasets, so the bar counts
+  // equal what the combine will actually do. Steps run in order, so each
+  // preview runs against the MATERIALISED result of the previous step —
+  // previewing file 2 against the original dataset would report the wrong
+  // result size (and wrong duplicate counts) whenever file 1 changes the
+  // data. Bounded work: at most two staged files → one intermediate build.
+  const previews = useMemo(() => {
+    let current = base;
+    let currentLabel = "current data";
+    return staged.map((ds, i) => {
+      const step = steps[i] ?? suggestions[i]?.step ?? { strategy: "append" as const };
+      let preview: CombinePreview | null = null;
+      try {
+        preview = previewCombine(current, ds, step);
+      } catch {
+        preview = null; // join selected while the key is still unset
+      }
+      const entry = preview ? { preview, baseLabel: currentLabel } : null;
+      if (i < staged.length - 1) {
+        try {
+          current = combinePair(current, ds, step).dataset;
+          currentLabel = `result of step ${i + 1}`;
+        } catch {
+          /* keep previous base; the next preview will show against it */
+        }
+      }
+      return entry;
+    });
+  }, [base, staged, steps, suggestions]);
+
   // A join step with no usable key can't run — disable combine and say why.
   const joinWithoutKey = steps.some(
     (s, i) => s.strategy !== "append" && ((keyOptions[i]?.length ?? 0) === 0 || !s.key),
@@ -4562,6 +4152,15 @@ function CombineBanner({
                     <div className="mt-0.5 font-mono text-[10px] leading-snug text-fg-mute">
                       {suggestion.rationale}
                     </div>
+                  )}
+                  {previews[i] && (
+                    <CombineDiagram
+                      preview={previews[i].preview}
+                      baseName={
+                        previews[i].baseLabel === "current data" ? base.name : previews[i].baseLabel
+                      }
+                      otherName={ds.name}
+                    />
                   )}
                   <div className="mt-1.5 flex flex-wrap items-center gap-2.5">
                     <label className="flex items-center gap-1 font-mono text-[9px] uppercase tracking-wider text-fg-dim">
@@ -4688,29 +4287,54 @@ function CombineBanner({
 // purpose: clean / manipulate / convert / encode / derive this ONE
 // column. Memory-keyed per (project, column name) so each column carries
 // its own thread.
+/** Pointer travel (px, Manhattan) before a header press counts as a drag
+ *  rather than a click. */
+const DRAG_THRESHOLD = 4;
+
 function ColumnChatPopover({
   meta,
   anchor,
+  pinned,
   onEnter,
   onLeave,
   onClose,
+  onPin,
   onLocalCommand,
+  onUndo,
+  undoLabel,
 }: {
   meta: ColumnMeta;
   anchor: DOMRect;
+  /** True while the chat is click-locked to its column (clicking IN a
+   *  column is the only pin gesture; clicking another column moves it). */
+  pinned: boolean;
   onEnter: () => void;
   onLeave: () => void;
   onClose: () => void;
+  /** Pin the chat to its current column. Called when the user starts
+   *  dragging: a panel they positioned by hand must not evaporate on the
+   *  next hover-out. */
+  onPin?: () => void;
   /** Deterministic per-column intent (e.g. "make this american") handled
    *  client-side. Returns a reply to answer locally, or null to fall through
    *  to the provider. */
   onLocalCommand?: (text: string) => string | null;
+  /** Reverse the last dataset change; returns the reply for the transcript.
+   *  Dataset history is global, not per-column — a column chat can undo an
+   *  edit made from the stage chat and vice versa, which is what users
+   *  expect from "undo". */
+  onUndo?: () => string;
+  undoLabel?: string | null;
 }) {
-  const { chatMemoryPrefix } = useScelo();
+  const { chatMemoryPrefix, project } = useScelo();
   const memoryKey = chatMemoryPrefix ? `${chatMemoryPrefix}:soft-col:${meta.name}` : undefined;
   const stageContext = useMemo(() => buildColumnStageContext(meta), [meta]);
   const placeholder = useMemo(() => placeholderHintFor(meta), [meta]);
-  const { messages, isStreaming, send, sendLocal, stop } = useNodeChat(stageContext, { memoryKey });
+  const { messages, isStreaming, send, sendLocal, stop } = useNodeChat(stageContext, {
+    memoryKey,
+    logLabel: `soft · column «${meta.name}»`,
+    logProject: project?.name,
+  });
   const [draft, setDraft] = useState("");
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
@@ -4750,30 +4374,153 @@ function ColumnChatPopover({
     void send(text);
   };
 
-  // Position below the anchor (a `<th>` cell) by default — column headers
-  // are narrow so right-of-anchor would leave the popover off-screen for
-  // most columns. We clamp horizontally to keep it on-screen and flip up
-  // when the popover would crash through the bottom edge.
+  // ── Placement ──────────────────────────────────────────────────────────
+  //
+  // Two modes. By default the popover is ANCHORED under its `<th>`; once the
+  // user drags it, `pos` takes over and it stays exactly where they put it.
+  //
+  // The anchored path measures its own height (`panelH`) rather than
+  // assuming one. The previous version reserved a flat 220px when deciding
+  // whether to open downwards but then allowed the panel to grow to 60vh, so
+  // any column header sitting more than ~220px above the fold opened a
+  // popover that ran off the bottom of the window — and because the compose
+  // box is the LAST child in the flex column, the input was the first thing
+  // to disappear. Clamping against the real height is what fixes that.
   const POPOVER_W = 340;
   const GAP = 8;
-  const POPOVER_MAX_H = Math.round(typeof window !== "undefined" ? window.innerHeight * 0.6 : 480);
   const viewportRight = typeof window !== "undefined" ? window.innerWidth : 1200;
   const viewportBottom = typeof window !== "undefined" ? window.innerHeight : 800;
-  const flowsDown = anchor.bottom + GAP + 220 <= viewportBottom;
-  const left = Math.max(GAP, Math.min(anchor.left, viewportRight - POPOVER_W - GAP));
-  const style: React.CSSProperties = flowsDown
+  const POPOVER_MAX_H = Math.min(Math.round(viewportBottom * 0.6), viewportBottom - GAP * 2);
+
+  const panelRef = useRef<HTMLDivElement | null>(null);
+  const [panelH, setPanelH] = useState(0);
+  /** Explicit top-left once dragged; null = follow the column anchor. */
+  const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
+  /** Pointer is down on the header — may or may not become a drag. */
+  const [armed, setArmed] = useState(false);
+  /** The threshold has been crossed; this is a real drag. */
+  const [dragging, setDragging] = useState(false);
+  const movedRef = useRef(false);
+  const pressRef = useRef<{ sx: number; sy: number; dx: number; dy: number } | null>(null);
+
+  // Track the rendered height so the clamp below uses the truth, not a
+  // guess. The panel grows as replies stream in, so this has to be live.
+  useLayoutEffect(() => {
+    const el = panelRef.current;
+    if (!el) return;
+    setPanelH(el.offsetHeight);
+    if (typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => setPanelH(el.offsetHeight));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  const clampToViewport = useCallback(
+    (x: number, y: number) => {
+      // `||` not `??`: an unmeasured panel reports 0, which is not nullish
+      // but is equally useless as a bound.
+      const w = panelRef.current?.offsetWidth || POPOVER_W;
+      const h = panelRef.current?.offsetHeight || panelH || 240;
+      return {
+        x: Math.min(Math.max(GAP, x), Math.max(GAP, window.innerWidth - w - GAP)),
+        y: Math.min(Math.max(GAP, y), Math.max(GAP, window.innerHeight - h - GAP)),
+      };
+    },
+    [panelH],
+  );
+
+  // Drag from the header. Pointer events (not mouse) so pen/touch work, and
+  // listeners go on `window` so a fast drag that outruns the cursor doesn't
+  // drop the gesture.
+  //
+  // A press only becomes a drag after the pointer travels DRAG_THRESHOLD px.
+  // Without that, a stray click on the header would silently switch the
+  // panel to manual positioning and pin it — surprising, and it would
+  // surface the "reset" control for a gesture the user didn't make.
+  useEffect(() => {
+    if (!armed) return;
+    const onMove = (e: PointerEvent) => {
+      const start = pressRef.current;
+      if (!start) return;
+      if (!movedRef.current) {
+        const travelled = Math.abs(e.clientX - start.sx) + Math.abs(e.clientY - start.sy);
+        if (travelled < DRAG_THRESHOLD) return;
+        movedRef.current = true;
+        setDragging(true);
+        // Moving it away from its column means the pointer leaves that
+        // column, which would otherwise schedule a hover-close mid-drag.
+        // Pin instead: a deliberately-placed panel should stay put.
+        onEnter();
+        onPin?.();
+      }
+      e.preventDefault();
+      setPos(clampToViewport(e.clientX - start.dx, e.clientY - start.dy));
+    };
+    const onUp = () => {
+      setArmed(false);
+      setDragging(false);
+      movedRef.current = false;
+      pressRef.current = null;
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
+    return () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
+    };
+  }, [armed, clampToViewport, onEnter, onPin]);
+
+  // A resize (or the IDE window being un-maximised) must not strand a
+  // dragged popover off-screen.
+  useEffect(() => {
+    if (!pos) return;
+    const onResize = () => setPos((p) => (p ? clampToViewport(p.x, p.y) : p));
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, [pos, clampToViewport]);
+
+  const startDrag = (e: React.PointerEvent) => {
+    if (e.button !== 0) return;
+    const el = panelRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    // Offset is measured from the panel's CURRENT on-screen box, so the
+    // switch from anchored to manual positioning never makes it jump.
+    pressRef.current = {
+      sx: e.clientX,
+      sy: e.clientY,
+      dx: e.clientX - r.left,
+      dy: e.clientY - r.top,
+    };
+    movedRef.current = false;
+    setArmed(true);
+  };
+
+  const anchoredHeight = panelH || 240;
+  const spaceBelow = viewportBottom - anchor.bottom - GAP * 2;
+  const spaceAbove = anchor.top - GAP * 2;
+  const flowsDown = spaceBelow >= anchoredHeight || spaceBelow >= spaceAbove;
+  const anchoredTop = flowsDown ? anchor.bottom + GAP : anchor.top - GAP - anchoredHeight;
+  const style: React.CSSProperties = pos
     ? {
         position: "fixed",
-        left,
-        top: anchor.bottom + GAP,
+        left: pos.x,
+        top: pos.y,
         width: POPOVER_W,
         maxHeight: POPOVER_MAX_H,
         zIndex: 60,
       }
     : {
         position: "fixed",
-        left,
-        bottom: Math.max(GAP, viewportBottom - anchor.top + GAP),
+        left: Math.max(GAP, Math.min(anchor.left, viewportRight - POPOVER_W - GAP)),
+        // Final guard: whichever direction we chose, never let the panel
+        // cross the bottom (or top) edge of the window.
+        top: Math.min(
+          Math.max(GAP, anchoredTop),
+          Math.max(GAP, viewportBottom - anchoredHeight - GAP),
+        ),
         width: POPOVER_W,
         maxHeight: POPOVER_MAX_H,
         zIndex: 60,
@@ -4781,24 +4528,79 @@ function ColumnChatPopover({
 
   return (
     <div
+      ref={panelRef}
       style={style}
       onMouseEnter={onEnter}
-      onMouseLeave={onLeave}
-      className="flex max-h-[60vh] flex-col overflow-hidden rounded-lg border border-border bg-bg-1 shadow-2xl"
+      onMouseLeave={dragging ? undefined : onLeave}
+      className={`flex flex-col overflow-hidden rounded-lg border bg-bg-1 shadow-2xl ${
+        pinned ? "border-primary/60" : "border-border"
+      } ${dragging ? "select-none" : ""}`}
     >
-      <header className="flex shrink-0 items-center justify-between gap-2 border-b border-border bg-bg-1 px-3 py-1.5">
+      {/* Header doubles as the drag handle. */}
+      <header
+        onPointerDown={startDrag}
+        className={`flex shrink-0 items-center justify-between gap-2 border-b border-border bg-bg-1 px-3 py-1.5 ${
+          dragging ? "cursor-grabbing" : "cursor-grab"
+        }`}
+      >
         <div className="flex min-w-0 items-center gap-2">
+          {/* Grip affordance — the only cue that the panel can be moved. */}
+          <span
+            aria-hidden
+            title="drag to move"
+            className="shrink-0 font-mono text-[10px] leading-none text-fg-dim"
+          >
+            ⠿
+          </span>
           <TypeChip type={meta.type} />
           <span className="truncate font-mono text-xs text-fg">{meta.name}</span>
         </div>
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label="close"
-          className="font-mono text-[10px] text-fg-dim hover:text-error"
-        >
-          ✕
-        </button>
+        <div className="flex shrink-0 items-center gap-2">
+          {onUndo && undoLabel && (
+            <button
+              type="button"
+              // Pointer-down would start a drag on the header underneath.
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={() => sendLocal("Undo the last change.", onUndo())}
+              title={`Undo "${undoLabel}"`}
+              className="font-mono text-[9px] uppercase tracking-wider text-warn hover:text-fg"
+            >
+              ↶ undo
+            </button>
+          )}
+          {pos && (
+            <button
+              type="button"
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={() => setPos(null)}
+              title="snap back under the column header"
+              className="font-mono text-[9px] uppercase tracking-wider text-fg-dim hover:text-fg"
+            >
+              reset
+            </button>
+          )}
+          <span
+            className={`font-mono text-[9px] uppercase tracking-wider ${
+              pinned ? "text-primary" : "text-fg-dim"
+            }`}
+            title={
+              pinned
+                ? "pinned — stays open until ✕, Esc, or re-clicking this column's header; clicking another column moves it there"
+                : "click anywhere in the column to pin"
+            }
+          >
+            {pinned ? "pinned" : "hover"}
+          </span>
+          <button
+            type="button"
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={onClose}
+            aria-label="close"
+            className="font-mono text-[10px] text-fg-dim hover:text-error"
+          >
+            ✕
+          </button>
+        </div>
       </header>
       {messages.length > 0 && (
         <div ref={scrollRef} className="min-h-0 flex-1 overflow-auto px-3 py-2">
