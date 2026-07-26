@@ -64,7 +64,6 @@ import {
   detectDateColumns,
   reformatDateColumns,
 } from "./cleaning";
-import { CLIMATE_SAMPLE } from "./climateSampleData";
 import { buildColumnStageContext, placeholderHintFor } from "./columnChatHints";
 import { getColumnMetas } from "./columnMetaCache";
 import {
@@ -90,13 +89,11 @@ import {
   previewCombine,
   suggestCombine,
 } from "./combineData";
-import { buildDirtySample } from "./dirtySampleData";
 import { type ExportFormat, exportDataset } from "./exportDataset";
 import { compileFormula, previewFormula, validateColumnName } from "./formulaEvaluator";
 import { useScelo } from "./sceloContext";
 import { useNodeChat } from "./useNodeChat";
 import { columnRelevance, numericColumns as workspaceNumericColumns } from "./workspace";
-import { buildWorkspaceDemo } from "./workspaceSampleData";
 
 echarts.use([
   TitleComponent,
@@ -136,7 +133,9 @@ import {
   minMax,
   summarise,
   summariseDataset,
+  SAMPLES as CORE_SAMPLES,
 } from "@scelo/core";
+import type { SampleKey } from "@scelo/core";
 
 export type { CellValue, ColumnMeta, ColumnType, Dataset, Filter, Row };
 
@@ -264,49 +263,10 @@ async function parseParquet(file: File): Promise<{
   };
 }
 
-// Tiny seeded LCG so the synthetic dataset is stable across reloads.
-function lcg(seed: number): () => number {
-  let s = seed >>> 0;
-  return () => {
-    s = (s * 1664525 + 1013904223) >>> 0;
-    return s / 0xffffffff;
-  };
-}
-
-// Build the bundled climate reanalysis sample as a Dataset. The 30-day
-// Pretoria ERA5 / MERRA-2 / JRA-3Q preview we use in the Hard Data
-// model-detail panel doubles as a useful Soft Data workstation sample —
-// the user can filter on a particular reanalysis, derive a heat-index
-// column, or pipe the slice through the Tools workstation to pick a
-// parametric model. We reuse the exact bundled rows so the numbers stay
-// consistent with the climate-data lineage panel downstream.
-function syntheticClimate(): Dataset {
-  const rows: Row[] = CLIMATE_SAMPLE.map((r) => ({
-    date: r.date,
-    t2m_era5: r.t2m_era5,
-    t2m_merra2: r.t2m_merra2,
-    t2m_jra3q: r.t2m_jra3q,
-    pr_era5: r.pr_era5,
-    pr_merra2: r.pr_merra2,
-    pr_jra3q: r.pr_jra3q,
-  }));
-  return {
-    name: "climate_pretoria_jan2024 (era5 / merra-2 / jra-3q)",
-    columns: ["date", "t2m_era5", "t2m_merra2", "t2m_jra3q", "pr_era5", "pr_merra2", "pr_jra3q"],
-    rows,
-  };
-}
-
 // Registry of the in-app sample datasets the "load sample" picker offers.
 // Adding a new sample is one entry here — the picker modal renders cards
 // from this list and the load action dispatches by key.
-export type SampleKey =
-  | "claims"
-  | "climate"
-  | "dirty"
-  | "lifelib-mp"
-  | "wmtr-scenarios"
-  | "workspace-demo";
+export type { SampleKey } from "@scelo/core";
 
 export type SampleOption = {
   key: SampleKey;
@@ -322,381 +282,23 @@ export type SampleOption = {
 
 export const SAMPLE_OPTIONS_LIST = (): SampleOption[] => SAMPLE_OPTIONS;
 
-const SAMPLE_OPTIONS: Array<{
-  key: SampleKey;
-  build: () => Dataset;
-  title: string;
-  subtitle: string;
-  blurb: string;
-  rows: number;
-  cols: number;
-  accent: "accent-2" | "warn" | "error" | "accent-3";
-  badge: string;
-}> = [
-  {
-    key: "claims",
-    build: () => syntheticClaims(),
-    title: "Synthetic claims",
-    subtitle: "P&C reserving / pricing demo",
-    blurb:
-      "~80-row mixed-type dataset shaped as a proper INCOMPLETE claims triangle (origins 2018–2024, dev periods truncated to the latest calendar period). Columns: policy_id, origin_year, dev_period, line, SA province, age, sex, paid, incurred, settled. Ideal for chain-ladder / Mack / BF + GLM models.",
-    rows: 80,
-    cols: 10,
-    accent: "accent-2",
-    badge: "claims",
-  },
-  {
-    key: "climate",
-    build: () => syntheticClimate(),
-    title: "Climate reanalysis ensemble",
-    subtitle: "ERA5 / MERRA-2 / JRA-3Q · Pretoria · Jan 2024",
-    blurb:
-      "30 daily records over a single grid-cell with 2-m temperature and total precipitation under all three reanalyses. Same data the Hard Data climate-lineage panel renders downstream; ready for parametric trigger calibration and CLIMADA-style work.",
-    rows: 30,
-    cols: 7,
-    accent: "warn",
-    badge: "climate",
-  },
-  {
-    key: "dirty",
-    build: () => buildDirtySample(),
-    title: "Messy intake (dirty demo)",
-    subtitle: "exercises every cleaning op in one sample",
-    blurb:
-      "53-row customer ledger with the full real-world mess: $/comma/parens currency strings, %-suffixed numbers, -999 / 9999 sentinel ages, mixed Y/N/yes/no/1/0 booleans, mixed date formats (ISO + DD/MM/YYYY + 'Jan 5, 2024'), case-only region duplicates (WEST/west/West), a constant `country` column, two near-empty columns, headers with spaces, mojibake (UTF-8↔Latin-1), BOM/NBSP/zero-width characters, missing markers (N/A, ?, -, TBD, null), and three exact duplicate rows. Load it and the cleaning banner lights up with every op.",
-    rows: 53,
-    cols: 11,
-    accent: "error",
-    badge: "dirty",
-  },
-  {
-    key: "wmtr-scenarios",
-    build: () => syntheticWmtrScenarios(),
-    title: "WMTR · forecast scenarios",
-    subtitle: "domain-agnostic survival projection · α/w parameters",
-    blurb:
-      "12-row scenario table for the W(M, T, R) Monte Carlo forecast engine. Each row is a different actuarial entity (life book · pension scheme · reserve position · community) parameterised with α_M / α_T / α_R, relational weights, shock severity, and horizon. Picker routes straight to the `forecast` family.",
-    rows: 12,
-    cols: 12,
-    accent: "warn",
-    badge: "wmtr",
-  },
-  {
-    key: "lifelib-mp",
-    build: () => syntheticLifelibMP(),
-    title: "Lifelib · model points",
-    subtitle: "term life MP file · lifelib basiclife/BasicTerm_M",
-    blurb:
-      "100-row in-force model-point file shaped like lifelib's basic_term_sample: policy_id, age_at_entry, sex, sum_assured, policy_term, duration_mth, premium_pp. Loads straight into the lifelib BasicTerm_M projection (in-browser TS port) and routes the AI picker to the `life` family. Same structure works for CashValue / IFRS17 / Solvency II life nodes.",
-    rows: 100,
-    cols: 7,
-    accent: "accent-3",
-    badge: "lifelib",
-  },
-  {
-    key: "workspace-demo",
-    build: () => buildWorkspaceDemo(),
-    title: "Workspace demo",
-    subtitle: "decision-relevant is not max-variance · global workspace",
-    blurb:
-      "2,000-policy synthetic annuity book with three genuine low-variance drivers (mortality trend, cohort, smoking) acting through nonlinear channels on annuity_60 / life_exp_60 / survival_to_80, a directly readable crude_rate level, and ten high-variance but irrelevant operational columns (premium band, web logins, survey score, ...). Run a model, then the Hard-Data 'validate workspace' action to watch the active subspace recover the three real drivers while PCA chases the noise.",
-    rows: 2000,
-    cols: 17,
-    accent: "accent-2",
-    badge: "workspace",
-  },
-];
+const SAMPLE_PRESENTATION: Record<SampleKey, { accent: SampleOption["accent"]; badge: string }> = {
+  claims: { accent: "accent-2", badge: "claims" },
+  climate: { accent: "warn", badge: "climate" },
+  dirty: { accent: "error", badge: "dirty" },
+  "wmtr-scenarios": { accent: "warn", badge: "wmtr" },
+  "lifelib-mp": { accent: "accent-3", badge: "lifelib" },
+  "workspace-demo": { accent: "accent-2", badge: "workspace" },
+};
 
-// WMTR forecast scenarios sample — 12 rows, one per actuarial entity
-// type, parameterised with the W(M,T,R) Cobb-Douglas survival engine's
-// α / w / shock columns. The picker recognises (α_M, α_T, α_R) as the
-// `forecast` family signature and lands the user straight on
-// wmtr-projection + wmtr-sensitivity in Tools.
-function syntheticWmtrScenarios(): Dataset {
-  const rows: Row[] = [
-    // domain · αM · αT · αR · wF · wRel · wS · pProd · pFam · pRel · init_family · init_religion · shock · horizon
-    {
-      entity: "rural village",
-      alpha_m: 0.3,
-      alpha_t: 0.3,
-      alpha_r: 0.4,
-      w_f: 0.5,
-      w_rel: 0.3,
-      w_s: 0.2,
-      init_family: 0.8,
-      init_religion: 0.7,
-      shock: "severe",
-      horizon: 30,
-    },
-    {
-      entity: "urban district",
-      alpha_m: 0.5,
-      alpha_t: 0.3,
-      alpha_r: 0.2,
-      w_f: 0.3,
-      w_rel: 0.2,
-      w_s: 0.5,
-      init_family: 0.5,
-      init_religion: 0.4,
-      shock: "moderate",
-      horizon: 30,
-    },
-    {
-      entity: "coastal town",
-      alpha_m: 0.4,
-      alpha_t: 0.3,
-      alpha_r: 0.3,
-      w_f: 0.4,
-      w_rel: 0.3,
-      w_s: 0.3,
-      init_family: 0.65,
-      init_religion: 0.55,
-      shock: "severe",
-      horizon: 30,
-    },
-    {
-      entity: "term life book",
-      alpha_m: 0.55,
-      alpha_t: 0.2,
-      alpha_r: 0.25,
-      w_f: 0.3,
-      w_rel: 0.2,
-      w_s: 0.5,
-      init_family: 0.55,
-      init_religion: 0.45,
-      shock: "moderate",
-      horizon: 20,
-    },
-    {
-      entity: "annuity book",
-      alpha_m: 0.45,
-      alpha_t: 0.25,
-      alpha_r: 0.3,
-      w_f: 0.35,
-      w_rel: 0.25,
-      w_s: 0.4,
-      init_family: 0.6,
-      init_religion: 0.5,
-      shock: "moderate",
-      horizon: 40,
-    },
-    {
-      entity: "DB pension scheme",
-      alpha_m: 0.35,
-      alpha_t: 0.25,
-      alpha_r: 0.4,
-      w_f: 0.45,
-      w_rel: 0.25,
-      w_s: 0.3,
-      init_family: 0.7,
-      init_religion: 0.5,
-      shock: "moderate",
-      horizon: 30,
-    },
-    {
-      entity: "GI reserves · long-tail",
-      alpha_m: 0.6,
-      alpha_t: 0.3,
-      alpha_r: 0.1,
-      w_f: 0.2,
-      w_rel: 0.1,
-      w_s: 0.7,
-      init_family: 0.4,
-      init_religion: 0.3,
-      shock: "moderate",
-      horizon: 15,
-    },
-    {
-      entity: "GI reserves · short-tail",
-      alpha_m: 0.65,
-      alpha_t: 0.25,
-      alpha_r: 0.1,
-      w_f: 0.2,
-      w_rel: 0.1,
-      w_s: 0.7,
-      init_family: 0.45,
-      init_religion: 0.3,
-      shock: "mild",
-      horizon: 5,
-    },
-    {
-      entity: "health LTH book",
-      alpha_m: 0.5,
-      alpha_t: 0.3,
-      alpha_r: 0.2,
-      w_f: 0.3,
-      w_rel: 0.3,
-      w_s: 0.4,
-      init_family: 0.55,
-      init_religion: 0.45,
-      shock: "severe",
-      horizon: 20,
-    },
-    {
-      entity: "agrarian community · drought",
-      alpha_m: 0.25,
-      alpha_t: 0.3,
-      alpha_r: 0.45,
-      w_f: 0.55,
-      w_rel: 0.3,
-      w_s: 0.15,
-      init_family: 0.85,
-      init_religion: 0.75,
-      shock: "severe",
-      horizon: 30,
-    },
-    {
-      entity: "post-conflict town",
-      alpha_m: 0.3,
-      alpha_t: 0.3,
-      alpha_r: 0.4,
-      w_f: 0.45,
-      w_rel: 0.25,
-      w_s: 0.3,
-      init_family: 0.55,
-      init_religion: 0.45,
-      shock: "severe",
-      horizon: 30,
-    },
-    {
-      entity: "stable urban hub",
-      alpha_m: 0.5,
-      alpha_t: 0.3,
-      alpha_r: 0.2,
-      w_f: 0.25,
-      w_rel: 0.15,
-      w_s: 0.6,
-      init_family: 0.6,
-      init_religion: 0.45,
-      shock: "mild",
-      horizon: 30,
-    },
-  ];
-  return {
-    name: "wmtr_scenarios (synthetic)",
-    columns: [
-      "entity",
-      "alpha_m",
-      "alpha_t",
-      "alpha_r",
-      "w_f",
-      "w_rel",
-      "w_s",
-      "init_family",
-      "init_religion",
-      "shock",
-      "horizon",
-    ],
-    rows,
-  };
-}
-
-// Lifelib model-point sample. Structure mirrors
-// github.com/lifelib-dev/lifelib · basiclife / basic_term_sample.xlsx so an
-// actuary already using lifelib can drop their real MP file in and get the
-// same projection. 100 policies spread across age 25-65, mixed sex, mixed
-// term, with `duration_mth` non-zero on a third of the book so the
-// projection starts mid-coverage on those rows.
-function syntheticLifelibMP(): Dataset {
-  const rand = lcg(0xbeefcafe);
-  const rows: Row[] = [];
-  for (let i = 0; i < 100; i++) {
-    const age = 25 + Math.floor(rand() * 41); // 25-65
-    const sex = rand() > 0.5 ? "M" : "F";
-    const term = [10, 15, 20, 25, 30][Math.floor(rand() * 5)];
-    const sa = Math.round((100_000 + rand() * 900_000) / 1000) * 1000;
-    // ~1/3 of book already in force: duration up to half the term
-    const inForce = rand() < 0.33;
-    const durationMth = inForce ? Math.max(1, Math.floor(rand() * (term * 12) * 0.5)) : 0;
-    // crude premium = SA * qx * loading / 12, with qx_male slightly higher
-    const qx = 0.00022 + 2.7e-6 * Math.pow(1.124, age) * (sex === "M" ? 1.05 : 1.0);
-    const monthly = Math.round(((sa * qx * 1.2) / 12) * 100) / 100;
-    rows.push({
-      policy_id: `MP${(10000 + i).toString()}`,
-      age_at_entry: age,
-      sex,
-      sum_assured: sa,
-      policy_term: term,
-      duration_mth: durationMth,
-      premium_pp: monthly,
-    });
-  }
-  return {
-    name: "lifelib_basic_term_mp (synthetic)",
-    columns: [
-      "policy_id",
-      "age_at_entry",
-      "sex",
-      "sum_assured",
-      "policy_term",
-      "duration_mth",
-      "premium_pp",
-    ],
-    rows,
-  };
-}
-
-function syntheticClaims(): Dataset {
-  const rand = lcg(0xdeadbeef);
-  const states = ["GP", "WC", "KZN", "EC", "FS", "MP", "LP", "NW", "NC"];
-  const lines = ["motor", "household", "liability", "engineering", "marine"];
-  // Build a proper INCOMPLETE triangle: for each origin year, only emit
-  // claim rows where (origin + dev) ≤ latest calendar period. The latest
-  // origin gets only dev=0 (one diagonal of a real triangle), the earliest
-  // origin gets the full development tail. Chain-ladder + Mack +
-  // Bornhuetter-Ferguson all collapse to IBNR=0 on a square / fully-developed
-  // triangle, so without this constraint the reserving runners report
-  // misleading 0.00 headlines on Hard Data.
-  const origins = [2018, 2019, 2020, 2021, 2022, 2023, 2024];
-  const latestCal = origins[origins.length - 1]; // 2024
-  const rows: Row[] = [];
-  let i = 0;
-  for (const origin of origins) {
-    const maxDev = latestCal - origin; // 0..6
-    for (let dev = 0; dev <= maxDev; dev++) {
-      // 2-4 claim rows per (origin, dev) cell so each cell is non-trivial,
-      // and the overall row count lands around ~70 — close to the prior
-      // sample size for stable Soft Data stats.
-      const cellRows = 2 + Math.floor(rand() * 3);
-      for (let k = 0; k < cellRows; k++) {
-        const sev = Math.exp(8 + rand() * 3) * (1 + dev * 0.1);
-        const age = 18 + Math.floor(rand() * 60);
-        const sex = rand() > 0.5 ? "M" : "F";
-        const settled = dev >= 3 ? rand() > 0.15 : rand() > 0.6;
-        const incurred = rand() < 0.05 ? null : Math.round(sev * (1.05 + rand() * 0.25));
-        rows.push({
-          policy_id: `P${10000 + i}`,
-          origin_year: origin,
-          dev_period: dev,
-          line: lines[Math.floor(rand() * lines.length)],
-          state: states[Math.floor(rand() * states.length)],
-          age,
-          sex,
-          paid: Math.round(sev),
-          incurred,
-          settled: settled ? "yes" : "no",
-        });
-        i++;
-      }
-    }
-  }
-  return {
-    name: "claims_sample (synthetic)",
-    columns: [
-      "policy_id",
-      "origin_year",
-      "dev_period",
-      "line",
-      "state",
-      "age",
-      "sex",
-      "paid",
-      "incurred",
-      "settled",
-    ],
-    rows,
-  };
-}
+// The samples themselves live in @scelo/core (shared with the TUI — one
+// definition or the two surfaces drift apart on what claims to be the same
+// data). This registry is that list plus the card presentation only this
+// app has a use for.
+const SAMPLE_OPTIONS: SampleOption[] = CORE_SAMPLES.map((spec) => ({
+  ...spec,
+  ...SAMPLE_PRESENTATION[spec.key],
+}));
 
 // ── type detection + stats ───────────────────────────────────────────────────
 
