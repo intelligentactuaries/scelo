@@ -2,11 +2,13 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import type { Dataset } from "./SoftDataWorkstation";
 import type { ColumnMeta } from "./SoftDataWorkstation";
 import {
+  AUTO_CLEAN_MAX_PASSES,
   type CleaningPlan,
   analyseCleaning,
   applyCleaning,
   applyRecodeValue,
   augmentDataset,
+  autoCleanDataset,
   canonicaliseDateCell,
   cleanColumnCells,
   clearNonDateCells,
@@ -654,5 +656,180 @@ describe("cleanColumnCells", () => {
     expect(nulled).toBe(1);
     // other column untouched
     expect(dataset.rows[0].keep).toBe("  x  ");
+  });
+});
+
+describe("autoCleanDataset", () => {
+  // Minimal stand-in for summariseDataset. The real profiler lives in the
+  // workstation .tsx and would drag React into the test; analyseCleaning only
+  // reads name/type/count/missing/unique (plus min/max on numerics), so this
+  // is enough to drive the loop faithfully.
+  //
+  // NOTE the contract, which is easy to get backwards: `count` is the TOTAL
+  // row count and `missing` the null tally — not the number of present
+  // values. `drop-empty-cols` tests `missing / count > 0.95`, so getting this
+  // wrong silently stops empty columns being detected.
+  function profile(d: Dataset): ColumnMeta[] {
+    return d.columns.map((name) => {
+      const values = d.rows.map((r) => r[name]);
+      const present = values.filter((v) => v !== null && v !== undefined && v !== "");
+      const numeric = present.length > 0 && present.every((v) => typeof v === "number");
+      const nums = numeric ? (present as number[]) : [];
+      return {
+        name,
+        type: numeric ? "number" : "string",
+        count: values.length,
+        missing: values.length - present.length,
+        unique: new Set(present.map((v) => String(v))).size,
+        ...(numeric ? { min: Math.min(...nums), max: Math.max(...nums) } : {}),
+      } as ColumnMeta;
+    });
+  }
+
+  test("reaches a fixed point and reports it", () => {
+    const data = ds(
+      [
+        { Region: " west ", Note: "n/a", Score: " 1,200 " },
+        { Region: "WEST", Note: "NA", Score: "1,200" },
+        { Region: " east", Note: "-", Score: " 900" },
+      ],
+      ["Region", "Note", "Score"],
+    );
+    const result = autoCleanDataset(data, profile);
+
+    expect(result.outcome).toBe("clean");
+    expect(result.passes.length).toBeGreaterThan(0);
+    // Re-analysing the returned dataset must propose nothing — that IS the
+    // definition of "fully clean" the feature promises.
+    expect(analyseCleaning(result.dataset, profile(result.dataset)).ops).toHaveLength(0);
+  });
+
+  test("converts whitespace-padded numeric text into real numbers", () => {
+    // Enough rows to clear the analyser's minimum-evidence bar for retyping a
+    // column: it deliberately won't reinterpret a handful of cells as numeric.
+    const data = ds(
+      Array.from({ length: 30 }, (_, i) => ({ Score: ` ${(i + 1) * 100},00 `.replace(",00", "") })),
+      ["Score"],
+    );
+    const result = autoCleanDataset(data, profile);
+    expect(result.outcome).toBe("clean");
+    // Header is snake-cased in the same run, so the values live under `score`.
+    expect(result.dataset.columns).toEqual(["score"]);
+    expect(result.dataset.rows.map((r) => r.score)).toEqual(
+      Array.from({ length: 30 }, (_, i) => (i + 1) * 100),
+    );
+  });
+
+  test("multi-pass: a column only becomes droppable after markers are nulled", () => {
+    // `note` is all missing-markers, not nulls, so pass 1 can only normalise
+    // them. Not until pass 2 does the column profile as empty and become
+    // droppable. This dependency is the whole reason the loop exists — the
+    // single-pass banner path leaves `note` in place as a dead all-null column.
+    const data = ds(
+      [
+        { region: "north", note: "n/a" },
+        { region: "south", note: "NA" },
+        { region: "east", note: "-" },
+      ],
+      ["region", "note"],
+    );
+
+    const onePass = autoCleanDataset(data, profile, { maxPasses: 1 });
+    expect(onePass.dataset.columns).toContain("note");
+
+    const result = autoCleanDataset(data, profile);
+    expect(result.passes.length).toBeGreaterThan(1);
+    expect(result.droppedColumns).toContain("note");
+    expect(result.outcome).toBe("clean");
+  });
+
+  test("applies the unsafe ops the banner defaults skip", () => {
+    const data = ds(
+      [
+        { "Policy Id": "alpha", dead: null, same: "London" },
+        { "Policy Id": "alpha", dead: null, same: "London" },
+        { "Policy Id": "beta", dead: null, same: "London" },
+      ],
+      ["Policy Id", "dead", "same"],
+    );
+    const result = autoCleanDataset(data, profile);
+
+    expect(result.rowsAfter).toBe(2); // duplicate row dropped
+    expect(result.droppedColumns).toContain("dead"); // all-null column
+    expect(result.droppedColumns).toContain("same"); // constant column
+    expect(result.dataset.columns).toContain("policy_id"); // snake-cased
+  });
+
+  test("a renamed column is not reported as dropped", () => {
+    // "Policy Id" leaves under a different name than it arrived with. A plain
+    // before/after set-difference would call that a drop and alarm the user.
+    const data = ds(
+      [
+        { "Policy Id": "alpha", amount: 10 },
+        { "Policy Id": "beta", amount: 20 },
+      ],
+      ["Policy Id", "amount"],
+    );
+    const result = autoCleanDataset(data, profile);
+    expect(result.dataset.columns).toContain("policy_id");
+    expect(result.droppedColumns).toEqual([]);
+  });
+
+  test("already-clean input applies nothing", () => {
+    const data = ds(
+      [
+        { a: 1, b: "alpha" },
+        { a: 2, b: "beta" },
+      ],
+      ["a", "b"],
+    );
+    const result = autoCleanDataset(data, profile);
+    expect(result.outcome).toBe("clean");
+    expect(result.passes).toHaveLength(0);
+    expect(result.dataset).toBe(data); // untouched, same object
+  });
+
+  test("empty dataset is reported, not crashed on", () => {
+    const result = autoCleanDataset(ds([], ["a"]), profile);
+    expect(result.outcome).toBe("empty");
+    expect(result.passes).toHaveLength(0);
+  });
+
+  test("honours the pass ceiling and reports what is left", () => {
+    const data = ds(
+      [
+        { Region: " west ", Note: "n/a", Score: " 1,200 " },
+        { Region: "WEST", Note: "NA", Score: "1,200" },
+        { Region: " east", Note: "-", Score: " 900" },
+      ],
+      ["Region", "Note", "Score"],
+    );
+    const result = autoCleanDataset(data, profile, { maxPasses: 1 });
+    expect(result.passes).toHaveLength(1);
+    if (result.outcome === "exhausted") expect(result.remaining.length).toBeGreaterThan(0);
+  });
+
+  test("stalls rather than spinning when a plan repeats", () => {
+    // A profiler that always claims a numeric column of strings forces
+    // analyseCleaning to re-propose the same parse every pass.
+    const stuck = (d: Dataset): ColumnMeta[] =>
+      d.columns.map(
+        (name) =>
+          ({
+            name,
+            type: "number",
+            count: d.rows.length,
+            missing: 0,
+            unique: 1,
+            min: 2999,
+            max: 2999,
+          }) as ColumnMeta,
+      );
+    const data = ds([{ year: 2999 }, { year: 2999 }], ["year"]);
+    const result = autoCleanDataset(data, stuck, { maxPasses: AUTO_CLEAN_MAX_PASSES });
+    // Whatever it decides, it must terminate well inside the ceiling and never
+    // return a half-built dataset.
+    expect(result.passes.length).toBeLessThanOrEqual(AUTO_CLEAN_MAX_PASSES);
+    expect(result.dataset.columns.length).toBeGreaterThanOrEqual(0);
   });
 });

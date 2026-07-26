@@ -11,6 +11,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { swarmStartCommand } from "../workspace/SwarmPanel";
+import { EditableNumber } from "./EditableNumber";
 import type { CellValue, Dataset, Row } from "./SoftDataWorkstation";
 
 const SWARM_BASE = "http://localhost:3010";
@@ -175,8 +176,28 @@ export function SimulateScenarioModal({
   // POST + classify failures. Returns the parsed JSON body, or null
   // after setting `error` (network vs HTTP vs bad-body each get their
   // own message — only network failures blame a missing server).
-  const postJson = async (endpoint: string, payload: unknown): Promise<unknown | null> => {
-    const body = JSON.stringify(payload);
+  /**
+   * POST and consume the swarm's SSE variant.
+   *
+   * A plain JSON POST is silent for the whole reference pass — one LLM call
+   * per reference agent — and a browser aborts a fetch that has received no
+   * response headers for ~300s. Measured on this stack: a 120-agent augment
+   * takes 317s, already past that line, and the new 400-agent default is
+   * ~17 minutes. Streaming sends headers immediately and heartbeats the
+   * socket, so the run survives; it also gives us real progress to show
+   * instead of an unexplained multi-minute freeze.
+   *
+   * The final `result` event carries exactly the payload the JSON branch
+   * would have returned, so callers are unchanged downstream.
+   */
+  const [progress, setProgress] = useState<string>("");
+
+  const postStreaming = async (
+    endpoint: string,
+    payload: unknown,
+    onProgress: (label: string) => void,
+  ): Promise<unknown | null> => {
+    const body = JSON.stringify({ ...(payload as object), stream: true });
     let r: Response;
     try {
       r = await fetch(`${SWARM_BASE}${endpoint}`, {
@@ -193,12 +214,63 @@ export function SimulateScenarioModal({
       setError(describeHttpFailure(endpoint, r.status, r.statusText, text));
       return null;
     }
-    try {
-      return await r.json();
-    } catch {
-      setError({ message: `swarm ${endpoint} returned a non-JSON body`, hint: null });
+    if (!r.body) {
+      setError({ message: `swarm ${endpoint} returned no body`, hint: null });
       return null;
     }
+    const reader = r.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = "";
+    let result: unknown | null = null;
+    let failure: string | null = null;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      // Frames are separated by a blank line; ": hb" heartbeats carry no
+      // data line and fall through harmlessly.
+      let idx = buf.indexOf("\n\n");
+      while (idx !== -1) {
+        const frame = buf.slice(0, idx);
+        buf = buf.slice(idx + 2);
+        for (const line of frame.split("\n")) {
+          if (!line.startsWith("data:")) continue;
+          try {
+            const ev = JSON.parse(line.slice(5).trim()) as Record<string, unknown>;
+            if (ev.type === "phase") {
+              onProgress(
+                ev.phase === "refs"
+                  ? "resolving compound references…"
+                  : ev.phase === "sim"
+                    ? `simulating ${ev.total ?? ""} reference agents…`
+                    : "scaling results…",
+              );
+            } else if (ev.type === "sim_progress") {
+              onProgress(`simulating reference agents · ${ev.done}/${ev.total}`);
+            } else if (ev.type === "result") {
+              result = ev;
+            } else if (ev.type === "error") {
+              failure = String(ev.message ?? "unknown swarm error");
+            }
+          } catch {
+            // malformed frame — skip it rather than abandoning the run
+          }
+        }
+        idx = buf.indexOf("\n\n");
+      }
+    }
+    if (failure) {
+      setError({ message: failure, hint: null });
+      return null;
+    }
+    if (!result) {
+      setError({
+        message: `swarm ${endpoint} closed without returning a result`,
+        hint: "the run may have been interrupted by a server restart — try again",
+      });
+      return null;
+    }
+    return result;
   };
 
   const run = async () => {
@@ -210,7 +282,11 @@ export function SimulateScenarioModal({
       .filter(Boolean);
     try {
       if (mode === "generate") {
-        const json = (await postJson("/api/simulate", { scenario, drugs, sampleSize })) as {
+        const json = (await postStreaming(
+          "/api/simulate",
+          { scenario, drugs, sampleSize },
+          setProgress,
+        )) as {
           rows: Array<Record<string, unknown>>;
           columns: string[];
         } | null;
@@ -234,13 +310,17 @@ export function SimulateScenarioModal({
           setError({ message: guard, hint: null });
           return;
         }
-        const json = (await postJson("/api/simulate/augment", {
-          scenario,
-          drugs,
-          sampleSize,
-          rows: existingDataset.rows,
-          expectedColumns: existingDataset.columns,
-        })) as {
+        const json = (await postStreaming(
+          "/api/simulate/augment",
+          {
+            scenario,
+            drugs,
+            sampleSize,
+            rows: existingDataset.rows,
+            expectedColumns: existingDataset.columns,
+          },
+          setProgress,
+        )) as {
           rows: Array<Record<string, unknown>>;
           augmentedColumns: string[];
         } | null;
@@ -259,6 +339,7 @@ export function SimulateScenarioModal({
     } catch (e) {
       setError({ message: e instanceof Error ? e.message : String(e), hint: null });
     } finally {
+      setProgress("");
       setBusy(false);
     }
   };
@@ -359,9 +440,18 @@ export function SimulateScenarioModal({
           />
         </label>
 
-        <label className="mb-4 flex flex-col gap-1">
+        <div className="mb-4 flex flex-col gap-1">
           <span className="font-mono text-[10px] uppercase tracking-wider text-fg-dim">
-            sample size · {sampleSize}{" "}
+            sample size ·{" "}
+            <EditableNumber
+              value={sampleSize}
+              min={20}
+              max={mode === "augment" ? 400 : 1000}
+              step={20}
+              onChange={setSampleSize}
+              disabled={busy}
+              ariaLabel="sample size value"
+            />{" "}
             <span className="text-fg-dim normal-case tracking-normal">
               (
               {mode === "augment"
@@ -378,8 +468,21 @@ export function SimulateScenarioModal({
             value={sampleSize}
             onChange={(e) => setSampleSize(Number(e.target.value))}
             disabled={busy}
+            aria-label="sample size"
           />
-        </label>
+        </div>
+
+        {/* Live progress from the SSE stream. A 400-agent reference pass is
+            minutes long; without this the modal looks frozen. */}
+        {busy && progress && (
+          <div className="mb-3 flex items-center gap-2 rounded border border-border bg-bg p-2 font-mono text-[11px] text-fg-mute">
+            <span
+              aria-hidden
+              className="inline-block h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-primary"
+            />
+            {progress}
+          </div>
+        )}
 
         {mode === "augment" && augmentGuard && (
           <div className="mb-3 rounded border border-warn/40 bg-warn/10 p-2 font-mono text-[11px] text-warn">

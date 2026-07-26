@@ -105,11 +105,13 @@ function NodeChatbotPanel({
    *  assistant history so "add all suggested" can resolve the suggestions. */
   onLocalCommand?: (text: string, assistantHistory?: string[]) => string | null;
 }) {
-  const { chatMemoryPrefix } = useScelo();
+  const { chatMemoryPrefix, project } = useScelo();
   const memoryKey = chatMemoryPrefix ? `${chatMemoryPrefix}:${chatId}` : undefined;
   const { messages, isStreaming, send, sendLocal, stop } = useNodeChat(stageContext, {
     memoryKey,
     onAssistantFinal,
+    logLabel: `tools · ${chatId.replace(/-/g, " · ")}`,
+    logProject: project?.name,
   });
   const [draft, setDraft] = useState("");
   const scrollRef = useRef<HTMLDivElement | null>(null);
