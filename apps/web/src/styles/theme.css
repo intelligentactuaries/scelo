@@ -26,16 +26,20 @@
     --rgb-bg-1: 242 238 226;      /* #F2EEE2 — lighter cream inset */
     --rgb-bg-2: 218 213 198;      /* #DAD5C6 — deeper cream hover/footer */
     --rgb-border: 205 199 184;    /* #CDC7B8 — warm tan border, deepened with the new bg */
-    --rgb-fg: 24 23 21;           /* #181715 — warm near-black */
+    /* Text ramp. Every tier clears WCAG AA (4.5:1) against ALL THREE
+       surfaces — including the deep cream bg-2 — and adjacent tiers stay
+       >=10 ΔL* apart so the fg / mute / dim hierarchy is still legible.
+       (Was: mute 4.68, dim 2.52 on bg-2 — dim was unreadable.) */
+    --rgb-fg: 24 23 21;           /* #181715 — warm near-black   12.2:1 */
     --rgb-fg-brand: 24 23 21;
-    --rgb-fg-mute: 94 90 82;      /* #5E5A52 */
-    --rgb-fg-dim: 140 132 118;    /* #8C8476 */
-    --rgb-dim: 140 132 118;
+    --rgb-fg-mute: 69 66 61;      /* #45423D — warm secondary     6.8:1 */
+    --rgb-fg-dim: 96 90 81;       /* #605A51 — warm tertiary      4.7:1 */
+    --rgb-dim: 96 90 81;
     --rgb-primary: 60 110 90;     /* #3C6E5A — muted forest (semantic: shipped) */
-    --rgb-warn: 180 117 60;       /* #B4753C — natural terracotta (semantic: in progress) */
-    --rgb-error: 183 58 58;
-    --rgb-accent-2: 55 96 204;
-    --rgb-accent-3: 118 73 199;
+    --rgb-warn: 138 90 46;        /* #8A5A2E — deep terracotta (semantic: in progress) */
+    --rgb-error: 180 57 57;       /* #B43939 */
+    --rgb-accent-2: 52 93 203;    /* #345DCB */
+    --rgb-accent-3: 118 73 199;   /* #7649C7 */
 
     --md-row-stripe: rgba(24, 23, 21, 0.03);
   }
@@ -45,11 +49,14 @@
     --rgb-bg-1: 34 30 26;         /* #221E1A */
     --rgb-bg-2: 44 39 33;         /* #2C2721 */
     --rgb-border: 66 58 49;       /* #423A31 */
-    --rgb-fg: 241 236 223;        /* #F1ECDF — warm off-white */
+    /* Same AA-on-every-surface rule as light, mirrored: the strictest
+       surface here is the raised bg-2 (#2C2721), not the base bg.
+       (Was: dim 2.86 on bg-2 — near-invisible warm grey on warm charcoal.) */
+    --rgb-fg: 241 236 223;        /* #F1ECDF — warm off-white    12.5:1 */
     --rgb-fg-brand: 250 246 234;
-    --rgb-fg-mute: 170 162 148;
-    --rgb-fg-dim: 116 108 96;
-    --rgb-dim: 130 122 110;
+    --rgb-fg-mute: 190 184 173;   /* #BEB8AD — warm secondary     7.5:1 */
+    --rgb-fg-dim: 151 143 130;    /* #978F82 — warm tertiary      4.6:1 */
+    --rgb-dim: 151 143 130;
     --rgb-primary: 110 180 145;   /* #6EB491 — brighter green for dark */
     --rgb-warn: 215 165 110;      /* #D7A56E — natural terracotta-amber for dark palette */
     --rgb-error: 230 110 110;
@@ -705,13 +712,17 @@
   --rgb-border: 205 199 184;
   --rgb-fg: 24 23 21;
   --rgb-fg-brand: 24 23 21;
-  --rgb-fg-mute: 94 90 82;
-  --rgb-fg-dim: 140 132 118;
-  --rgb-dim: 140 132 118;
+  /* Keep in lockstep with the :root light block above — these are the same
+     tokens, re-declared to shadow the dark overrides. Left stale they would
+     put the old sub-AA greys into printed PDFs, where ink contrast matters
+     most. */
+  --rgb-fg-mute: 69 66 61;
+  --rgb-fg-dim: 96 90 81;
+  --rgb-dim: 96 90 81;
   --rgb-primary: 60 110 90;
-  --rgb-warn: 180 117 60;
-  --rgb-error: 183 58 58;
-  --rgb-accent-2: 55 96 204;
+  --rgb-warn: 138 90 46;
+  --rgb-error: 180 57 57;
+  --rgb-accent-2: 52 93 203;
   --rgb-accent-3: 118 73 199;
   color-scheme: light;
 }
