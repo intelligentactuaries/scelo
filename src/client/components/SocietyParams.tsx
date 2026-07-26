@@ -1,4 +1,5 @@
 import type { SocietyParams } from '../../shared/types';
+import { EditableNumber, pctEdit } from './EditableNumber';
 
 const INCOME_KEYS = ['low', 'lower-mid', 'mid', 'upper-mid', 'high'] as const;
 const EDU_KEYS = ['primary', 'secondary', 'tertiary', 'postgrad'] as const;
@@ -81,6 +82,7 @@ export function SocietyParamsSliders({
         max={1}
         step={0.05}
         format={fmtPct}
+        {...pctEdit}
         onChange={(v) => set('urbanRatio', v)}
       />
       <Slider
@@ -90,6 +92,7 @@ export function SocietyParamsSliders({
         max={1}
         step={0.05}
         format={fmtPct}
+        {...pctEdit}
         onChange={(v) => set('riskTolerance', v)}
       />
       <Slider
@@ -99,6 +102,7 @@ export function SocietyParamsSliders({
         max={1}
         step={0.05}
         format={fmtPct}
+        {...pctEdit}
         onChange={(v) => set('financialLiteracy', v)}
       />
     </div>
@@ -126,6 +130,7 @@ export function IncomeMixSliders({ value, onChange }: MixProps) {
           max={1}
           step={0.05}
           format={fmtPct}
+          {...pctEdit}
           onChange={(v) => setMix({ value, onChange }, 'incomeMix', k, v)}
           dense
         />
@@ -146,6 +151,7 @@ export function EducationMixSliders({ value, onChange }: MixProps) {
           max={1}
           step={0.05}
           format={fmtPct}
+          {...pctEdit}
           onChange={(v) => setMix({ value, onChange }, 'educationMix', k, v)}
           dense
         />
@@ -166,6 +172,7 @@ export function EmploymentMixSliders({ value, onChange }: MixProps) {
           max={1}
           step={0.05}
           format={fmtPct}
+          {...pctEdit}
           onChange={(v) => setMix({ value, onChange }, 'employmentMix', k, v)}
           dense
         />
@@ -197,6 +204,8 @@ function Slider({
   format,
   onChange,
   dense,
+  toEdit,
+  fromEdit,
 }: {
   label: string;
   value: number;
@@ -206,6 +215,8 @@ function Slider({
   format: (v: number) => string;
   onChange: (v: number) => void;
   dense?: boolean;
+  toEdit?: (v: number) => string;
+  fromEdit?: (s: string) => number;
 }) {
   return (
     <div className={`slider-row ${dense ? 'dense' : ''}`}>
@@ -218,7 +229,18 @@ function Slider({
         value={value}
         onChange={(e) => onChange(Number(e.target.value))}
       />
-      <span className="num slider-readout">{format(value)}</span>
+      <EditableNumber
+        className="num slider-readout"
+        value={value}
+        min={min}
+        max={max}
+        step={step}
+        format={format}
+        onChange={onChange}
+        toEdit={toEdit}
+        fromEdit={fromEdit}
+        ariaLabel={`${label} value`}
+      />
     </div>
   );
 }

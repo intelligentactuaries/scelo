@@ -7,21 +7,27 @@
      website_v2/src/styles/theme.css. */
   --bg: #E8E4D8;               /* cream nudged toward warm-greige */
   --bg-2: #F2EEE2;             /* lighter cream — inset panels / hover */
-  --fg: #181715;               /* warm near-black */
-  --fg-2: #5E5A52;             /* warm muted secondary text */
-  --muted: #8C8476;            /* warm dim */
+  --fg: #181715;               /* warm near-black          — 12.2:1 on --bg */
+  /* Text ramp re-cut for WCAG AA: --muted was #8C8476 at 2.5:1, i.e. below
+     the 4.5:1 floor and the single biggest legibility complaint. Tiers are
+     >=10 ΔL* apart so fg / fg-2 / muted still read as a hierarchy. Values
+     match Scelo's theme.css so the iframed swarm and its host agree. */
+  --fg-2: #45423D;             /* warm muted secondary text —  6.8:1 */
+  --muted: #605A51;            /* warm dim                  —  4.7:1 */
   --grid: rgba(24, 23, 21, 0.10); /* hairline rules */
   --border: #CDC7B8;           /* warm tan border */
   --border-strong: #181715;    /* dark outline on focused inputs / Run Swarm */
 
   /* Status / semantic accents — punchy forest-green primary takes over
      from the old red accent. Reds re-aimed at error / adversarial. */
-  --consensus: #309061;        /* punchier forest green (semantic: shipped) */
-  --dissent: #C87D32;          /* punchier clay-orange (semantic: in progress) */
-  --adversarial: #B73A3A;
-  --accent: #309061;           /* primary brand cue — forest green */
-  --accent-soft: rgba(48, 145, 95, 0.12);
-  --link: #3760CC;             /* informational links */
+  /* Semantics deepened to clear 4.5:1 as TEXT on cream (they double as
+     fills, where the darker tone only helps the --bg text sitting on them). */
+  --consensus: #26714C;        /* forest green (semantic: shipped)     — 4.7:1 */
+  --dissent: #8E5823;          /* clay-orange (semantic: in progress)  — 4.6:1 */
+  --adversarial: #B43939;      /*                                      — 4.6:1 */
+  --accent: #26714C;           /* primary brand cue — forest green */
+  --accent-soft: rgba(38, 113, 76, 0.12);
+  --link: #345DCB;             /* informational links                  — 4.6:1 */
 
   --radius: 2px;               /* sharp — matches the website's 2px corners */
   --radius-lg: 4px;
@@ -44,9 +50,11 @@
 :root[data-theme="dark"] {
   --bg: #1B1815;
   --bg-2: #221E1A;
-  --fg: #F1ECDF;
-  --fg-2: #AAA294;
-  --muted: #746C60;
+  --fg: #F1ECDF;               /* — 12.5:1 on --bg */
+  /* Mirror of the light ramp. --muted was #746C60 at 2.9:1 on the raised
+     --bg-2 surface: a dark warm grey on warm charcoal, effectively invisible. */
+  --fg-2: #BEB8AD;             /* —  7.5:1 */
+  --muted: #978F82;            /* —  4.6:1 */
   --grid: rgba(241, 236, 223, 0.12);
   --border: #423A31;
   --border-strong: #F1ECDF;
@@ -431,24 +439,6 @@ select:focus {
   from { opacity: 0; transform: translateY(5px); }
   to { opacity: 1; transform: none; }
 }
-.sim-progress-head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  margin-bottom: 18px;
-}
-.sim-progress-eyebrow {
-  font-size: 11px;
-  letter-spacing: var(--track);
-  text-transform: uppercase;
-  color: var(--accent);
-}
-.sim-progress-elapsed {
-  font-family: ui-monospace, "SF Mono", Menlo, monospace;
-  font-size: 11px;
-  color: var(--muted);
-  font-variant-numeric: tabular-nums;
-}
 .sim-progress-phases {
   list-style: none;
   margin: 0;
@@ -506,30 +496,8 @@ select:focus {
   0%, 100% { box-shadow: 0 0 0 0 var(--accent-soft); }
   50% { box-shadow: 0 0 0 5px var(--accent-soft); }
 }
-.sim-progress-bar {
-  position: relative;
-  margin-top: 20px;
-  height: 2px;
-  border-radius: 2px;
-  overflow: hidden;
-  background: var(--border);
-}
-.sim-progress-bar span {
-  position: absolute;
-  top: 0;
-  height: 100%;
-  width: 36%;
-  border-radius: 2px;
-  background: var(--accent);
-  animation: simBar 1.5s ease-in-out infinite;
-}
-@keyframes simBar {
-  0% { left: -40%; }
-  100% { left: 100%; }
-}
 @media (prefers-reduced-motion: reduce) {
   .sim-phase.is-active .sim-phase-dot { animation: none; }
-  .sim-progress-bar span { animation-duration: 3s; }
 }
 
 .scenario-input {
@@ -1696,6 +1664,88 @@ code {
   color: var(--fg);
 }
 
+/* The readout is click-to-edit. It has to keep looking like a plain number
+   in the resting state — the button reset below strips the global button
+   chrome (pill border, padding, 500 weight) that would otherwise make every
+   slider row look like it ended in a button. The affordance is carried by
+   the hover underline and the cursor, not by a box. */
+.editable-number {
+  appearance: none;
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  font-size: 11px;
+  font-weight: inherit;
+  letter-spacing: inherit;
+  text-transform: none;
+  color: var(--fg);
+  cursor: text;
+  border-radius: 2px;
+  text-decoration: underline dotted transparent;
+  text-underline-offset: 3px;
+  transition: text-decoration-color 120ms ease, background 120ms ease;
+}
+
+.editable-number:hover,
+.editable-number:focus-visible {
+  text-decoration-color: var(--muted);
+  background: none;
+  border: none;
+  color: var(--fg);
+}
+
+.editable-number:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Editing state — same box metrics as the button so nothing shifts when it
+   swaps in. Sized to content by default; the two contexts below opt into
+   the widths their layouts need. */
+.editable-number-input {
+  width: auto;
+  min-width: 0;
+  appearance: none;
+  background: var(--bg-2);
+  border: 1px solid var(--accent);
+  border-radius: 2px;
+  padding: 1px 3px;
+  font: inherit;
+  font-size: 11px;
+  color: var(--fg);
+  outline: none;
+}
+
+/* Society-params rows: fill the fixed-width readout cell, right-aligned to
+   match the static numbers above and below it. */
+.slider-row .editable-number,
+.slider-row .editable-number-input {
+  width: 100%;
+  text-align: right;
+}
+
+/* Simulation controls: the readout sits INLINE inside the label line
+   ("population · 45.00M"), so it must stay content-sized. The element
+   selector is deliberate — `.simulation-control input[type="text"]` above
+   is more specific than `.editable-number-input` alone and would otherwise
+   turn this into the full-width padded box used for the drugs field. */
+.simulation-control input.editable-number-input {
+  display: inline;
+  width: 11ch;
+  padding: 0 3px;
+  font-family: var(--font);
+  text-align: left;
+  text-transform: none;
+}
+
+/* The value should read as data against the muted uppercase label. */
+.panel-label .editable-number {
+  color: var(--fg);
+  text-transform: none;
+}
+
 input[type='range'] {
   -webkit-appearance: none;
   appearance: none;
@@ -1913,20 +1963,6 @@ input[type='range']:focus::-moz-range-thumb {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-}
-
-.justify-spinner {
-  display: inline-block;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  border: 1px solid var(--muted);
-  border-top-color: transparent;
-  animation: justify-spin 700ms linear infinite;
-}
-
-@keyframes justify-spin {
-  to { transform: rotate(360deg); }
 }
 
 .justify-error {
@@ -3639,7 +3675,11 @@ body.is-resizing * {
   /* Forest-green primary kept ONLY for the inline dot and re-simulate CTA.
      Everything else uses swarm tokens (`var(--bg)`, `var(--fg)`, `var(--muted)`,
      `var(--grid)`) so the strip stops floating between two white surfaces. */
-  --wmtr-primary: #2ea36b;          /* swarm's --consensus, same green hue */
+  /* Follows --consensus rather than hardcoding #2ea36b, which was a single
+     mid-green used in BOTH themes: 2.5:1 on cream (unreadable) and 5.5:1 on
+     charcoal. Aliasing makes it theme-aware and keeps it in step with the
+     token it was always meant to mirror. */
+  --wmtr-primary: var(--consensus);
   --wmtr-easing:  cubic-bezier(0.16, 1, 0.3, 1);
 
   background: transparent;
@@ -3910,7 +3950,9 @@ body.is-resizing * {
   font-size: 11.5px;
   letter-spacing: var(--track);
   background: var(--wmtr-primary);
-  color: #ffffff;
+  /* --bg, not #ffffff: in dark theme --consensus is a bright mint and white
+     label text on it drops to ~1.5:1. --bg inverts correctly in both themes. */
+  color: var(--bg);
   border: 1px solid var(--wmtr-primary);
   padding: 7px 14px;
   border-radius: var(--radius-pill);
@@ -3960,7 +4002,7 @@ body.is-resizing * {
    ───────────────────────────────────────────────────────────────────────── */
 
 .forecast-canvas {
-  --forecast-primary: #2ea36b;
+  --forecast-primary: var(--consensus);   /* theme-aware; see --wmtr-primary */
   --forecast-easing:  cubic-bezier(0.16, 1, 0.3, 1);
 
   display: flex;
@@ -4515,31 +4557,6 @@ body.is-resizing * {
 .run-status-retry:hover { border-color: var(--border-strong); }
 
 .run-status-emblem { display: grid; place-items: center; width: 62px; height: 62px; margin-bottom: 2px; }
-
-/* running: a comet-tail of dots orbiting a ring — reads as live swarm activity */
-.run-status-orbit { position: relative; display: block; width: 52px; height: 52px; }
-.run-status-orbit i {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  width: 8px;
-  height: 8px;
-  margin: -4px;
-  border-radius: 50%;
-  background: var(--accent);
-  animation: run-orbit 1.5s cubic-bezier(0.45, 0, 0.55, 1) infinite;
-}
-.run-status-orbit i:nth-child(2) { animation-delay: -0.18s; opacity: 0.85; }
-.run-status-orbit i:nth-child(3) { animation-delay: -0.36s; opacity: 0.70; }
-.run-status-orbit i:nth-child(4) { animation-delay: -0.54s; opacity: 0.58; }
-.run-status-orbit i:nth-child(5) { animation-delay: -0.72s; opacity: 0.45; }
-.run-status-orbit i:nth-child(6) { animation-delay: -0.90s; opacity: 0.32; }
-@keyframes run-orbit {
-  0%   { transform: rotate(0deg)   translateX(21px) scale(1); }
-  50%  { transform: rotate(180deg) translateX(21px) scale(0.55); }
-  100% { transform: rotate(360deg) translateX(21px) scale(1); }
-}
-
 /* non-running: three dots (blink for stalled/error) */
 .run-status-glyph { display: inline-flex; gap: 7px; }
 .run-status-glyph i { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); }
@@ -4590,4 +4607,318 @@ body.is-resizing * {
   .run-status-orbit i,
   .run-status-glyph i,
   .run-status-chip-dot { animation: none; }
+}
+
+.sim-progress-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 18px;
+}
+
+.sim-progress-eyebrow {
+  font-size: 11px;
+  letter-spacing: var(--track);
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.sim-progress-elapsed {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.sim-progress-bar {
+  position: relative;
+  margin-top: 20px;
+  height: 2px;
+  border-radius: 2px;
+  overflow: hidden;
+  background: var(--border);
+}
+
+.sim-progress-bar span {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  width: 36%;
+  border-radius: 2px;
+  background: var(--accent);
+  animation: simBar 1.5s ease-in-out infinite;
+}
+
+.sim-progress-bar span { animation-duration: 3s; }
+
+.justify-spinner {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  border: 1px solid var(--muted);
+  border-top-color: transparent;
+  animation: justify-spin 700ms linear infinite;
+}
+
+/* running: a comet-tail of dots orbiting a ring — reads as live swarm activity */
+.run-status-orbit { position: relative; display: block; width: 52px; height: 52px; }
+
+.run-status-orbit i {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 8px;
+  height: 8px;
+  margin: -4px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: run-orbit 1.5s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+}
+
+.run-status-orbit i:nth-child(2) { animation-delay: -0.18s; opacity: 0.85; }
+
+.run-status-orbit i:nth-child(3) { animation-delay: -0.36s; opacity: 0.70; }
+
+.run-status-orbit i:nth-child(4) { animation-delay: -0.54s; opacity: 0.58; }
+
+.run-status-orbit i:nth-child(5) { animation-delay: -0.72s; opacity: 0.45; }
+
+.run-status-orbit i:nth-child(6) { animation-delay: -0.90s; opacity: 0.32; }
+
+@keyframes justify-spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes run-orbit {
+  0%   { transform: rotate(0deg)   translateX(21px) scale(1); }
+  50%  { transform: rotate(180deg) translateX(21px) scale(0.55); }
+  100% { transform: rotate(360deg) translateX(21px) scale(1); }
+}
+
+@keyframes simBar {
+  0% { left: -40%; }
+  100% { left: 100%; }
+}
+
+/* One-shot fade shared by the overlay and its resume chip. */
+@keyframes iaFadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+/* ── full-screen deliberation overlay (ported from Scelo) ────────────────────
+   Owns the screen while a multi-minute run is in flight. The point is that it
+   OVERWHELMS: a wait this long has to look like progress, not a frozen app. */
+
+.delib-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--bg) 90%, transparent);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  animation: iaFadeIn 0.24s ease-out both;
+}
+
+.delib-top {
+  position: absolute;
+  inset-inline: 0;
+  top: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 24px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.delib-eyebrow {
+  text-transform: uppercase;
+  letter-spacing: var(--track);
+}
+
+.delib-elapsed {
+  font-variant-numeric: tabular-nums;
+  color: var(--fg-2);
+}
+
+.delib-ring {
+  position: relative;
+}
+
+.delib-breathe {
+  transform-origin: 170px 170px;
+  animation: delibBreathe 2.6s ease-in-out infinite;
+}
+
+@keyframes delibBreathe {
+  0%, 100% { transform: scale(1);    opacity: 0.55; }
+  50%      { transform: scale(1.12); opacity: 0.9; }
+}
+
+.delib-comet {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  animation: delibSpin 3.4s linear infinite;
+}
+
+.delib-comet-dot {
+  position: absolute;
+  left: 50%;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  transform: translateX(-50%);
+  background: var(--accent);
+  box-shadow: 0 0 12px var(--accent);
+}
+
+@keyframes delibSpin {
+  to { transform: rotate(360deg); }
+}
+
+.delib-phase {
+  margin-top: 24px;
+  text-align: center;
+}
+
+.delib-title {
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.2em;
+  color: var(--fg);
+}
+
+.delib-sub {
+  margin-top: 4px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--fg-2);
+}
+
+.delib-note {
+  margin-top: 4px;
+  font-size: 10px;
+  color: var(--muted);
+}
+
+/* Fixed height so the ring above doesn't jitter as voices scroll in. */
+.delib-voices {
+  margin-top: 16px;
+  display: flex;
+  height: 64px;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  font-size: 10px;
+  color: var(--muted);
+}
+
+.delib-controls {
+  margin-top: 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.delib-kbd {
+  margin-inline-start: 6px;
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  background: var(--bg);
+  padding: 0 4px;
+  font-size: 9px;
+  color: var(--muted);
+}
+
+.delib-cancel:hover {
+  border-color: var(--adversarial);
+  color: var(--adversarial);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .delib-overlay { animation: none; }
+  .delib-breathe,
+  .delib-comet { animation: none; }
+}
+
+/* Restores the deliberation overlay after "hide". Without it the hide is
+   one-way and the run's full view is unreachable until the next run. */
+.delib-resume {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  z-index: 80;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--bg-2);
+  padding: 7px 14px;
+  font-size: 11px;
+  color: var(--fg-2);
+  box-shadow: var(--shadow-2);
+  animation: iaFadeIn 0.24s ease-out both;
+}
+
+.delib-resume:hover {
+  border-color: var(--accent);
+  color: var(--fg);
+}
+
+.delib-resume-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: delibResumePulse 1.1s ease-in-out infinite;
+}
+
+@keyframes delibResumePulse {
+  0%, 100% { opacity: 0.3; }
+  50%      { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .delib-resume-dot { animation: none; }
+}
+
+/* Simulation seed — the control that decides whether a re-run is an
+   independent Monte Carlo draw (blank) or an exact reproduction (pinned). */
+.sim-seed-hint {
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--muted);
+}
+
+.sim-seed-value {
+  font-variant-numeric: tabular-nums;
+  color: var(--fg-2);
+}
+
+.sim-seed-pin {
+  appearance: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: transparent;
+  padding: 0 5px;
+  font: inherit;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: var(--track);
+  color: var(--muted);
+}
+
+.sim-seed-pin:hover {
+  border-color: var(--accent);
+  color: var(--fg);
+  background: transparent;
 }
