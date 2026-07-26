@@ -15,6 +15,14 @@
 //   treemap       — high-cardinality value counts
 //   geo-map       — real 2D choropleth (auto-picks world / US / ZA)
 //   stats-card    — descriptive stats only, no chart
+//   date-timeline    — volume over time, auto-binned  (date columns only)
+//   date-calendar    — coverage + density heatmap     (date columns only)
+//   date-seasonality — month + weekday cycles         (date columns only)
+//
+// Date columns route to their own plot family. They used to fall through to
+// the high-cardinality categorical mix — a treemap of every distinct day
+// plus a bar chart ranking individual dates by row count — which is visually
+// busy and says nothing. See dateProfile.ts.
 //
 // If the column is detected as geographic — by SHAPE, not by name (the
 // `detectMap` resolver from geoRegistry matches against country names,
@@ -28,12 +36,15 @@ import ReactECharts from "echarts-for-react";
 import {
   BarChart,
   BoxplotChart,
+  HeatmapChart,
+  LineChart,
   MapChart,
   PieChart,
   ScatterChart,
   TreemapChart,
 } from "echarts/charts";
 import {
+  CalendarComponent,
   GeoComponent,
   GridComponent,
   LegendComponent,
@@ -57,6 +68,17 @@ import {
   tooltipFrame,
   usePalette,
 } from "./SoftDataWorkstation";
+import {
+  MONTH_LABELS,
+  WEEKDAY_LABELS,
+  binSeries,
+  collectDates,
+  dateSummary,
+  describeSpan,
+  monthProfile,
+  weekdayProfile,
+  yearMonthGrid,
+} from "./dateProfile";
 // `geoRegistry` is imported for its side-effect of registering the "world",
 // "US", and "ZA" maps with the shared ECharts instance — plus its detection
 // + lookup utilities. Without this import, `series.type: "map"` below would
@@ -76,12 +98,15 @@ echarts.use([
   GridComponent,
   VisualMapComponent,
   GeoComponent,
+  CalendarComponent,
   BarChart,
   BoxplotChart,
   PieChart,
   ScatterChart,
   TreemapChart,
   MapChart,
+  LineChart,
+  HeatmapChart,
   CanvasRenderer,
 ]);
 
@@ -121,7 +146,12 @@ export type PlotType =
   | "bar"
   | "treemap"
   | "geo-map"
-  | "stats-card";
+  | "stats-card"
+  // date-only — see dateProfile.ts for why a date column can't be treated
+  // as a categorical one.
+  | "date-timeline"
+  | "date-calendar"
+  | "date-seasonality";
 
 export type PlotSpec = {
   type: PlotType;
@@ -141,7 +171,14 @@ const VALID_PLOT_TYPES = new Set<PlotType>([
   "treemap",
   "geo-map",
   "stats-card",
+  "date-timeline",
+  "date-calendar",
+  "date-seasonality",
 ]);
+
+/** Plot types that only make sense on a date column. Offering these for a
+ *  numeric or categorical column would render an empty frame. */
+const DATE_ONLY_PLOTS = new Set<PlotType>(["date-timeline", "date-calendar", "date-seasonality"]);
 
 // ── heuristic fallback ──────────────────────────────────────────────────────
 //
@@ -307,10 +344,47 @@ const LIB_HIGHCAT: HeuristicLibrary = [
   },
 ];
 
+// Dates get their own library. Before this existed a date column fell
+// through to LIB_HIGHCAT and was drawn as a treemap of a few thousand
+// distinct days plus a bar chart ranking individual dates by count —
+// visually busy and analytically empty. The three views here answer the
+// questions a date column actually raises: WHEN (timeline), WHERE ARE THE
+// GAPS AND CYCLES (calendar), and WHAT REPEATS (seasonality).
+const LIB_DATE: HeuristicLibrary = [
+  {
+    plots: [
+      { type: "date-timeline", title: "Volume over time" },
+      { type: "date-calendar", title: "Coverage + density" },
+      { type: "stats-card", title: "Range" },
+    ],
+    rationale: "Timeline for trend, calendar for coverage and gaps, stats for the range.",
+  },
+  {
+    plots: [
+      { type: "date-calendar", title: "Coverage + density" },
+      { type: "date-seasonality", title: "Month + weekday cycles" },
+      { type: "stats-card", title: "Range" },
+    ],
+    rationale: "Lead with coverage, then the repeating cycles, stats trailing.",
+  },
+  {
+    plots: [
+      { type: "date-timeline", title: "Volume over time" },
+      { type: "date-seasonality", title: "Month + weekday cycles" },
+      { type: "stats-card", title: "Range" },
+    ],
+    rationale: "Trend first, then seasonality, then the headline range.",
+  },
+];
+
 function pickLibrary(meta: ColumnMeta, geoKind: GeoKind | null): HeuristicLibrary {
   // Any geographic column — world / US / ZA — gets the choropleth-led mix.
   if (geoKind !== null) return LIB_GEO;
   if (meta.unique <= 1) return LIB_CONSTANT;
+  // Checked before the id-like and cardinality rules: a date column is
+  // near-unique by nature, and neither "id-like" nor "high cardinality"
+  // describes anything useful about it.
+  if (meta.type === "date") return LIB_DATE;
   if (meta.type === "string" && meta.count > 0 && meta.unique / meta.count > 0.8) {
     return LIB_IDLIKE;
   }
@@ -343,8 +417,14 @@ function enforceDashboardShape(
   geoKind: GeoKind | null,
   variant = 0,
 ): DashboardSpec {
-  let plots = spec.plots.slice(0, TARGET_PLOTS);
   const heuristic = heuristicDashboard(meta, geoKind, variant);
+  // 4. type sanity — a date-only plot on a numeric column (or a histogram /
+  //    boxplot on a date column) renders an empty frame, so drop those
+  //    before the padding step below refills the slots correctly.
+  let plots = spec.plots
+    .filter((p) => (meta.type === "date" ? true : !DATE_ONLY_PLOTS.has(p.type)))
+    .filter((p) => (meta.type === "date" ? p.type !== "histogram" && p.type !== "boxplot" : true))
+    .slice(0, TARGET_PLOTS);
 
   // 3. geographic rule — a 2D choropleth MUST lead the dashboard. If the
   //    LLM didn't include one, prepend; if it included one but elsewhere,
@@ -399,8 +479,21 @@ function describeMetaForLLM(meta: ColumnMeta): string {
     if (meta.q1 !== undefined && meta.q3 !== undefined) {
       parts.push(`IQR=[${formatNumber(meta.q1)},${formatNumber(meta.q3)}]`);
     }
+    if (meta.quintiles) {
+      parts.push(`quintiles(p20/p40/p60/p80)=[${meta.quintiles.map(formatNumber).join(",")}]`);
+    }
     if (meta.outliers) parts.push(`outliers=${meta.outliers.length}`);
     lines.push(`numeric stats: ${parts.join(", ")}`);
+  } else if (meta.type === "date") {
+    // Range, not top values — the profiler deliberately omits topValues for
+    // dates, and handing the model a list of individual days invites exactly
+    // the categorical treatment the date plots exist to replace.
+    lines.push(`date range: ${meta.dateMin ?? "?"} → ${meta.dateMax ?? "?"}`);
+    if (meta.yearHistogram && meta.yearHistogram.length > 0) {
+      lines.push(
+        `rows per year: ${meta.yearHistogram.map((y) => `${y.year}=${y.count}`).join(", ")}`,
+      );
+    }
   } else if (meta.topValues) {
     lines.push(
       `top values: ${meta.topValues
@@ -453,6 +546,15 @@ MENU:
 - "treemap": nested rectangles for high-cardinality categoricals (> 8 unique)
 - "geo-map": real 2D choropleth (world / US / ZA, auto-picked); ALWAYS use this for geographic columns — NEVER substitute a scatter, bubble, treemap, or bar for geography
 - "stats-card": descriptive stats card, no chart
+- "date-timeline": volume over time, auto-binned day/week/month/quarter/year — DATE COLUMNS ONLY
+- "date-calendar": calendar heatmap of coverage and density; falls back to a year × month grid on long spans — DATE COLUMNS ONLY
+- "date-seasonality": month-of-year and day-of-week profiles, for repeating cycles — DATE COLUMNS ONLY
+
+For a DATE column pick from the three date plots (plus optionally "stats-card").
+A date column is not a categorical one: NEVER use "bar", "treemap", or "donut"
+for dates — ranking individual calendar days by row count is noise, and a
+treemap of thousands of distinct days is unreadable. "histogram" and "boxplot"
+are numeric-only and will render empty for a date.
 
 COLUMN
 ${describeMetaForLLM(meta)}
@@ -585,6 +687,10 @@ async function fetchDashboard(args: {
 // ── plot renderers ──────────────────────────────────────────────────────────
 
 const PLOT_HEIGHT = 150;
+
+/** Span above which a day-per-cell calendar stops being readable in a
+ *  150px-tall panel and we switch to the year × month grid. ~3 years. */
+const CALENDAR_MAX_DAYS = 1100;
 
 function categoricalCounts(meta: ColumnMeta, rows: Row[]): Array<{ value: string; count: number }> {
   // Prefer the precomputed top values from meta when present; otherwise
@@ -848,6 +954,319 @@ function BarPlot({ meta, rows, palette }: { meta: ColumnMeta; rows: Row[]; palet
   );
 }
 
+// ── date plots ──────────────────────────────────────────────────────────────
+
+/** Volume over time, auto-binned (day → week → month → quarter → year) so the
+ *  shape reads at any span. Gap-filled, so a period with no rows shows as a
+ *  zero rather than being silently skipped — invisible gaps are exactly the
+ *  kind of data problem this panel exists to surface. */
+function DateTimelinePlot({
+  meta,
+  rows,
+  palette,
+}: { meta: ColumnMeta; rows: Row[]; palette: Palette }) {
+  const { series, bin } = useMemo(() => {
+    const { points } = collectDates(rows, meta.name);
+    const summary = dateSummary(points);
+    const b = summary ? summary.bin : "month";
+    return { series: binSeries(points, b), bin: b };
+  }, [meta.name, rows]);
+
+  const option = useMemo(
+    () => ({
+      animation: false,
+      grid: { left: 8, right: 12, top: 10, bottom: 18, containLabel: true },
+      xAxis: {
+        type: "category",
+        data: series.map((s) => s.key),
+        axisLabel: { color: palette.fgMute, fontSize: 9, hideOverlap: true },
+        axisLine: { lineStyle: { color: palette.border } },
+      },
+      yAxis: {
+        type: "value",
+        axisLabel: { color: palette.fgMute, fontSize: 9 },
+        splitLine: { lineStyle: { color: palette.border } },
+      },
+      tooltip: {
+        trigger: "axis",
+        ...tooltipFrame(palette),
+        formatter: (ps: Array<{ name?: string; value?: number }>) => {
+          const p = ps[0];
+          return `<b>${p?.name}</b><br/>${p?.value ?? 0} rows (per ${bin})`;
+        },
+      },
+      series: [
+        {
+          type: "line",
+          data: series.map((s) => s.count),
+          smooth: false,
+          symbol: series.length <= 60 ? "circle" : "none",
+          symbolSize: 4,
+          lineStyle: { color: palette.primary, width: 1.5 },
+          itemStyle: { color: palette.primary },
+          areaStyle: { color: palette.primary, opacity: 0.14 },
+        },
+      ],
+    }),
+    [series, bin, palette],
+  );
+  if (series.length === 0) return <EmptyPlotNote text="No parseable dates in this slice." />;
+  return (
+    <ReactECharts
+      echarts={echarts}
+      option={option}
+      notMerge
+      lazyUpdate
+      style={{ height: PLOT_HEIGHT, width: "100%" }}
+    />
+  );
+}
+
+/** Coverage + density. Two renderings of the same idea, chosen by span:
+ *   • ≤ ~3 years  → a true daily calendar heatmap (weekday structure and
+ *     single-day gaps are visible at this resolution).
+ *   • longer      → a year × month grid, which stays legible over decades
+ *     where a daily calendar would be an unreadable ribbon. */
+function DateCalendarPlot({
+  meta,
+  rows,
+  palette,
+}: { meta: ColumnMeta; rows: Row[]; palette: Palette }) {
+  const model = useMemo(() => {
+    const { points } = collectDates(rows, meta.name);
+    const summary = dateSummary(points);
+    if (!summary) return null;
+    const daily = summary.spanDays <= CALENDAR_MAX_DAYS;
+    return { points, summary, daily, grid: daily ? null : yearMonthGrid(points) };
+  }, [meta.name, rows]);
+
+  const option = useMemo(() => {
+    if (!model) return null;
+    const { summary } = model;
+    if (model.daily) {
+      const days = binSeries(model.points, "day");
+      const max = days.reduce((m, d) => Math.max(m, d.count), 0);
+      return {
+        animation: false,
+        tooltip: {
+          ...tooltipFrame(palette),
+          formatter: (p: { value?: [string, number] }) =>
+            `<b>${p.value?.[0]}</b><br/>${p.value?.[1] ?? 0} rows`,
+        },
+        visualMap: {
+          min: 0,
+          max: Math.max(1, max),
+          calculable: false,
+          show: false,
+          inRange: { color: [palette.border, palette.primary] },
+        },
+        calendar: {
+          top: 18,
+          left: 26,
+          right: 8,
+          cellSize: ["auto", 11],
+          range: [summary.first, summary.last],
+          itemStyle: { color: "transparent", borderColor: palette.border, borderWidth: 0.5 },
+          splitLine: { lineStyle: { color: palette.border } },
+          yearLabel: { show: true, color: palette.fgMute, fontSize: 9 },
+          monthLabel: { color: palette.fgMute, fontSize: 9 },
+          dayLabel: { color: palette.fgMute, fontSize: 8 },
+        },
+        series: [
+          {
+            type: "heatmap",
+            coordinateSystem: "calendar",
+            data: days.map((d) => [d.key, d.count]),
+          },
+        ],
+      };
+    }
+    const grid = model.grid;
+    if (!grid) return null;
+    return {
+      animation: false,
+      grid: { left: 8, right: 12, top: 8, bottom: 18, containLabel: true },
+      xAxis: {
+        type: "category",
+        data: MONTH_LABELS,
+        axisLabel: { color: palette.fgMute, fontSize: 9 },
+        axisLine: { lineStyle: { color: palette.border } },
+        splitArea: { show: false },
+      },
+      yAxis: {
+        type: "category",
+        // Most recent year at the top, so the eye starts at "now".
+        data: [...grid.years].reverse().map(String),
+        axisLabel: { color: palette.fgMute, fontSize: 9 },
+        axisLine: { lineStyle: { color: palette.border } },
+      },
+      visualMap: {
+        min: 0,
+        max: Math.max(1, grid.max),
+        show: false,
+        inRange: { color: [palette.border, palette.primary] },
+      },
+      tooltip: {
+        ...tooltipFrame(palette),
+        formatter: (p: { value?: [number, number, number] }) => {
+          const v = p.value;
+          if (!v) return "";
+          const years = [...grid.years].reverse();
+          return `<b>${MONTH_LABELS[v[0]]} ${years[v[1]]}</b><br/>${v[2]} rows`;
+        },
+      },
+      series: [
+        {
+          type: "heatmap",
+          data: grid.cells.map((c) => [
+            c.month - 1,
+            [...grid.years].reverse().indexOf(c.year),
+            c.count,
+          ]),
+          itemStyle: { borderColor: palette.border, borderWidth: 0.5 },
+          label: { show: false },
+        },
+      ],
+    };
+  }, [model, palette]);
+
+  if (!option) return <EmptyPlotNote text="No parseable dates in this slice." />;
+  return (
+    <ReactECharts
+      echarts={echarts}
+      option={option}
+      notMerge
+      lazyUpdate
+      style={{ height: PLOT_HEIGHT, width: "100%" }}
+    />
+  );
+}
+
+/** What repeats: month-of-year and day-of-week profiles side by side. These
+ *  are invisible in a timeline — a column that only ever lands on weekdays,
+ *  or spikes every January, looks unremarkable until the cycle is folded. */
+function DateSeasonalityPlot({
+  meta,
+  rows,
+  palette,
+}: {
+  meta: ColumnMeta;
+  rows: Row[];
+  palette: Palette;
+}) {
+  const { months, weekdays, total } = useMemo(() => {
+    const { points } = collectDates(rows, meta.name);
+    return {
+      months: monthProfile(points),
+      weekdays: weekdayProfile(points),
+      total: points.length,
+    };
+  }, [meta.name, rows]);
+
+  const option = useMemo(
+    () => ({
+      animation: false,
+      // Two independent grids: months on the left, weekdays on the right.
+      grid: [
+        { left: 6, right: "54%", top: 18, bottom: 18, containLabel: true },
+        { left: "52%", right: 8, top: 18, bottom: 18, containLabel: true },
+      ],
+      title: [
+        {
+          text: "by month",
+          left: 6,
+          top: 0,
+          textStyle: { color: palette.fgMute, fontSize: 9, fontWeight: "normal" },
+        },
+        {
+          text: "by weekday",
+          left: "52%",
+          top: 0,
+          textStyle: { color: palette.fgMute, fontSize: 9, fontWeight: "normal" },
+        },
+      ],
+      xAxis: [
+        {
+          gridIndex: 0,
+          type: "category",
+          data: MONTH_LABELS,
+          axisLabel: { color: palette.fgMute, fontSize: 8, interval: 1 },
+          axisLine: { lineStyle: { color: palette.border } },
+        },
+        {
+          gridIndex: 1,
+          type: "category",
+          data: WEEKDAY_LABELS,
+          axisLabel: { color: palette.fgMute, fontSize: 8, interval: 0 },
+          axisLine: { lineStyle: { color: palette.border } },
+        },
+      ],
+      yAxis: [
+        {
+          gridIndex: 0,
+          type: "value",
+          axisLabel: { color: palette.fgMute, fontSize: 8 },
+          splitLine: { lineStyle: { color: palette.border } },
+        },
+        {
+          gridIndex: 1,
+          type: "value",
+          axisLabel: { color: palette.fgMute, fontSize: 8 },
+          splitLine: { lineStyle: { color: palette.border } },
+        },
+      ],
+      tooltip: {
+        trigger: "item",
+        ...tooltipFrame(palette),
+        formatter: (p: { name?: string; value?: number }) => {
+          const pct = total > 0 ? ((100 * (p.value ?? 0)) / total).toFixed(1) : "0.0";
+          return `<b>${p.name}</b><br/>${p.value ?? 0} rows (${pct}%)`;
+        },
+      },
+      series: [
+        {
+          type: "bar",
+          xAxisIndex: 0,
+          yAxisIndex: 0,
+          data: months,
+          itemStyle: { color: palette.primary },
+          barWidth: "70%",
+        },
+        {
+          type: "bar",
+          xAxisIndex: 1,
+          yAxisIndex: 1,
+          data: weekdays,
+          itemStyle: { color: palette.accent2 },
+          barWidth: "70%",
+        },
+      ],
+    }),
+    [months, weekdays, total, palette],
+  );
+  if (total === 0) return <EmptyPlotNote text="No parseable dates in this slice." />;
+  return (
+    <ReactECharts
+      echarts={echarts}
+      option={option}
+      notMerge
+      lazyUpdate
+      style={{ height: PLOT_HEIGHT, width: "100%" }}
+    />
+  );
+}
+
+function EmptyPlotNote({ text }: { text: string }) {
+  return (
+    <div
+      className="flex items-center justify-center text-[11px] text-fg-dim"
+      style={{ height: PLOT_HEIGHT }}
+    >
+      {text}
+    </div>
+  );
+}
+
 function TreemapPlot({
   meta,
   rows,
@@ -1049,45 +1468,115 @@ function missingAccent(pct: number): StatAccent {
   return "primary";
 }
 
-function SummaryCard({ meta }: { meta: ColumnMeta }) {
+function SummaryCard({ meta, rows = [] }: { meta: ColumnMeta; rows?: Row[] }) {
   const missingPct = meta.count > 0 ? (100 * meta.missing) / meta.count : 0;
+  // Date columns previously showed only type/rows/unique/missing here —
+  // every numeric tile below is number-guarded, so the headline card for a
+  // date said nothing about WHEN the data covers.
+  const dateStats = useMemo(
+    () => (meta.type === "date" ? dateSummary(collectDates(rows, meta.name).points) : null),
+    [meta.type, meta.name, rows],
+  );
   return (
-    <div className="grid grid-cols-2 gap-1 font-mono text-[11px]">
-      <Stat label="type" value={meta.type} accent={typeAccent(meta.type)} />
-      <Stat label="rows" value={String(meta.count)} accent="primary" />
-      <Stat label="unique" value={String(meta.unique)} accent="primary" />
-      <Stat
-        label="missing"
-        value={`${meta.missing} (${missingPct.toFixed(1)}%)`}
-        accent={missingAccent(missingPct)}
-      />
-      {meta.type === "number" && meta.min !== undefined && (
-        <>
-          <Stat label="min" value={formatNumber(meta.min)} accent="accent-2" />
-          <Stat
-            label="mean"
-            value={meta.mean !== undefined ? formatNumber(meta.mean) : "—"}
-            accent="accent-2"
-          />
-          <Stat
-            label="median"
-            value={meta.median !== undefined ? formatNumber(meta.median) : "—"}
-            accent="accent-2"
-          />
-          <Stat
-            label="max"
-            value={meta.max !== undefined ? formatNumber(meta.max) : "—"}
-            accent="accent-2"
-          />
-        </>
-      )}
-      {meta.type === "string" && meta.topValues && meta.topValues.length > 0 && (
+    <div className="flex flex-col gap-2 font-mono text-[11px]">
+      <div className="grid grid-cols-2 gap-1">
+        <Stat label="type" value={meta.type} accent={typeAccent(meta.type)} />
+        <Stat label="rows" value={String(meta.count)} accent="primary" />
+        <Stat label="unique" value={String(meta.unique)} accent="primary" />
         <Stat
-          label="most common"
-          value={`${meta.topValues[0].value} (${meta.topValues[0].count})`}
-          accent="accent-3"
+          label="missing"
+          value={`${meta.missing} (${missingPct.toFixed(1)}%)`}
+          accent={missingAccent(missingPct)}
         />
-      )}
+        {meta.type === "number" && meta.min !== undefined && (
+          <>
+            <Stat label="min" value={formatNumber(meta.min)} accent="accent-2" />
+            <Stat
+              label="mean"
+              value={meta.mean !== undefined ? formatNumber(meta.mean) : "—"}
+              accent="accent-2"
+            />
+            <Stat
+              label="median"
+              value={meta.median !== undefined ? formatNumber(meta.median) : "—"}
+              accent="accent-2"
+            />
+            <Stat
+              label="max"
+              value={meta.max !== undefined ? formatNumber(meta.max) : "—"}
+              accent="accent-2"
+            />
+          </>
+        )}
+        {meta.type === "date" && dateStats && (
+          <>
+            <Stat label="first" value={dateStats.first} accent="warn" />
+            <Stat label="last" value={dateStats.last} accent="warn" />
+            <Stat label="span" value={describeSpan(dateStats.spanDays)} accent="warn" />
+            <Stat
+              label="busiest"
+              value={`${dateStats.busiestKey} (${dateStats.busiestCount})`}
+              accent="warn"
+            />
+            <Stat label="days covered" value={String(dateStats.uniqueDays)} accent="warn" />
+            <Stat
+              label="days with no rows"
+              value={`${dateStats.emptyDays} (${
+                dateStats.spanDays > 0
+                  ? ((100 * dateStats.emptyDays) / dateStats.spanDays).toFixed(0)
+                  : "0"
+              }%)`}
+              accent={dateStats.emptyDays > dateStats.uniqueDays ? "warn" : "primary"}
+            />
+          </>
+        )}
+        {meta.type === "string" && meta.topValues && meta.topValues.length > 0 && (
+          <Stat
+            label="most common"
+            value={`${meta.topValues[0].value} (${meta.topValues[0].count})`}
+            accent="accent-3"
+          />
+        )}
+      </div>
+      <QuintileStrip meta={meta} />
+    </div>
+  );
+}
+
+/** Quintile cut points, as their own block rather than four more tiles in the
+ *  grid above. They answer a different question from the headline stats —
+ *  "where does each fifth of the data end", not "what is this column" — and
+ *  reading them left-to-right as a rising sequence is the point, which a
+ *  two-column tile grid would break up. */
+function QuintileStrip({ meta }: { meta: ColumnMeta }) {
+  if (meta.type !== "number" || !meta.quintiles) return null;
+  const [p20, p40, p60, p80] = meta.quintiles;
+  const cuts: Array<{ label: string; value: number }> = [
+    { label: "p20", value: p20 },
+    { label: "p40", value: p40 },
+    { label: "p60", value: p60 },
+    { label: "p80", value: p80 },
+  ];
+  return (
+    <div className="flex flex-col gap-1">
+      <div className="flex items-baseline justify-between">
+        <span className="text-[9px] uppercase tracking-wider text-accent-2">quintiles</span>
+        <span className="text-[9px] text-fg-dim" title="each cut point ends one fifth of the rows">
+          cut points · 20% per bucket
+        </span>
+      </div>
+      <div className="grid grid-cols-4 gap-1">
+        {cuts.map((c) => (
+          <div
+            key={c.label}
+            className="relative flex flex-col overflow-hidden rounded border border-accent-2/60 bg-bg-1 px-2 py-1 pl-2.5"
+          >
+            <span className="absolute inset-y-0 left-0 w-[3px] bg-accent-2" />
+            <span className="text-[9px] uppercase tracking-wider text-accent-2">{c.label}</span>
+            <span className="truncate text-fg">{formatNumber(c.value)}</span>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -1133,7 +1622,13 @@ function renderPlot({
     case "geo-map":
       return <GeoMapPlot meta={meta} rows={rows} palette={palette} />;
     case "stats-card":
-      return <SummaryCard meta={meta} />;
+      return <SummaryCard meta={meta} rows={rows} />;
+    case "date-timeline":
+      return <DateTimelinePlot meta={meta} rows={rows} palette={palette} />;
+    case "date-calendar":
+      return <DateCalendarPlot meta={meta} rows={rows} palette={palette} />;
+    case "date-seasonality":
+      return <DateSeasonalityPlot meta={meta} rows={rows} palette={palette} />;
     default:
       return null;
   }

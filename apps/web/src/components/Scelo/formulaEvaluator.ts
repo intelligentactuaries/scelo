@@ -24,7 +24,7 @@
 // etc. to a literal computed from the rows) → identifier whitelist →
 // codegen to a guarded `new Function`.
 
-import type { CellValue, Row } from "./SoftDataWorkstation";
+import type { CellValue, Row } from "@scelo/core";
 
 // Binary/unary math helpers — compiled to `Math.<name>`.
 const MATH_FUNCS = new Set([

@@ -8,7 +8,7 @@
 // MAJOR actions only (one entry per user-meaningful event) — every chat
 // message is NOT logged.
 
-import type { Filter } from "./SoftDataWorkstation";
+import type { Filter } from "@scelo/core";
 import type { ModelFamily } from "./modelCatalog";
 
 export type Stage = "soft" | "tools" | "hard";
@@ -84,6 +84,31 @@ export type ActivityEvent =
   | {
       ts: number;
       stage: "soft";
+      kind: "dataset.undo";
+      /** `label` is the step that was reversed. Recorded so the export
+       *  scripts can skip re-emitting work the user took back. */
+      payload: { label: string };
+    }
+  | {
+      ts: number;
+      stage: "soft";
+      kind: "cleaning.auto";
+      /** Multi-pass autonomous clean. `opLabels` is every step across all
+       *  passes in execution order; `outcome` says why the loop stopped. */
+      payload: {
+        passes: number;
+        outcome: "clean" | "exhausted" | "stalled";
+        opLabels: string[];
+        rowsBefore: number;
+        rowsAfter: number;
+        columnsBefore: number;
+        columnsAfter: number;
+        droppedColumns: string[];
+      };
+    }
+  | {
+      ts: number;
+      stage: "soft";
       kind: "cleaning.reformat-dates";
       payload: { style: "iso" | "us" | "eu"; columns: string[]; changed: number };
     }
@@ -143,7 +168,7 @@ export type ActivityEvent =
       ts: number;
       stage: "hard";
       kind: "runs.execute";
-      payload: { models: string[] };
+      payload: { models: string[]; wired?: number; cyclicWiring?: boolean };
     }
   | {
       ts: number;

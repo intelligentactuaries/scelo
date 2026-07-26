@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import type { Dataset } from "./SoftDataWorkstation";
-import { sliceDatasetForPersist } from "./sceloContext";
+import type { Dataset } from "@scelo/core";
+import { type HistoryEntry, sliceDatasetForPersist, trimHistory } from "./sceloContext";
 
 // ── fixtures ─────────────────────────────────────────────────────────────
 
@@ -61,5 +61,49 @@ describe("sliceDatasetForPersist", () => {
     expect(revived.sampled).toBe(true);
     expect(revived.sourceTotalRows).toBe(6000);
     expect(revived.rows).toHaveLength(5000);
+  });
+});
+
+describe("trimHistory (undo retention)", () => {
+  const entry = (label: string, rowCount: number): HistoryEntry => ({
+    label,
+    dataset: makeDataset(rowCount),
+    filters: [],
+  });
+
+  test("keeps everything when well under both caps", () => {
+    const stack = [entry("a", 10), entry("b", 10), entry("c", 10)];
+    expect(trimHistory(stack).map((e) => e.label)).toEqual(["a", "b", "c"]);
+  });
+
+  test("caps depth, dropping the OLDEST first", () => {
+    const stack = Array.from({ length: 20 }, (_, i) => entry(`s${i}`, 1));
+    const out = trimHistory(stack);
+    expect(out).toHaveLength(12);
+    // The newest must survive — it's the one undo reaches first.
+    expect(out[out.length - 1].label).toBe("s19");
+    expect(out[0].label).toBe("s8");
+  });
+
+  test("row budget evicts further on big datasets", () => {
+    // 4 × 400k rows = 1.6M, over the 1M budget → oldest dropped until under.
+    const stack = Array.from({ length: 4 }, (_, i) => entry(`big${i}`, 400_000));
+    const out = trimHistory(stack);
+    expect(out.length).toBeLessThan(4);
+    expect(out[out.length - 1].label).toBe("big3");
+  });
+
+  test("always keeps at least one entry, however large", () => {
+    // A single dataset far over the budget must still be undoable — otherwise
+    // undo would silently do nothing precisely when the data is most costly
+    // to rebuild.
+    const out = trimHistory([entry("huge", 5_000_000)]);
+    expect(out).toHaveLength(1);
+    expect(out[0].label).toBe("huge");
+  });
+
+  test("a null dataset (the 'clear' step) counts as zero rows", () => {
+    const stack = [{ label: "clear dataset", dataset: null, filters: [] }, entry("x", 10)];
+    expect(trimHistory(stack)).toHaveLength(2);
   });
 });

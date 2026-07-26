@@ -227,10 +227,14 @@ function MiniStackedBar({ bar }: { bar: SummaryBar }) {
 // hostile interactions (text selection, scrolling, dragging the textarea)
 // are guarded with `nodrag` / `nowheel`.
 function NodeChat({ stage }: { stage: SceloStage }) {
-  const { chatMemoryPrefix } = useScelo();
+  const { chatMemoryPrefix, project } = useScelo();
   const { placeholder, stageContext } = STAGE_CHAT[stage];
   const memoryKey = chatMemoryPrefix ? `${chatMemoryPrefix}:macro-${stage}` : undefined;
-  const { messages, isStreaming, send, stop } = useNodeChat(stageContext, { memoryKey });
+  const { messages, isStreaming, send, stop } = useNodeChat(stageContext, {
+    memoryKey,
+    logLabel: `macro · ${stage} node`,
+    logProject: project?.name,
+  });
   const [draft, setDraft] = useState("");
   const scrollRef = useRef<HTMLDivElement | null>(null);
 

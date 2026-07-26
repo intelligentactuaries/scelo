@@ -7,7 +7,7 @@
 // first-class libraries everywhere, so we mark gaps with TODO comments
 // rather than pretending we generated something the user can run blind.
 
-import type { Filter } from "./SoftDataWorkstation";
+import type { Filter } from "@scelo/core";
 import type { ActivityEvent } from "./activityLog";
 import { MODEL_BY_ID } from "./modelCatalog";
 
@@ -207,6 +207,28 @@ export function generatePython(events: ActivityEvent[], stage: string): string {
         out.push("df = df.dropna(axis=1, how='all')");
         out.push("df = df.drop_duplicates()");
         break;
+      case "dataset.undo":
+        out.push(`# Undid "${ev.payload.label}" in the UI — the step above was reverted.`);
+        out.push("# (Delete the reverted step from this script to reproduce the final state.)");
+        break;
+      case "cleaning.auto":
+        out.push(
+          `# Autonomous clean — ${ev.payload.passes} pass(es), stopped: ${ev.payload.outcome}.`,
+        );
+        for (const op of ev.payload.opLabels) out.push(`#   • ${op}`);
+        out.push("df.columns = (df.columns.str.strip().str.lower()");
+        out.push("              .str.replace(r'[^0-9a-zA-Z]+', '_', regex=True).str.strip('_'))");
+        out.push("for c in df.select_dtypes(include='object').columns:");
+        out.push("    df[c] = df[c].astype(str).str.strip().str.replace(r'\\s+', ' ', regex=True)");
+        out.push("df = df.replace(r'^\\s*(?:na|n/a|null|none|nan|-|\\?)\\s*$', None, regex=True)");
+        out.push("df = df.apply(lambda s: pd.to_numeric(s, errors='ignore'))");
+        out.push("df = df.dropna(axis=1, how='all')                    # empty columns");
+        out.push("df = df.loc[:, df.nunique(dropna=False) > 1]         # constant columns");
+        out.push("df = df.drop_duplicates()");
+        if (ev.payload.droppedColumns.length > 0) {
+          out.push(`# Columns dropped in the UI run: ${ev.payload.droppedColumns.join(", ")}`);
+        }
+        break;
       case "cleaning.reformat-dates": {
         const fmt = strftimeFor(ev.payload.style);
         out.push(`# Reformat date column(s) to ${dateStyleLabel(ev.payload.style)}:`);
@@ -343,6 +365,26 @@ export function generateR(events: ActivityEvent[], stage: string): string {
         out.push("  mutate(across(where(is.character), stringr::str_trim)) %>%");
         out.push("  select(where(~ !all(is.na(.)))) %>%");
         out.push("  distinct()");
+        break;
+      case "dataset.undo":
+        out.push(`# Undid "${ev.payload.label}" in the UI — the step above was reverted.`);
+        break;
+      case "cleaning.auto":
+        out.push(
+          `# Autonomous clean — ${ev.payload.passes} pass(es), stopped: ${ev.payload.outcome}.`,
+        );
+        for (const op of ev.payload.opLabels) out.push(`#   • ${op}`);
+        out.push("df <- df %>%");
+        out.push("  janitor::clean_names() %>%");
+        out.push("  mutate(across(where(is.character), stringr::str_squish)) %>%");
+        out.push("  mutate(across(where(is.character), ~ dplyr::na_if(tolower(.), 'na'))) %>%");
+        out.push("  readr::type_convert() %>%");
+        out.push("  select(where(~ !all(is.na(.)))) %>%           # empty columns");
+        out.push("  select(where(~ dplyr::n_distinct(.) > 1)) %>% # constant columns");
+        out.push("  distinct()");
+        if (ev.payload.droppedColumns.length > 0) {
+          out.push(`# Columns dropped in the UI run: ${ev.payload.droppedColumns.join(", ")}`);
+        }
         break;
       case "cleaning.reformat-dates": {
         const fmt = strftimeFor(ev.payload.style);
@@ -514,6 +556,22 @@ export function generateCpp(events: ActivityEvent[], stage: string): string {
         for (const op of ev.payload.opLabels) out.push(`    //   • ${op}`);
         out.push("    // TODO: per-cell trim / null-normalise / dedupe pass.");
         break;
+      case "dataset.undo":
+        out.push(`    // Undid "${ev.payload.label}" — the step above was reverted.`);
+        break;
+      case "cleaning.auto":
+        out.push(
+          `    // Autonomous clean — ${ev.payload.passes} pass(es), stopped: ${ev.payload.outcome}.`,
+        );
+        for (const op of ev.payload.opLabels) out.push(`    //   • ${op}`);
+        out.push(
+          "    // TODO: loop trim / null-normalise / retype / drop-empty / drop-constant / dedupe",
+        );
+        out.push("    //       until a pass changes nothing.");
+        if (ev.payload.droppedColumns.length > 0) {
+          out.push(`    // Columns dropped in the UI run: ${ev.payload.droppedColumns.join(", ")}`);
+        }
+        break;
       case "cleaning.reformat-dates":
         out.push(`    // Reformat date column(s) to ${dateStyleLabel(ev.payload.style)}:`);
         for (const c of ev.payload.columns) {
@@ -637,6 +695,25 @@ export function generatePrompt(events: ActivityEvent[], stage: string): string {
           `${n}. Applied data-cleaning ops: ${ev.payload.opLabels.join(", ") || "(no specific ops)"}.`,
         );
         break;
+      case "dataset.undo":
+        out.push(`${n}. Undid "${ev.payload.label}", reverting the previous step.`);
+        break;
+      case "cleaning.auto": {
+        const shape: string[] = [];
+        const rowsGone = ev.payload.rowsBefore - ev.payload.rowsAfter;
+        if (rowsGone > 0) shape.push(`${rowsGone.toLocaleString()} duplicate row(s) removed`);
+        if (ev.payload.droppedColumns.length > 0) {
+          shape.push(`columns dropped: ${ev.payload.droppedColumns.join(", ")}`);
+        }
+        out.push(
+          `${n}. Ran an autonomous clean over the whole dataset — ${ev.payload.passes} pass(es), ${
+            ev.payload.opLabels.length
+          } step(s): ${ev.payload.opLabels.join(", ") || "(none)"}.${
+            shape.length > 0 ? ` ${shape.join("; ")}.` : ""
+          } Stopped because: ${ev.payload.outcome}.`,
+        );
+        break;
+      }
       case "cleaning.reformat-dates":
         out.push(
           `${n}. Reformatted the date column(s) ${ev.payload.columns.map((c) => `\`${c}\``).join(", ")} to ${dateStyleLabel(ev.payload.style)}.`,

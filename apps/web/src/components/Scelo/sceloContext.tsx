@@ -11,12 +11,14 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 import type { Dataset, Filter } from "./SoftDataWorkstation";
 import { type ActivityEvent, isDuplicateOfLast, trimEventsPreservingAnchors } from "./activityLog";
 import type { ModelFamily } from "./modelCatalog";
 import type { RunResult } from "./modelRunner";
+import type { ModelWire } from "./pipeline";
 
 export type SelectedModel = {
   id: string;
@@ -73,6 +75,8 @@ export interface StoredSessionSnapshot {
    *  stale picks left over from a previous dataset — including across a
    *  reload, where a mount-time guess can't. */
   picksDatasetName: string | null;
+  /** Model-to-model wires drawn on the Tools canvas — the execution DAG. */
+  modelWires: ModelWire[];
   runs: Record<string, RunResult>;
   derivedColumns: Record<string, string>;
   /** Serialised as array since JSON doesn't carry Set. */
@@ -87,6 +91,7 @@ const EMPTY_SESSION: StoredSessionSnapshot = {
   domain: null,
   pickSummary: null,
   picksDatasetName: null,
+  modelWires: [],
   runs: {},
   derivedColumns: {},
   transformLog: [],
@@ -133,6 +138,7 @@ function loadStoredSession(): StoredSessionSnapshot {
       pickSummary: typeof parsed.pickSummary === "string" ? parsed.pickSummary : null,
       picksDatasetName:
         typeof parsed.picksDatasetName === "string" ? parsed.picksDatasetName : null,
+      modelWires: Array.isArray(parsed.modelWires) ? (parsed.modelWires as ModelWire[]) : [],
       runs:
         parsed.runs && typeof parsed.runs === "object"
           ? (parsed.runs as Record<string, RunResult>)
@@ -229,6 +235,27 @@ type SceloState = {
   setDataset: (d: Dataset | null) => void;
   filters: Filter[];
   setFilters: (f: Filter[] | ((prev: Filter[]) => Filter[])) => void;
+  // ── undo ────────────────────────────────────────────────────────────────
+  // Every transform in this app is pure — `applyCleaning`, the column ops,
+  // augment, combine all RETURN a new Dataset and never mutate the old one.
+  // So an undo stack costs only a retained reference per step, not a deep
+  // copy, and restoring is just putting the old object back.
+  //
+  // Session-only by design: the history is deliberately NOT persisted, since
+  // serialising a dozen dataset revisions into localStorage would blow the
+  // session-snapshot budget that `sliceDatasetForPersist` exists to protect.
+  /** Snapshot the CURRENT dataset + filters under `label`, immediately
+   *  before replacing them. Label is what the undo affordance shows. */
+  pushHistory: (label: string) => void;
+  /** Restore the newest snapshot. Returns the label that was undone, or
+   *  null when there is nothing to undo. */
+  undo: () => string | null;
+  /** Label of the step `undo()` would reverse — for button text/tooltips. */
+  undoLabel: string | null;
+  canUndo: boolean;
+  /** Drop the whole stack. Called when a NEW dataset is loaded: undoing
+   *  across a file swap would silently resurrect the previous file. */
+  clearHistory: () => void;
   selectedModels: SelectedModel[];
   setSelectedModels: (m: SelectedModel[] | ((prev: SelectedModel[]) => SelectedModel[])) => void;
   domain: ModelFamily | null;
@@ -241,6 +268,11 @@ type SceloState = {
   // across a full reload.
   picksDatasetName: string | null;
   setPicksDatasetName: (n: string | null) => void;
+  /** Model→model wires from the Tools canvas. Execution (Hard Data) orders
+   *  runs topologically from these and feeds each wired-in source's result
+   *  to its target's runner. */
+  modelWires: ModelWire[];
+  setModelWires: (w: ModelWire[] | ((prev: ModelWire[]) => ModelWire[])) => void;
   // Additional offline imports staged for combining with the active dataset
   // (at most 2 staged + 1 active = 3). Session-only — deliberately NOT
   // persisted: staged files can be big, and a combine is expected to happen
@@ -294,6 +326,29 @@ type SceloState = {
 
 const SceloContext = createContext<SceloState | null>(null);
 
+export type HistoryEntry = { label: string; dataset: Dataset | null; filters: Filter[] };
+
+/** Depth cap. Deep enough that a chat exchange of several edits stays
+ *  reversible, shallow enough to bound retention. */
+const HISTORY_MAX_ENTRIES = 12;
+/** Retention budget across the whole stack. Transforms allocate fresh Row
+ *  objects, so each snapshot pins a full copy of its revision — on a 250k-row
+ *  parquet import a naive 12-deep stack would hold 3M rows live. Bound the
+ *  TOTAL instead of the depth alone: small datasets keep the full 12 steps,
+ *  large ones keep fewer. Always keeps at least one, so undo never becomes a
+ *  no-op just because the dataset is big. */
+const HISTORY_MAX_ROWS = 1_000_000;
+
+export function trimHistory(entries: HistoryEntry[]): HistoryEntry[] {
+  let out = entries.slice(-HISTORY_MAX_ENTRIES);
+  let rows = out.reduce((n, e) => n + (e.dataset?.rows.length ?? 0), 0);
+  while (out.length > 1 && rows > HISTORY_MAX_ROWS) {
+    rows -= out[0].dataset?.rows.length ?? 0;
+    out = out.slice(1);
+  }
+  return out;
+}
+
 export function SceloProvider({ children }: { children: ReactNode }) {
   // Hydrate the full working session from localStorage on mount so a
   // round-trip to /workspace, /swarm, /settings, or even a full
@@ -310,6 +365,7 @@ export function SceloProvider({ children }: { children: ReactNode }) {
   const [picksDatasetName, setPicksDatasetName] = useState<string | null>(
     storedSession.picksDatasetName,
   );
+  const [modelWires, setModelWires] = useState<ModelWire[]>(storedSession.modelWires);
   const [stagedDatasets, setStagedDatasets] = useState<Dataset[]>([]);
   const [runs, setRuns] = useState<Record<string, RunResult>>(storedSession.runs);
   const [derivedColumns, setDerivedColumns] = useState<Record<string, string>>(
@@ -319,6 +375,38 @@ export function SceloProvider({ children }: { children: ReactNode }) {
     () => new Set(storedSession.transformLog),
   );
   const [events, setEvents] = useState<ActivityEvent[]>(storedSession.events);
+
+  // ── undo stack ──────────────────────────────────────────────────────────
+  const [history, setHistory] = useState<HistoryEntry[]>([]);
+  // Read through refs, assigned during render so they are always current for
+  // the commit that is about to happen. `pushHistory` runs synchronously
+  // immediately before `setDataset`, so what these hold IS the pre-change
+  // state — reading `dataset` from the closure instead would capture
+  // whatever it was when the callback was last memoised.
+  const datasetRef = useRef(dataset);
+  const filtersRef = useRef(filters);
+  const historyRef = useRef(history);
+  datasetRef.current = dataset;
+  filtersRef.current = filters;
+  historyRef.current = history;
+
+  const pushHistory = useCallback((label: string) => {
+    setHistory((prev) =>
+      trimHistory([...prev, { label, dataset: datasetRef.current, filters: filtersRef.current }]),
+    );
+  }, []);
+
+  const undo = useCallback((): string | null => {
+    const prev = historyRef.current;
+    if (prev.length === 0) return null;
+    const entry = prev[prev.length - 1];
+    setDataset(entry.dataset);
+    setFilters(entry.filters);
+    setHistory((h) => h.slice(0, -1));
+    return entry.label;
+  }, []);
+
+  const clearHistory = useCallback(() => setHistory([]), []);
 
   // Debounced persist : we want every meaningful change saved, but a
   // burst of state updates (model picker firing through 5 fields in
@@ -333,6 +421,7 @@ export function SceloProvider({ children }: { children: ReactNode }) {
         domain,
         pickSummary,
         picksDatasetName,
+        modelWires,
         runs,
         derivedColumns,
         transformLog: Array.from(transformLog),
@@ -347,6 +436,7 @@ export function SceloProvider({ children }: { children: ReactNode }) {
     domain,
     pickSummary,
     picksDatasetName,
+    modelWires,
     runs,
     derivedColumns,
     transformLog,
@@ -399,6 +489,7 @@ export function SceloProvider({ children }: { children: ReactNode }) {
       domain,
       pickSummary,
       picksDatasetName,
+      modelWires,
       runs,
       derivedColumns,
       transformLog: Array.from(transformLog),
@@ -411,6 +502,7 @@ export function SceloProvider({ children }: { children: ReactNode }) {
       domain,
       pickSummary,
       picksDatasetName,
+      modelWires,
       runs,
       derivedColumns,
       transformLog,
@@ -425,6 +517,7 @@ export function SceloProvider({ children }: { children: ReactNode }) {
     setDomain(snap.domain ?? null);
     setPickSummary(snap.pickSummary ?? null);
     setPicksDatasetName(snap.picksDatasetName ?? null);
+    setModelWires(snap.modelWires ?? []);
     setStagedDatasets([]);
     setRuns(snap.runs ?? {});
     setDerivedColumns(snap.derivedColumns ?? {});
@@ -444,6 +537,11 @@ export function SceloProvider({ children }: { children: ReactNode }) {
       setDataset,
       filters,
       setFilters,
+      pushHistory,
+      undo,
+      undoLabel: history.length > 0 ? history[history.length - 1].label : null,
+      canUndo: history.length > 0,
+      clearHistory,
       selectedModels,
       setSelectedModels,
       domain,
@@ -452,6 +550,8 @@ export function SceloProvider({ children }: { children: ReactNode }) {
       setPickSummary,
       picksDatasetName,
       setPicksDatasetName,
+      modelWires,
+      setModelWires,
       stagedDatasets,
       setStagedDatasets,
       runs,
@@ -474,10 +574,15 @@ export function SceloProvider({ children }: { children: ReactNode }) {
     [
       dataset,
       filters,
+      history,
+      pushHistory,
+      undo,
+      clearHistory,
       selectedModels,
       domain,
       pickSummary,
       picksDatasetName,
+      modelWires,
       stagedDatasets,
       runs,
       derivedColumns,

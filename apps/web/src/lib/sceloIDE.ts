@@ -381,6 +381,19 @@ export async function getRuntimeStatus(): Promise<RuntimeStatus> {
   return window.scelo!.runtimeStatus();
 }
 
+/** Distil a failed python bridge's stderr to its most meaningful line —
+ *  the last non-empty one, which for a traceback is the actual exception
+ *  ("ValueError: …") instead of a mid-path fragment of the stack. */
+export function distillPythonError(stderr: string, exitCode: number | null): string {
+  const lines = stderr
+    .trim()
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean);
+  const tail = lines.length > 0 ? lines[lines.length - 1] : "";
+  return tail.slice(0, 300) || `python exited with code ${exitCode}`;
+}
+
 export async function runPython(
   script: string,
   opts?: { argv?: string[]; stdin?: string },

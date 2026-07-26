@@ -3,7 +3,7 @@
 The model bench. Choose the actuarial models that turn your soft data into hard
 results — by hand, or let Scelo suggest a set for your data.
 
-![Tools — the dataset hub, attached model nodes, and the model catalog](../assets/img/tools.png){ .shadow }
+<div class="scelo-demo" data-scelo-demo="tools"><p class="sd-fallback">The Tools workstation: the dataset hub, attached model nodes, and the model catalog. The animated illustration needs JavaScript.</p></div>
 
 ## The canvas
 

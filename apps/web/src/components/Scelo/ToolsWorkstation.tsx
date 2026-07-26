@@ -64,6 +64,15 @@ import {
   type ModelFamily,
 } from "./modelCatalog";
 import { type DataSignature, dataSignature, fetchModelPicks, heuristicPick } from "./modelPicker";
+import {
+  applyModelDirective,
+  describeDirectiveReport,
+  modelDirectiveProtocol,
+  parseModelDirective,
+  parseStackCommand,
+  replaceDirectiveBlock,
+} from "./modelStackDirectives";
+import type { ModelWire } from "./pipeline";
 import { type SelectedModel, useScelo } from "./sceloContext";
 import { useNodeChat } from "./useNodeChat";
 
@@ -81,6 +90,8 @@ function NodeChatbotPanel({
   placeholder,
   accentColor,
   chatId,
+  onAssistantFinal,
+  onLocalCommand,
 }: {
   stageContext: string;
   placeholder: string;
@@ -88,10 +99,20 @@ function NodeChatbotPanel({
   // Stable identifier for this chat instance — combined with the active
   // project id (if any) to form the memoryKey. Memory is off when no project.
   chatId: string;
+  /** Post-process a completed assistant reply (stack directives). */
+  onAssistantFinal?: (text: string) => string | undefined;
+  /** Deterministic intent handler, tried BEFORE the provider — receives the
+   *  assistant history so "add all suggested" can resolve the suggestions. */
+  onLocalCommand?: (text: string, assistantHistory?: string[]) => string | null;
 }) {
-  const { chatMemoryPrefix } = useScelo();
+  const { chatMemoryPrefix, project } = useScelo();
   const memoryKey = chatMemoryPrefix ? `${chatMemoryPrefix}:${chatId}` : undefined;
-  const { messages, isStreaming, send, stop } = useNodeChat(stageContext, { memoryKey });
+  const { messages, isStreaming, send, sendLocal, stop } = useNodeChat(stageContext, {
+    memoryKey,
+    onAssistantFinal,
+    logLabel: `tools · ${chatId.replace(/-/g, " · ")}`,
+    logProject: project?.name,
+  });
   const [draft, setDraft] = useState("");
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
@@ -105,6 +126,14 @@ function NodeChatbotPanel({
     const text = draft.trim();
     if (!text || isStreaming) return;
     setDraft("");
+    const localReply = onLocalCommand?.(
+      text,
+      messages.filter((m) => m.role === "assistant").map((m) => m.content),
+    );
+    if (localReply != null) {
+      sendLocal(text, localReply);
+      return;
+    }
     void send(text);
   };
 
@@ -162,6 +191,10 @@ type HubNodeData = {
   slotCount: number;
   chatContext: string;
   chatPlaceholder: string;
+  /** Applies scelo-models directives from this chat's replies. */
+  onStackDirective?: (text: string) => string | undefined;
+  /** Deterministic stack commands, tried before the provider. */
+  onLocalStackCommand?: (text: string, assistantHistory?: string[]) => string | null;
 };
 
 // Front-and-back handle pack with one slot pair per node in the canvas.
@@ -291,6 +324,8 @@ function HubNode({ id, data }: NodeProps<HubNodeData>) {
           stageContext={data.chatContext}
           placeholder={data.chatPlaceholder}
           chatId="tools-hub"
+          onAssistantFinal={data.onStackDirective}
+          onLocalCommand={data.onLocalStackCommand}
         />
       )}
     </div>
@@ -314,6 +349,10 @@ type ToolNodeData = {
   slotCount: number;
   chatContext: string;
   chatPlaceholder: string;
+  /** Applies scelo-models directives from this chat's replies. */
+  onStackDirective?: (text: string) => string | undefined;
+  /** Deterministic stack commands, tried before the provider. */
+  onLocalStackCommand?: (text: string, assistantHistory?: string[]) => string | null;
 };
 
 function ToolNode({ id, data }: NodeProps<ToolNodeData>) {
@@ -479,6 +518,8 @@ function ToolNode({ id, data }: NodeProps<ToolNodeData>) {
           placeholder={data.chatPlaceholder}
           accentColor={color}
           chatId={`tools-model:${data.model.id}`}
+          onAssistantFinal={data.onStackDirective}
+          onLocalCommand={data.onLocalStackCommand}
         />
       )}
     </div>
@@ -561,6 +602,7 @@ function buildToolsStageContext(args: {
     }
   }
   if (summary) lines.push(`PICK SUMMARY: ${summary}`);
+  lines.push(modelDirectiveProtocol());
   return lines.join("\n");
 }
 
@@ -597,6 +639,7 @@ function buildHubChatContext(args: {
     }
   }
   if (summary) lines.push(`PICK SUMMARY: ${summary}`);
+  lines.push(modelDirectiveProtocol());
   return lines.join("\n");
 }
 
@@ -639,6 +682,7 @@ function buildModelChatContext(args: {
   } else {
     lines.push("PEER MODELS: none — this is the only model attached.");
   }
+  lines.push(modelDirectiveProtocol());
   return lines.join("\n");
 }
 
@@ -1208,6 +1252,8 @@ export function ToolsWorkstation() {
     setPickSummary,
     picksDatasetName,
     setPicksDatasetName,
+    modelWires,
+    setModelWires,
     logEvent,
   } = useScelo();
 
@@ -1438,6 +1484,90 @@ export function ToolsWorkstation() {
   // Derived "desired" nodes/edges from the current model picks. The real
   // React Flow state is held in `nodes`/`edges` below — we sync the desired
   // shape in but preserve any positions the user has dragged to.
+  // Chat-driven stack mutations. Every completed assistant reply from any
+  // Tools chat passes through here: if it carries a scelo-models directive,
+  // apply it against the LIVE stack (ref, not closure — the memo'd context
+  // the chat was created with may be stale by the time the reply lands),
+  // log the same events the manual add/remove buttons do, and swap the
+  // machine block for a plain confirmation of what actually happened.
+  const selectedModelsRef = useRef(selectedModels);
+  useEffect(() => {
+    selectedModelsRef.current = selectedModels;
+  }, [selectedModels]);
+  const onChatStackDirective = useCallback(
+    (text: string): string | undefined => {
+      const directive = parseModelDirective(text);
+      if (!directive) return undefined;
+      const { next, report } = applyModelDirective(selectedModelsRef.current, directive);
+      const changed =
+        report.added.length > 0 ||
+        report.removed.length > 0 ||
+        report.enabled.length > 0 ||
+        report.disabled.length > 0;
+      if (changed) {
+        setSelectedModels(next);
+        for (const id of report.added) {
+          logEvent({ stage: "tools", kind: "model.add", payload: { id } });
+        }
+        for (const id of report.removed) {
+          logEvent({ stage: "tools", kind: "model.remove", payload: { id } });
+        }
+        for (const id of [...report.enabled, ...report.disabled]) {
+          logEvent({
+            stage: "tools",
+            kind: "model.toggle",
+            payload: { id, enabled: report.enabled.includes(id) },
+          });
+        }
+      }
+      return replaceDirectiveBlock(text, describeDirectiveReport(report));
+    },
+    [setSelectedModels, logEvent],
+  );
+
+  // Deterministic stack commands — tried before the provider. "add all the
+  // suggested models" resolves the ids from the assistant's own prior
+  // replies (newest first, skipping confirmations that only re-list the
+  // attached stack), so acceptance never depends on the LLM remembering
+  // what it proposed. Explicit "add glm-frequency / remove mack / swap X
+  // for Y" resolve straight from the catalog. Returns null → normal chat.
+  const applyDirectiveAndDescribe = useCallback(
+    (directive: ReturnType<typeof parseStackCommand>): string | null => {
+      if (!directive) return null;
+      const { next, report } = applyModelDirective(selectedModelsRef.current, directive);
+      const changed =
+        report.added.length > 0 ||
+        report.removed.length > 0 ||
+        report.enabled.length > 0 ||
+        report.disabled.length > 0;
+      if (changed) {
+        setSelectedModels(next);
+        for (const id of report.added) {
+          logEvent({ stage: "tools", kind: "model.add", payload: { id } });
+        }
+        for (const id of report.removed) {
+          logEvent({ stage: "tools", kind: "model.remove", payload: { id } });
+        }
+        for (const id of [...report.enabled, ...report.disabled]) {
+          logEvent({
+            stage: "tools",
+            kind: "model.toggle",
+            payload: { id, enabled: report.enabled.includes(id) },
+          });
+        }
+      }
+      return `**stack update:** ${describeDirectiveReport(report)}`;
+    },
+    [setSelectedModels, logEvent],
+  );
+  const onChatStackCommand = useCallback(
+    (text: string, assistantHistory?: string[]): string | null =>
+      applyDirectiveAndDescribe(
+        parseStackCommand(text, assistantHistory ?? [], selectedModelsRef.current),
+      ),
+    [applyDirectiveAndDescribe],
+  );
+
   const desiredNodes: Node[] = useMemo(() => {
     if (!dataset) return [];
     const layout = columnLayout(selectedModels.length);
@@ -1464,6 +1594,8 @@ export function ToolsWorkstation() {
           selectedModels.length === 0
             ? "suggest a starter model mix…"
             : "rebalance the mix, flag gaps…",
+        onStackDirective: onChatStackDirective,
+        onLocalStackCommand: onChatStackCommand,
       },
       draggable: true,
       selectable: false,
@@ -1494,6 +1626,8 @@ export function ToolsWorkstation() {
             focusModel: model,
           }),
           chatPlaceholder: `ask about ${model.name}…`,
+          onStackDirective: onChatStackDirective,
+          onLocalStackCommand: onChatStackCommand,
         },
         draggable: true,
       };
@@ -1683,9 +1817,81 @@ export function ToolsWorkstation() {
     });
   }, [desiredNodes, setNodes]);
 
+  // Latest context wires, readable inside the merge effect without joining
+  // its dependency list (edges→context sync writes modelWires on every edge
+  // change; depending on it here would resurrect deleted wires in a loop).
+  const modelWiresRef = useRef<ModelWire[]>(modelWires);
   useEffect(() => {
-    setEdges(desiredEdges);
-  }, [desiredEdges, setEdges]);
+    modelWiresRef.current = modelWires;
+  }, [modelWires]);
+
+  useEffect(() => {
+    setEdges((prev) => {
+      const nodeIds = new Set(["hub", ...selectedModels.map((m) => `model-${m.id}`)]);
+      const autoPairs = new Set(desiredEdges.map((e) => `${e.source}→${e.target}`));
+      // 1. Hand-drawn wires survive a mix change as long as both ends still
+      //    exist and the pair didn't just become an auto workflow arrow.
+      const keptUser = prev.filter(
+        (e) =>
+          e.id.startsWith("user-") &&
+          nodeIds.has(e.source) &&
+          nodeIds.has(e.target) &&
+          !autoPairs.has(`${e.source}→${e.target}`),
+      );
+      const present = new Set([...autoPairs, ...keptUser.map((e) => `${e.source}→${e.target}`)]);
+      // 2. Wires persisted in the session (context) but not on the canvas —
+      //    a remount lost the hand-drawn edge objects — re-materialise them
+      //    so what executes is always what the canvas shows.
+      const restored: Edge[] = [];
+      for (const w of modelWiresRef.current) {
+        const source = `model-${w.source}`;
+        const target = `model-${w.target}`;
+        if (!nodeIds.has(source) || !nodeIds.has(target)) continue;
+        if (present.has(`${source}→${target}`)) continue;
+        present.add(`${source}→${target}`);
+        const color = colorFor(w.source);
+        restored.push({
+          id: `user-restored-${w.source}-${w.target}`,
+          type: "removable",
+          source,
+          sourceHandle: "s-right-1",
+          target,
+          targetHandle: "t-left-1",
+          animated: true,
+          style: { stroke: color, strokeWidth: 1.5, opacity: 0.95 },
+          markerEnd: { type: MarkerType.ArrowClosed, color, width: 12, height: 12 },
+        });
+      }
+      return [...desiredEdges, ...keptUser, ...restored];
+    });
+  }, [desiredEdges, setEdges, selectedModels, colorFor]);
+
+  // Publish the canvas's model→model wires to the shared session so Hard
+  // Data can order execution topologically and feed upstream results into
+  // downstream runners. Auto workflow arrows count — the default pipeline
+  // (chain-ladder → mack, gbm → shap, …) is live out of the box.
+  useEffect(() => {
+    const wires: ModelWire[] = [];
+    const seen = new Set<string>();
+    for (const e of edges) {
+      if (!e.source.startsWith("model-") || !e.target.startsWith("model-")) continue;
+      const source = e.source.slice("model-".length);
+      const target = e.target.slice("model-".length);
+      const key = `${source}→${target}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      wires.push({ source, target });
+    }
+    setModelWires((prev) => {
+      if (
+        prev.length === wires.length &&
+        prev.every((w, i) => w.source === wires[i]?.source && w.target === wires[i]?.target)
+      ) {
+        return prev;
+      }
+      return wires;
+    });
+  }, [edges, setModelWires]);
 
   // React Flow's `fitView` prop only fires on the initial mount. Our nodes
   // arrive via the sync effect *after* mount, so without this the freshly
@@ -1965,6 +2171,8 @@ export function ToolsWorkstation() {
           title={chatPlaceholder}
           badge="tools · chat"
           dataset={dataset}
+          onLocalCommand={onChatStackCommand}
+          onAssistantFinal={onChatStackDirective}
         />
       </div>
     </div>

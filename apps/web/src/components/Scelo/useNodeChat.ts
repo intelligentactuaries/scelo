@@ -5,6 +5,7 @@
 import { type LlmMessage, hasLocalLlmBridge, llmChatActive } from "@/lib/aiProviders";
 import { type OrchestratorMessage, streamOrchestrator } from "@/lib/api";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { appendChatTurns } from "./chatLog";
 
 export type NodeChatMessage = {
   id: string;
@@ -59,8 +60,30 @@ function saveToStorage(key: string, messages: NodeChatMessage[]): void {
   }
 }
 
-export function useNodeChat(stageContext: string, opts?: { memoryKey?: string | null }) {
+export function useNodeChat(
+  stageContext: string,
+  opts?: {
+    memoryKey?: string | null;
+    /** Called once per COMPLETED assistant reply with the full text.
+     *  Return a string to replace what the user sees — used by the Tools
+     *  chats to apply model-stack directives and swap the machine block
+     *  for a confirmation. Kept in a ref so a stale closure never applies
+     *  yesterday's stack. */
+    onAssistantFinal?: (text: string) => string | undefined;
+    /** Human label for the audit trail, e.g. `soft · column «premium»`.
+     *  Omit and this chat is not written to the chat log. */
+    logLabel?: string;
+    /** Project name recorded alongside each turn, when the session has one. */
+    logProject?: string;
+  },
+) {
   const memoryKey = opts?.memoryKey ?? null;
+  const logLabel = opts?.logLabel;
+  const logProject = opts?.logProject;
+  const onAssistantFinalRef = useRef(opts?.onAssistantFinal);
+  useEffect(() => {
+    onAssistantFinalRef.current = opts?.onAssistantFinal;
+  });
 
   // Initialise from storage if there's a key on first mount.
   const [messages, setMessages] = useState<NodeChatMessage[]>(() => {
@@ -95,6 +118,52 @@ export function useNodeChat(stageContext: string, opts?: { memoryKey?: string | 
     if (!memoryKey) return;
     saveToStorage(memoryKey, messages);
   }, [memoryKey, messages]);
+
+  // ── audit trail ─────────────────────────────────────────────────────────
+  //
+  // Driven off settled state rather than instrumented at each send site.
+  // `send` has three completion paths (local LLM bridge, streamed
+  // orchestrator, and the empty-stream fallback), `sendLocal` a fourth, and
+  // `onAssistantFinal` can REWRITE a reply after the fact — so logging at
+  // the call sites would need five hooks and would still record pre-rewrite
+  // text. Watching the message list instead captures every path once, with
+  // the final displayed content, by construction.
+  const loggedIds = useRef<Set<string>>(new Set());
+  const seededLog = useRef(false);
+  if (!seededLog.current) {
+    // Messages restored from localStorage on mount are HISTORY, not new
+    // turns — they were logged when they originally happened. Seeding on
+    // first render (not in an effect) closes the window in which the effect
+    // below would re-log a rehydrated thread on every page load.
+    for (const m of messages) loggedIds.current.add(m.id);
+    seededLog.current = true;
+  }
+  useEffect(() => {
+    if (!logLabel) return;
+    const thread = memoryKey ?? `ephemeral:${logLabel}`;
+    const pending: Array<{
+      thread: string;
+      label: string;
+      role: "user" | "assistant";
+      content: string;
+      project?: string;
+    }> = [];
+    for (const m of messages) {
+      if (loggedIds.current.has(m.id)) continue;
+      // An assistant bubble is only final once the stream stops; logging it
+      // mid-flight would record a truncated answer as the answer.
+      if (m.role === "assistant" && (isStreaming || m.content.trim().length === 0)) continue;
+      loggedIds.current.add(m.id);
+      pending.push({
+        thread,
+        label: logLabel,
+        role: m.role,
+        content: m.content,
+        ...(logProject ? { project: logProject } : {}),
+      });
+    }
+    if (pending.length > 0) appendChatTurns(pending);
+  }, [messages, isStreaming, logLabel, logProject, memoryKey]);
 
   const send = useCallback(
     async (text: string) => {
@@ -134,18 +203,23 @@ export function useNodeChat(stageContext: string, opts?: { memoryKey?: string | 
             { role: "user", content: trimmed },
           ];
           const res = await llmChatActive(messages, { maxTokens: 1024 });
+          let content = res.ok
+            ? (res.text ?? "").trim() ||
+              "_The provider returned an empty reply. Try a different model, or check the provider in Settings → AI providers._"
+            : `_error: ${res.error ?? "unknown error"}_`;
+          if (res.ok && content) {
+            const replaced = onAssistantFinalRef.current?.(content);
+            if (typeof replaced === "string") content = replaced;
+          }
+          setMessages((prev) => prev.map((m) => (m.id === assistantId ? { ...m, content } : m)));
+        } catch (e) {
+          // llmChatActive resolves {ok:false} for provider errors, so a
+          // rejection here is the bridge itself failing (IPC). Without this
+          // catch the bubble sat empty forever and the rejection went
+          // unhandled.
+          const msg = e instanceof Error ? e.message : String(e);
           setMessages((prev) =>
-            prev.map((m) =>
-              m.id === assistantId
-                ? {
-                    ...m,
-                    content: res.ok
-                      ? (res.text ?? "").trim() ||
-                        "_The provider returned an empty reply. Try a different model, or check the provider in Settings → AI providers._"
-                      : `_error: ${res.error ?? "unknown error"}_`,
-                  }
-                : m,
-            ),
+            prev.map((m) => (m.id === assistantId ? { ...m, content: `_error: ${msg}_` } : m)),
           );
         } finally {
           setIsStreaming(false);
@@ -175,6 +249,7 @@ export function useNodeChat(stageContext: string, opts?: { memoryKey?: string | 
 
 ${trimmed}`;
 
+      let streamed = "";
       try {
         await streamOrchestrator(
           prompt,
@@ -183,6 +258,7 @@ ${trimmed}`;
             onEvent: (ev) => {
               if (ev.kind === "message") {
                 const chunk = ev.payload.text;
+                streamed += chunk;
                 setMessages((prev) =>
                   prev.map((m) =>
                     m.id === assistantId ? { ...m, content: m.content + chunk } : m,
@@ -241,6 +317,14 @@ ${trimmed}`;
               : m,
           ),
         );
+        if (streamed.trim().length > 0) {
+          const replaced = onAssistantFinalRef.current?.(streamed);
+          if (typeof replaced === "string") {
+            setMessages((prev) =>
+              prev.map((m) => (m.id === assistantId ? { ...m, content: replaced } : m)),
+            );
+          }
+        }
       }
     },
     [isStreaming, stageContext],

@@ -26,7 +26,7 @@
 // left out of this layer: those decisions should be fit on the training
 // split, not baked into intake.
 
-import type { ColumnMeta, Dataset, Row } from "./SoftDataWorkstation";
+import type { ColumnMeta, Dataset, Row } from "@scelo/core";
 
 // "Missing"-equivalent string tokens we want to normalise to null. Compared
 // case-insensitively against the trimmed cell. Pulled from CSV/parquet
@@ -1719,4 +1719,168 @@ export function applyCleaning(
   }
 
   return { name: dataset.name, columns, rows };
+}
+
+// ─── Autonomous cleaning ─────────────────────────────────────────────────
+//
+// `analyseCleaning` → `applyCleaning` is a SINGLE pass, and one pass is not
+// enough to reach a clean dataset: the ops interact. Trimming whitespace is
+// what makes " 1,200 " parse as numeric; normalising missing markers is what
+// turns a column into all-null so `drop-empty-cols` can see it; lowercasing
+// categoricals is what exposes the duplicate rows underneath. Each pass
+// therefore uncovers work the previous pass made visible.
+//
+// `autoCleanDataset` runs that loop to a fixed point: analyse, apply
+// EVERYTHING proposed, re-analyse, repeat until the analyser proposes
+// nothing. Unlike the banner (which defaults to `safe` ops only) this
+// deliberately includes the unsafe ones — dropping duplicate rows, empty and
+// constant columns, snake-casing headers. Without them the loop could never
+// converge, because those ops would be re-proposed on every pass forever.
+// That makes this a DESTRUCTIVE operation by design; the caller is expected
+// to say so, and the result reports every drop.
+//
+// Two guards stop it running away:
+//   • `maxPasses` — a hard ceiling on iterations.
+//   • a stall check — if a pass produces the exact same plan as the pass
+//     before it, the ops are not actually fixing what they report, so we
+//     stop rather than spin. This can't be caught by comparing datasets:
+//     an op may legitimately rewrite cells while leaving row/column counts
+//     identical.
+//
+// Profiling is injected rather than imported so this module keeps its only
+// dependency on the workstation type-level (importing `columnMetaCache`
+// here would close a require cycle through SoftDataWorkstation).
+
+/** Iterations before we stop and report what's left. Six is comfortably
+ *  above the deepest real dependency chain observed (trim → parse-numeric →
+ *  sentinels → drop-constant-cols) while still bounding worst-case cost at
+ *  six full profile+scan passes. */
+export const AUTO_CLEAN_MAX_PASSES = 6;
+
+export type AutoCleanPass = {
+  /** 1-indexed pass number. */
+  pass: number;
+  /** `describeOp` titles of every op applied in this pass. */
+  opLabels: string[];
+  /** Dataset shape AFTER this pass — lets the caller show rows/cols shrinking. */
+  rows: number;
+  columns: number;
+};
+
+export type AutoCleanOutcome =
+  /** The analyser proposes nothing further — the fixed point was reached. */
+  | "clean"
+  /** Nothing to do on entry: no rows, or no columns. */
+  | "empty"
+  /** Hit `maxPasses` with work still outstanding. */
+  | "exhausted"
+  /** A pass reproduced the previous plan verbatim — the remaining ops don't
+   *  resolve what they detect, so looping further cannot help. */
+  | "stalled";
+
+export type AutoCleanResult = {
+  dataset: Dataset;
+  passes: AutoCleanPass[];
+  outcome: AutoCleanOutcome;
+  rowsBefore: number;
+  rowsAfter: number;
+  columnsBefore: number;
+  columnsAfter: number;
+  /** Columns present before but not after — i.e. dropped. */
+  droppedColumns: string[];
+  /** `describeOp` titles still outstanding when we stopped early. Empty when
+   *  `outcome === "clean"`. */
+  remaining: string[];
+};
+
+export function autoCleanDataset(
+  dataset: Dataset,
+  profile: (d: Dataset) => ColumnMeta[],
+  opts: { maxPasses?: number } = {},
+): AutoCleanResult {
+  const maxPasses = Math.max(1, opts.maxPasses ?? AUTO_CLEAN_MAX_PASSES);
+  const rowsBefore = dataset.rows.length;
+  const columnsBefore = dataset.columns.length;
+
+  // Original header → the name it currently goes by. `rename-snake-case`
+  // means a column can leave under a different name than it arrived with,
+  // so a plain set-difference against the final columns would report every
+  // renamed column as dropped. Tracked across passes because a rename in
+  // pass 1 must still resolve correctly when we report at pass 5.
+  const currentName = new Map(dataset.columns.map((c) => [c, c]));
+
+  const finish = (
+    working: Dataset,
+    passes: AutoCleanPass[],
+    outcome: AutoCleanOutcome,
+    remaining: string[],
+  ): AutoCleanResult => {
+    const surviving = new Set(working.columns);
+    return {
+      dataset: working,
+      passes,
+      outcome,
+      rowsBefore,
+      rowsAfter: working.rows.length,
+      columnsBefore,
+      columnsAfter: working.columns.length,
+      // Reported under the ORIGINAL header — that's the name the user knows.
+      droppedColumns: [...currentName.entries()]
+        .filter(([, now]) => !surviving.has(now))
+        .map(([original]) => original),
+      remaining,
+    };
+  };
+
+  if (rowsBefore === 0 || columnsBefore === 0) {
+    return finish(dataset, [], "empty", []);
+  }
+
+  let working = dataset;
+  const passes: AutoCleanPass[] = [];
+  let prevSignature: string | null = null;
+
+  for (let pass = 1; pass <= maxPasses; pass++) {
+    const plan = analyseCleaning(working, profile(working));
+    if (plan.ops.length === 0) return finish(working, passes, "clean", []);
+
+    const titles = plan.ops.map((op) => describeOp(op, plan.sampled).title);
+
+    // Same plan as last time → applying it again would produce the same
+    // no-op. Report what's stuck instead of burning the remaining passes.
+    const signature = JSON.stringify(plan.ops);
+    if (signature === prevSignature) return finish(working, passes, "stalled", titles);
+    prevSignature = signature;
+
+    // Everything the analyser proposes, safe and unsafe alike — see above.
+    const enabled = new Set<CleaningOpKey>(plan.ops.map((op) => op.key));
+    working = applyCleaning(working, plan, enabled);
+
+    // Follow any header rewrites this pass performed.
+    for (const op of plan.ops) {
+      if (op.key !== "rename-snake-case") continue;
+      const rename = new Map(op.columns.map((c) => [c.from, c.to]));
+      for (const [original, now] of currentName) {
+        const renamed = rename.get(now);
+        if (renamed !== undefined) currentName.set(original, renamed);
+      }
+    }
+    passes.push({
+      pass,
+      opLabels: titles,
+      rows: working.rows.length,
+      columns: working.columns.length,
+    });
+  }
+
+  // Ran the ceiling. The final pass may still have landed us clean, so ask
+  // once more before calling it exhausted.
+  const finalPlan = analyseCleaning(working, profile(working));
+  if (finalPlan.ops.length === 0) return finish(working, passes, "clean", []);
+  return finish(
+    working,
+    passes,
+    "exhausted",
+    finalPlan.ops.map((op) => describeOp(op, finalPlan.sampled).title),
+  );
 }
