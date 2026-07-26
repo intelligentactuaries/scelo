@@ -19,7 +19,7 @@
 //   2. Testability — binning logic is easy to get subtly wrong, so it is
 //      separated from rendering entirely.
 
-import type { Row } from "./SoftDataWorkstation";
+import type { Row } from "@scelo/core";
 
 /** Calendar components plus a UTC timestamp for ordering and day arithmetic. */
 export type DatePoint = { y: number; m: number; d: number; ms: number };

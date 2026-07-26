@@ -28,7 +28,7 @@
 //   - Last two rows are exact duplicates of row 0 so drop-duplicates
 //     fires.
 
-import type { Dataset, Row } from "./SoftDataWorkstation";
+import type { Dataset, Row } from "@scelo/core";
 
 // Tiny seeded LCG so the dirty sample is stable across reloads (same
 // pattern as the claims / climate samples).

@@ -4,7 +4,7 @@
 // through the existing CSV importer. Parquet write would need a JS
 // writer (none in the bundle today) and is the obvious follow-up.
 
-import type { CellValue, Dataset, Row } from "./SoftDataWorkstation";
+import type { CellValue, Dataset, Row } from "@scelo/core";
 
 // RFC 4180 escape: wrap in quotes when the value contains a comma,
 // quote, newline, or carriage return; double any embedded quotes.

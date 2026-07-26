@@ -38,7 +38,7 @@
 // in `detail.byPolicy` for chat-context drilling but not surfaced on the
 // card by default.
 
-import type { Dataset, Row } from "./SoftDataWorkstation";
+import type { Dataset, Row } from "@scelo/core";
 
 // ─── Types ────────────────────────────────────────────────────────────────
 

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { Dataset, Row } from "./SoftDataWorkstation";
+import type { Dataset, Row } from "@scelo/core";
 import {
   combineAll,
   combinePair,

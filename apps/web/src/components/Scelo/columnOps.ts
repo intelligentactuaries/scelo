@@ -7,7 +7,7 @@
 // the dataset's `sampled` metadata via object spread (the sampling banner
 // must survive an in-place column op).
 
-import type { CellValue, ColumnMeta, Dataset } from "./SoftDataWorkstation";
+import type { CellValue, ColumnMeta, Dataset } from "@scelo/core";
 import { coerceNumericValue } from "./cleaning";
 
 // ─── transforms ─────────────────────────────────────────────────────────────

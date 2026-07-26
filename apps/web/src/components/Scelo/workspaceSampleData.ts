@@ -8,7 +8,7 @@
 // recovers the three true drivers even though they occupy almost none of the
 // input variance, the exact "decision-relevant is not max-variance" result.
 
-import type { Dataset, Row } from "./SoftDataWorkstation";
+import type { Dataset, Row } from "@scelo/core";
 import { gaussStd, seededRng } from "./workspace/linalg";
 
 /** The report channels an actuary reads off this book (the workspace readout). */

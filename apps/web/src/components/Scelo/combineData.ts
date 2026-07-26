@@ -24,7 +24,7 @@
 // match and reports the duplication instead of exploding a 250k-row base
 // into millions (m:n cartesian blowups are the classic silent killer here).
 
-import type { CellValue, Dataset, Row } from "./SoftDataWorkstation";
+import type { CellValue, Dataset, Row } from "@scelo/core";
 
 export type CombineStrategy = "append" | "join-left" | "join-inner";
 

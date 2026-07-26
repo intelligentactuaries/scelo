@@ -14,7 +14,7 @@
 // Output is a notebook string the caller can offer for download. Nothing
 // is uploaded; everything is generated on the client.
 
-import type { Dataset, Row } from "./SoftDataWorkstation";
+import type { Dataset, Row } from "@scelo/core";
 
 // ─── Model → lifelib library mapping ─────────────────────────────────────
 

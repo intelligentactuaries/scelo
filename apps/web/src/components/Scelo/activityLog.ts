@@ -8,7 +8,7 @@
 // MAJOR actions only (one entry per user-meaningful event) — every chat
 // message is NOT logged.
 
-import type { Filter } from "./SoftDataWorkstation";
+import type { Filter } from "@scelo/core";
 import type { ModelFamily } from "./modelCatalog";
 
 export type Stage = "soft" | "tools" | "hard";
