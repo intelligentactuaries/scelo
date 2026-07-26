@@ -73,6 +73,21 @@ export interface RouteOpts {
   signal?: AbortSignal;
   /** Per-request timeout in ms; defaults to DEFAULT_LLM_TIMEOUT_MS. */
   timeoutMs?: number;
+  /**
+   * Extra value folded into the cache key.
+   *
+   * The cache is keyed on the exact prompt, which is right for the council
+   * and society tiers — the same question deserves the same answer, and a
+   * re-run should not re-burn minutes of GPU. It is WRONG for a Monte Carlo
+   * microsimulation, where every run is meant to be an independent draw:
+   * identical prompts made each re-run replay the previous run's answers
+   * instantly, freezing the output table. Passing the run's seed here makes
+   * a new draw miss the cache while a pinned seed hits it exactly, which is
+   * what reproducibility actually requires.
+   *
+   * Opt-in, so callers that want plain prompt-level caching are unaffected.
+   */
+  cacheSalt?: string | number;
 }
 
 // A single stalled LLM request must never hang the whole run. Non-streaming
@@ -207,7 +222,7 @@ class LLMRouter {
       provider,
       model,
       messages,
-      opts: { t: opts.temperature, mt: opts.maxTokens },
+      opts: { t: opts.temperature, mt: opts.maxTokens, salt: opts.cacheSalt },
     });
     if (!opts.fresh) {
       const cached = readCache(key);
@@ -255,7 +270,7 @@ class LLMRouter {
       provider,
       model,
       messages,
-      opts: { t: opts.temperature, mt: opts.maxTokens, stream: true },
+      opts: { t: opts.temperature, mt: opts.maxTokens, stream: true, salt: opts.cacheSalt },
     });
     if (!opts.fresh) {
       const cached = readCache(key);

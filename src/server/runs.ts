@@ -225,6 +225,33 @@ function newId(): string {
   return `r_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
+/**
+ * Society sampling seed for a run, derived from its id.
+ *
+ * The society is a SAMPLE of a population, so two runs of the same scenario
+ * are meant to poll different people — that variation is the signal. It was
+ * previously left to `sampleSocietyAgents`' default, a literal 0xC0FFEE, so
+ * every run in the app's history polled the identical cohort; identical
+ * agents produced identical prompts, which then hit the LLM cache, so a
+ * re-run replayed the previous society verbatim.
+ *
+ * Deriving from the run id rather than randomising gives per-run variation
+ * AND reproducibility for free: run ids are unique and already persisted, so
+ * a stored run's cohort can always be recomputed. No schema change.
+ *
+ * (The COUNCIL is deliberately not affected. Its roster is a designed
+ * stratified panel — `all.slice(0, subset)` over professions × MBTI × gender
+ * — not a sample, and holding it fixed is what makes runs comparable.)
+ */
+export function societySeedFor(runId: string): number {
+  let h = 2166136261 >>> 0;
+  for (let i = 0; i < runId.length; i++) {
+    h = (Math.imul(h ^ runId.charCodeAt(i), 16777619)) >>> 0;
+  }
+  // mulberry32 takes any uint32; keep it positive and non-zero.
+  return (h || 1) >>> 0;
+}
+
 export interface StartRunArgs {
   scenario: string;
   societyParams?: Partial<SocietyParams>;
@@ -239,6 +266,14 @@ export interface StartRunArgs {
   wmtrEnabled?: boolean;
   /** Custom overrides for the WMTR config (used by intervention re-runs). */
   wmtrOverrides?: Partial<WmtrSingleParams>;
+  /**
+   * Override the society sampling seed. Defaults to one derived from the
+   * run id, so each run polls a fresh cohort. Set it to hold the cohort
+   * fixed while something else varies — an intervention re-run passes the
+   * parent's seed so the delta is attributable to the intervention rather
+   * than to resampling.
+   */
+  societySeed?: number;
   /** Parent run id when re-running after an intervention. */
   parentRunId?: string;
   /** Intervention applied vs parentRun. */
@@ -338,7 +373,11 @@ async function executeRun(rec: ActiveRun, args: StartRunArgs): Promise<void> {
     let societyMs: number | undefined;
     if (societySize > 0) {
       const t1 = performance.now();
-      const agents = sampleSocietyAgents(run.societyParams, societySize);
+      const agents = sampleSocietyAgents(
+        run.societyParams,
+        societySize,
+        args.societySeed ?? societySeedFor(run.id),
+      );
       const society = await runSociety(run.scenario, agents, {
         fresh: args.fresh,
         onProgress: (e) => emit(rec, e),

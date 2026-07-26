@@ -6,6 +6,7 @@ import {
   getAgentResult,
   getRun,
   isJustifyAllRunning,
+  societySeedFor,
   startJustifyAllJob,
   startRun,
   subscribe,
@@ -218,6 +219,11 @@ route('POST', '/api/run/:id/intervene', async ({ req, params }) => {
     societySize: body.societySize,
     fresh: body.fresh,
     wmtrOverrides: merged,
+    // Inherit the parent's society cohort. This run exists to answer "what
+    // changes if we apply this intervention?" — resampling the population at
+    // the same time would confound the intervention effect with sampling
+    // noise and make the before/after delta unreadable.
+    societySeed: societySeedFor(run.id),
     parentRunId: run.id,
     appliedIntervention: body.intervention,
   });
@@ -315,6 +321,8 @@ interface SimulateBody {
   concurrency?: number;
   /** Bypass the LLM cache. */
   fresh?: boolean;
+  /** Population seed. Omit for an independent draw; send one back to
+   *  reproduce a previous run exactly. */
   seed?: number;
   /** Stream progress as SSE instead of one JSON body at the end. A full
    *  run is minutes of LLM calls; a silent response that long gets killed
@@ -361,19 +369,34 @@ route('POST', '/api/simulate', async ({ req }) => {
   const sampleSize = Math.max(20, Math.min(2000, body.sampleSize ?? 200));
   const drugs = (body.drugs ?? []).filter((d): d is string => !!d && d.trim().length > 0);
 
+  // Monte Carlo draws must be independent. The seed used to default to a
+  // literal 1, so every run sampled the SAME cohort; identical agents
+  // produced identical prompts, every prompt hit the LLM cache, and the
+  // whole simulation returned the previous run's table in ~1ms. That is not
+  // a slow simulation — it is the same simulation, replayed.
+  //
+  // An explicit seed is still honoured, because reproducing a published
+  // figure is a real requirement; it is echoed in the response so any run
+  // can be re-run exactly.
+  const seed =
+    typeof body.seed === 'number' && Number.isFinite(body.seed)
+      ? Math.floor(body.seed)
+      : Math.floor(Math.random() * 2 ** 31);
+
   const runFull = async (onProgress?: (e: SimulationProgress) => void) => {
     const t0 = performance.now();
     const refs: ReferenceBundle = await fetchReferenceBundle(drugs);
     const refBlock = formatReferenceBlock(refs);
     const refMs = Math.round(performance.now() - t0);
 
-    const agents = sampleSAPopulation({ size: sampleSize, seed: body.seed ?? 1 });
+    const agents = sampleSAPopulation({ size: sampleSize, seed });
 
     const { results, elapsedMs: simMs } = await runSimulation(agents, {
       scenario: body.scenario.trim(),
       referenceBlock: refBlock,
       concurrency: body.concurrency,
       fresh: body.fresh,
+      seed,
       onProgress,
     });
 
@@ -389,6 +412,8 @@ route('POST', '/api/simulate', async ({ req }) => {
       columns: rows.length > 0 ? Object.keys(rows[0]) : [],
       sampleSize,
       population: macro.population,
+      /** Echoed so a run can be reproduced exactly by sending it back. */
+      seed,
       timings: { refMs, simMs },
     };
   };
@@ -468,7 +493,14 @@ interface AugmentBody {
   expectedColumns?: string[];
   /** How many representative agents to simulate for the lookup. */
   sampleSize?: number;
+  /** Reference-cohort seed. Omit for an independent draw; send one back to
+   *  reproduce a previous augmentation exactly. */
+  seed?: number;
   fresh?: boolean;
+  /** Stream progress as SSE instead of one JSON body at the end. Strongly
+   *  recommended: the reference pass is one LLM call per agent, and a silent
+   *  multi-minute response is cut off by the browser. */
+  stream?: boolean;
 }
 
 route('POST', '/api/simulate/augment', async ({ req }) => {
@@ -477,27 +509,109 @@ route('POST', '/api/simulate/augment', async ({ req }) => {
   if (!Array.isArray(body.rows) || body.rows.length === 0) {
     return json({ error: 'rows array required' }, { status: 400 });
   }
-  const sampleSize = Math.max(40, Math.min(400, body.sampleSize ?? 120));
+  // 400 (the cap) by default. The lookup takes a median inside each
+  // age × sex × comorbidity bucket — ~40 buckets — so 120 left roughly 3
+  // reference agents per bucket and several backed by one. At 400 the
+  // age-balanced draw fills ~41 buckets with far more depth, which is what
+  // makes a per-bucket median worth quoting.
+  //
+  // The cost is one LLM call per reference agent: measured ~2.6s marginal,
+  // so a cold 400-agent run is ~17 minutes. That is only survivable because
+  // of the streaming branch below — a plain JSON response that silent would
+  // be cut off by the browser long before it finished.
+  const sampleSize = Math.max(40, Math.min(400, body.sampleSize ?? 400));
   const drugs = (body.drugs ?? []).filter((d): d is string => !!d && d.trim().length > 0);
+
+  const runFull = async (onProgress?: (e: SimulationProgress) => void) => {
   const refs = await fetchReferenceBundle(drugs);
   const refBlock = formatReferenceBlock(refs);
-  const agents = sampleSAPopulation({ size: sampleSize, seed: 7 });
+  // The reference cohort is a Monte Carlo draw, and the bucket medians below
+  // are estimates from it — so it was wrong to freeze it. The seed used to be
+  // a literal 7, which meant the same 120 agents forever: identical prompts,
+  // a 100% LLM cache hit, and an augmentation that could never be refreshed
+  // or checked for sensitivity to the draw. An explicit seed is still
+  // honoured and echoed, so an augmentation used in a report can be
+  // reproduced exactly.
+  const seed =
+    typeof body.seed === 'number' && Number.isFinite(body.seed)
+      ? Math.floor(body.seed)
+      : Math.floor(Math.random() * 2 ** 31);
+  // Age-balanced, NOT representative. The lookup below takes a median within
+  // each age × sex × comorbidity bucket, so it needs coverage in every
+  // decade rather than a cohort shaped like SA's (very young) pyramid — a
+  // representative draw leaves the 80+ buckets empty, which is what forced
+  // elderly rows onto the whole-cohort fallback. Conditional estimates are
+  // invariant to the marginal age distribution, so this sharpens the elderly
+  // buckets without biasing any of them. Safe here precisely because the
+  // augment path never aggregates across ages (no aggregateMacro).
+  const agents = sampleSAPopulation({ size: sampleSize, seed, ageWeighting: 'age-balanced' });
   const { results } = await runSimulation(agents, {
     scenario: body.scenario.trim(),
     referenceBlock: refBlock,
     fresh: body.fresh,
+    seed,
+    onProgress,
   });
 
-  // Build a lookup: ageBucket × sex × hasComorbidity → median outcome.
+  // Index the reference cohort at several granularities.
+  //
+  // A single decade × sex × comorbidity table is too sparse to stand alone:
+  // at the default sample size only ~30 of the ~40 possible buckets are
+  // occupied and several hold a single agent, so many input rows find no
+  // match. The previous fallback claimed to "fall back through coarser
+  // buckets" but actually took the FIRST bucket in Map insertion order —
+  // i.e. the bucket of whichever agent happened to be simulated first. An
+  // 80-year-old man with comorbidities could be handed a 20-year-old
+  // woman's outcomes. That was merely stable while the seed was frozen;
+  // with an independent draw per run it would have become erratic, so it
+  // has to be fixed alongside the seed rather than after it.
+  //
+  // These indexes let an unmatched row degrade to the nearest sensible
+  // neighbourhood — drop comorbidity, then sex, then widen the age band —
+  // and only reach the whole cohort as a last resort.
   type Key = string;
-  const buckets = new Map<Key, SimulationAgentResult[]>();
-  const bucketKey = (age: number, sex: string, hasCom: boolean): Key =>
-    `${Math.floor(age / 10) * 10}|${sex}|${hasCom ? 'c' : '0'}`;
-  for (const r of results) {
-    const k = bucketKey(r.agent.age, r.agent.sex ?? r.agent.health?.sex ?? 'F', !!r.agent.health && r.agent.health.comorbidities.length > 0);
-    const arr = buckets.get(k) ?? [];
+  type Bucketed = Map<Key, SimulationAgentResult[]>;
+  const byExact: Bucketed = new Map();
+  const byDecadeSex: Bucketed = new Map();
+  const byDecade: Bucketed = new Map();
+  const byBandSex: Bucketed = new Map();
+  const byBand: Bucketed = new Map();
+  const decadeOf = (age: number) => Math.floor(age / 10) * 10;
+  const bandOf = (age: number) => Math.floor(age / 20) * 20;
+  const push = (m: Bucketed, k: Key, r: SimulationAgentResult) => {
+    const arr = m.get(k) ?? [];
     arr.push(r);
-    buckets.set(k, arr);
+    m.set(k, arr);
+  };
+  for (const r of results) {
+    const age = r.agent.age;
+    const sex = r.agent.sex ?? r.agent.health?.sex ?? 'F';
+    const hasCom = !!r.agent.health && r.agent.health.comorbidities.length > 0;
+    push(byExact, `${decadeOf(age)}|${sex}|${hasCom ? 'c' : '0'}`, r);
+    push(byDecadeSex, `${decadeOf(age)}|${sex}`, r);
+    push(byDecade, `${decadeOf(age)}`, r);
+    push(byBandSex, `${bandOf(age)}|${sex}`, r);
+    push(byBand, `${bandOf(age)}`, r);
+  }
+
+  /** Nearest populated neighbourhood for a row, plus how it was matched. */
+  function resolveBucket(
+    age: number,
+    sex: string,
+    hasCom: boolean,
+  ): { arr: SimulationAgentResult[]; match: string } {
+    const tries: Array<[Bucketed, Key, string]> = [
+      [byExact, `${decadeOf(age)}|${sex}|${hasCom ? 'c' : '0'}`, 'age10+sex+comorbidity'],
+      [byDecadeSex, `${decadeOf(age)}|${sex}`, 'age10+sex'],
+      [byDecade, `${decadeOf(age)}`, 'age10'],
+      [byBandSex, `${bandOf(age)}|${sex}`, 'age20+sex'],
+      [byBand, `${bandOf(age)}`, 'age20'],
+    ];
+    for (const [m, k, match] of tries) {
+      const arr = m.get(k);
+      if (arr && arr.length > 0) return { arr, match };
+    }
+    return { arr: results, match: 'cohort' };
   }
   function median(xs: number[]): number {
     if (xs.length === 0) return 0;
@@ -506,19 +620,15 @@ route('POST', '/api/simulate/augment', async ({ req }) => {
     return s.length % 2 === 1 ? s[m] : (s[m - 1] + s[m]) / 2;
   }
   function lookup(age: number, sex: string, hasCom: boolean) {
-    let arr = buckets.get(bucketKey(age, sex, hasCom));
-    if (!arr || arr.length === 0) {
-      // Fall back through coarser buckets until we find one.
-      for (const k of buckets.keys()) {
-        const candidate = buckets.get(k);
-        if (candidate && candidate.length > 0) {
-          arr = candidate;
-          break;
-        }
-      }
-    }
-    if (!arr || arr.length === 0) return null;
+    const { arr, match } = resolveBucket(age, sex, hasCom);
+    if (arr.length === 0) return null;
     return {
+      // How the estimate was reached and how much evidence backs it. A
+      // median over one agent and a median over thirty are not the same
+      // claim, and the caller loads these rows straight into a modelling
+      // workstation — the distinction has to travel with the data.
+      sim_bucket_match: match,
+      sim_bucket_n: arr.length,
       sim_treatment_uptake_mode: modeOf(arr.map((r) => r.outcome.behaviour.treatmentUptake)),
       sim_isolation_days_median: median(arr.map((r) => r.outcome.behaviour.isolationDays)),
       sim_spending_shift_mode: modeOf(arr.map((r) => r.outcome.behaviour.spendingShift)),
@@ -559,14 +669,77 @@ route('POST', '/api/simulate/augment', async ({ req }) => {
     return { ...row, ...(out ?? {}) };
   });
 
-  return json({
+  return {
     scenario: body.scenario.trim(),
     drugs,
     refs,
     sampleSize,
+    /** Echoed so an augmentation can be reproduced exactly. */
+    seed,
+    /** The reference cohort is deliberately age-balanced, not representative
+     *  of SA's pyramid — say so, since these are per-bucket estimates and
+     *  the cohort must not be read as a population sample. */
+    referenceWeighting: 'age-balanced',
     inputRows: body.rows.length,
     augmentedColumns: Object.keys(augmented[0] ?? {}).filter((k) => k.startsWith('sim_')),
     rows: augmented,
+  };
+  };
+
+  if (!body.stream) return json(await runFull());
+
+  // SSE variant, same contract as /api/simulate: headers go out immediately
+  // so the browser never sees a silent socket, progress events report the
+  // reference pass, and the final event carries exactly the payload the JSON
+  // branch would have returned.
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream({
+    async start(controller) {
+      let closed = false;
+      const send = (obj: unknown) => {
+        if (closed) return;
+        try {
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify(obj)}\n\n`));
+        } catch {
+          closed = true; // client went away — let the run finish quietly
+        }
+      };
+      const heartbeat = setInterval(() => {
+        if (closed) return;
+        try {
+          controller.enqueue(encoder.encode(`: hb\n\n`));
+        } catch {
+          clearInterval(heartbeat);
+        }
+      }, 20_000);
+      send({ type: 'phase', phase: 'refs' });
+      try {
+        const payload = await runFull((e) => {
+          if (e.type === 'sim_start') send({ type: 'phase', phase: 'sim', total: e.total });
+          else if (e.type === 'sim_progress')
+            send({ type: 'sim_progress', done: e.done, total: e.total });
+          else if (e.type === 'sim_done') send({ type: 'phase', phase: 'macro' });
+        });
+        send({ type: 'result', ...payload });
+      } catch (e) {
+        send({ type: 'error', message: e instanceof Error ? e.message : String(e) });
+      } finally {
+        closed = true;
+        clearInterval(heartbeat);
+        try {
+          controller.close();
+        } catch {
+          /* already closed */
+        }
+      }
+    },
+  });
+  return new Response(stream, {
+    headers: {
+      'content-type': 'text/event-stream',
+      'cache-control': 'no-cache',
+      connection: 'keep-alive',
+    },
   });
 });
 
@@ -812,6 +985,50 @@ interface ChatBody {
   history?: ChatMessage[];
   fresh?: boolean;
 }
+
+// Chat audit trail. Scelo's history view fetches this and merges it with its
+// own chat log so one timeline covers every chatbot in the system. `since`
+// (epoch ms, exclusive) lets a caller poll for just what is new.
+route('GET', '/api/chat-log', async ({ req }) => {
+  const url = new URL(req.url);
+  const since = Number(url.searchParams.get('since') ?? 0) || 0;
+  // Bounded so a long-lived DB can't hand back a 50MB JSON body.
+  const limit = Math.min(Math.max(Number(url.searchParams.get('limit') ?? 500) || 500, 1), 2000);
+  try {
+    const rows = db
+      .prepare(
+        `SELECT id, run_id, role, content, provider, model, created_at
+           FROM chat_log
+          WHERE created_at > ?
+          ORDER BY created_at DESC, id DESC
+          LIMIT ?`,
+      )
+      .all(since, limit) as Array<{
+      id: number;
+      run_id: string;
+      role: string;
+      content: string;
+      provider: string | null;
+      model: string | null;
+      created_at: number;
+    }>;
+    return json({
+      entries: rows.map((r) => ({
+        id: `swarm-${r.id}`,
+        ts: r.created_at,
+        runId: r.run_id,
+        role: r.role,
+        content: r.content,
+        provider: r.provider,
+        model: r.model,
+      })),
+      // Tells the caller whether it hit the cap and should page further back.
+      truncated: rows.length === limit,
+    });
+  } catch (e) {
+    return json({ error: e instanceof Error ? e.message : String(e), entries: [] }, { status: 500 });
+  }
+});
 
 route('POST', '/api/chat', async ({ req }) => {
   const body = await readBody<ChatBody>(req);

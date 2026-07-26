@@ -13,6 +13,8 @@
 //   • narrative provenance — every macro multiplier with its source
 
 import { useCallback, useEffect, useState } from 'react';
+import { EditableNumber, magnitudeEdit } from './EditableNumber';
+import { DeliberationOverlay, useElapsed } from './DeliberationOverlay';
 
 type SimRow = Record<string, string | number | boolean>;
 
@@ -59,6 +61,8 @@ interface SimResponse {
   columns: string[];
   sampleSize: number;
   population: number;
+  /** Population seed the server actually used — pin it to reproduce a run. */
+  seed: number;
   timings: { refMs: number; simMs: number };
 }
 
@@ -142,6 +146,12 @@ export interface SimulationState {
   error: string | null;
   result: SimResponse | null;
   progress: SimProgress | null;
+  /** Overlay tucked away by the user; the run continues regardless. */
+  overlayHidden: boolean;
+  setOverlayHidden: (v: boolean) => void;
+  /** Empty string = draw a fresh cohort each run. */
+  seedPin: string;
+  setSeedPin: (v: string) => void;
   onTemplate: (idx: number) => void;
   run: () => void;
 }
@@ -155,6 +165,10 @@ export function useSimulationState(): SimulationState {
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<SimResponse | null>(null);
   const [progress, setProgress] = useState<SimProgress | null>(null);
+  const [overlayHidden, setOverlayHidden] = useState(false);
+  // Blank = an independent draw each run (the default, and what makes this a
+  // Monte Carlo rather than a replay). Set = reproduce that exact run.
+  const [seedPin, setSeedPin] = useState<string>('');
 
   const onTemplate = (idx: number) => {
     const t = TEMPLATES[idx];
@@ -167,6 +181,7 @@ export function useSimulationState(): SimulationState {
     setError(null);
     setResult(null); // clear the prior run so the progress panel shows cleanly
     setProgress(null);
+    setOverlayHidden(false);
     const drugs = drugsText
       .split(/[,\n]/)
       .map((d) => d.trim())
@@ -185,6 +200,11 @@ export function useSimulationState(): SimulationState {
           sampleSize,
           population,
           stream: true,
+          // Omitted unless pinned — the server then draws an independent
+          // cohort, which is the whole point of re-running.
+          ...(seedPin.trim() !== '' && Number.isFinite(Number(seedPin))
+            ? { seed: Number(seedPin) }
+            : {}),
         }),
       });
       if (!r.ok) throw new Error(`/api/simulate ${r.status}`);
@@ -239,7 +259,7 @@ export function useSimulationState(): SimulationState {
       .then((res) => setResult(res))
       .catch((e) => setError(e instanceof Error ? e.message : String(e)))
       .finally(() => setBusy(false));
-  }, [scenario, drugsText, sampleSize, population]);
+  }, [scenario, drugsText, sampleSize, population, seedPin]);
 
   return {
     scenario,
@@ -254,6 +274,10 @@ export function useSimulationState(): SimulationState {
     error,
     result,
     progress,
+    overlayHidden,
+    setOverlayHidden,
+    seedPin,
+    setSeedPin,
     onTemplate,
     run,
   };
@@ -273,6 +297,10 @@ export function SimulationView({ state }: { state: SimulationState }) {
     error,
     result,
     progress,
+    overlayHidden,
+    setOverlayHidden,
+    seedPin,
+    setSeedPin,
     onTemplate,
     run,
   } = state;
@@ -314,8 +342,20 @@ export function SimulationView({ state }: { state: SimulationState }) {
               disabled={busy}
             />
           </label>
-          <label className="simulation-control">
-            <span className="panel-label">sample size · {sampleSize}</span>
+          <div className="simulation-control">
+            <span className="panel-label">
+              sample size ·{' '}
+              <EditableNumber
+                value={sampleSize}
+                min={20}
+                max={1000}
+                step={20}
+                format={(v) => String(v)}
+                onChange={setSampleSize}
+                disabled={busy}
+                ariaLabel="sample size value"
+              />
+            </span>
             <input
               type="range"
               min={20}
@@ -324,10 +364,40 @@ export function SimulationView({ state }: { state: SimulationState }) {
               value={sampleSize}
               onChange={(e) => setSampleSize(Number(e.target.value))}
               disabled={busy}
+              aria-label="sample size"
             />
-          </label>
-          <label className="simulation-control">
-            <span className="panel-label">population · {ZAR(population).replace('R', '')}</span>
+          </div>
+          <div className="simulation-control">
+            <span className="panel-label">
+              seed{' '}
+              <span className="sim-seed-hint">
+                {seedPin.trim() === '' ? 'random each run' : 'pinned — reproduces exactly'}
+              </span>
+            </span>
+            <input
+              type="text"
+              inputMode="numeric"
+              value={seedPin}
+              onChange={(e) => setSeedPin(e.target.value.replace(/[^0-9]/g, ''))}
+              placeholder="blank = new draw"
+              disabled={busy}
+            />
+          </div>
+          <div className="simulation-control">
+            <span className="panel-label">
+              population ·{' '}
+              <EditableNumber
+                value={population}
+                min={1_000_000}
+                max={200_000_000}
+                step={1_000_000}
+                format={(v) => ZAR(v).replace('R', '')}
+                onChange={setPopulation}
+                disabled={busy}
+                ariaLabel="population value"
+                {...magnitudeEdit}
+              />
+            </span>
             <input
               type="range"
               min={1_000_000}
@@ -336,8 +406,9 @@ export function SimulationView({ state }: { state: SimulationState }) {
               value={population}
               onChange={(e) => setPopulation(Number(e.target.value))}
               disabled={busy}
+              aria-label="population"
             />
-          </label>
+          </div>
           <button
             type="button"
             className="primary-btn pill-btn"
@@ -351,7 +422,14 @@ export function SimulationView({ state }: { state: SimulationState }) {
       </header>
 
       {busy && !result && <SimulationProgress progress={progress} />}
-      {result && <SimulationResults result={result} />}
+      {busy && !result && !overlayHidden && (
+        <SimulationOverlay
+          progress={progress}
+          sampleSize={sampleSize}
+          onHide={() => setOverlayHidden(true)}
+        />
+      )}
+      {result && <SimulationResults result={result} onPinSeed={setSeedPin} />}
     </div>
   );
 }
@@ -364,6 +442,40 @@ const SIM_PHASES: Array<{ key: string; label: string; hint: string }> = [
   { key: 'sim', label: 'Simulating agent outcomes', hint: 'per-agent disease course' },
   { key: 'macro', label: 'Scaling macro impact', hint: 'cohort → national' },
 ];
+
+/** Drives the shared deliberation overlay from the simulation's own feed.
+ *  The ring's seats are agents in the sample; the centre ticks are the three
+ *  server phases. Only the 'sim' phase reports counts, so the other two show
+ *  the indeterminate comet rather than a fabricated bar. */
+function SimulationOverlay({
+  progress,
+  sampleSize,
+  onHide,
+}: {
+  progress: SimProgress | null;
+  sampleSize: number;
+  onHide: () => void;
+}) {
+  const elapsed = useElapsed(true);
+  const phaseIdx = Math.max(0, SIM_PHASES.findIndex((p) => p.key === (progress?.phase ?? 'refs')));
+  const inSim = progress?.phase === 'sim' && progress.total > 0;
+  const ph = SIM_PHASES[phaseIdx];
+  return (
+    <DeliberationOverlay
+      eyebrow={`simulation · ${sampleSize} agents`}
+      elapsed={elapsed}
+      title={ph.label}
+      subtitle={inSim ? `${progress.done} / ${progress.total} agents simulated` : ph.hint}
+      seats={inSim ? progress.total : sampleSize}
+      litSeats={inSim ? progress.done : progress?.phase === 'macro' ? sampleSize : 0}
+      ticks={SIM_PHASES.length}
+      tickCurrent={phaseIdx + 1}
+      outerFrac={null}
+      indeterminate={!inSim}
+      onHide={onHide}
+    />
+  );
+}
 
 function SimulationProgress({ progress }: { progress: SimProgress | null }) {
   const [elapsed, setElapsed] = useState(0);
@@ -439,7 +551,10 @@ function previewColumns(all: string[]): string[] {
   return curated.length > 0 ? curated : all.slice(0, 8);
 }
 
-function SimulationResults({ result }: { result: SimResponse }) {
+function SimulationResults({
+  result,
+  onPinSeed,
+}: { result: SimResponse; onPinSeed: (seed: string) => void }) {
   const cols = previewColumns(result.columns);
   return (
     <div className="simulation-results">
@@ -583,6 +698,20 @@ function SimulationResults({ result }: { result: SimResponse }) {
 
       <footer className="muted small simulation-footer">
         simulated in {(result.timings.simMs / 1000).toFixed(1)}s · references resolved in {(result.timings.refMs / 1000).toFixed(2)}s · scale factor {result.macro.scaleFactor.toFixed(0)}×
+        {result.seed !== undefined && (
+          <>
+            {' · seed '}
+            <span className="sim-seed-value">{result.seed}</span>{' '}
+            <button
+              type="button"
+              className="sim-seed-pin"
+              onClick={() => onPinSeed(String(result.seed))}
+              title="Pin this seed so the next run reproduces this exact cohort and table"
+            >
+              pin
+            </button>
+          </>
+        )}
       </footer>
     </div>
   );

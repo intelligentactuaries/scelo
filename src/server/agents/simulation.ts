@@ -21,6 +21,9 @@ export interface SimulationOpts {
   /** Concurrency cap to keep local Ollama from melting. Defaults to 12. */
   concurrency?: number;
   fresh?: boolean;
+  /** The run's population seed. Folded into the LLM cache key so each draw
+   *  is independent, and so re-running a pinned seed reproduces it exactly. */
+  seed?: number;
   onProgress?: (e: SimulationProgress) => void;
 }
 
@@ -226,6 +229,7 @@ async function runOne(
   scenario: string,
   ref: string,
   fresh: boolean,
+  seed: number | undefined,
 ): Promise<SimulationAgentResult> {
   const system = buildAgentSystemPrompt(agent, scenario, ref);
   const messages: Message[] = [
@@ -237,6 +241,7 @@ async function runOne(
       fresh,
       maxTokens: MAX_TOKENS,
       temperature: 0.5,
+      cacheSalt: seed,
     });
     const outcome = parseOutcome(raw);
     // Hard rule regardless of what the model wrote: under-15s cannot be
@@ -270,7 +275,7 @@ export async function runSimulation(
     while (cursor < agents.length) {
       const i = cursor++;
       const agent = agents[i];
-      results[i] = await runOne(agent, opts.scenario, opts.referenceBlock, !!opts.fresh);
+      results[i] = await runOne(agent, opts.scenario, opts.referenceBlock, !!opts.fresh, opts.seed);
       done++;
       // Throttle progress events — every 10 or at the boundaries.
       if (done % 10 === 0 || done === total) {

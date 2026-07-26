@@ -1,4 +1,5 @@
 import type { Run } from '../shared/types';
+import { db } from './db';
 import { router, type Message } from './llm/router';
 import { getRun } from './runs';
 import { buildCondensedCanon } from './iaai';
@@ -268,5 +269,34 @@ export async function* streamChat(
     acc += result.value;
     yield result.value;
   }
+
+  // Audit trail. Written AFTER the stream completes so a half-generated
+  // reply never lands in the log as if it were a real answer; the question
+  // is written with the same timestamp basis so the pair stays ordered even
+  // when a slow local model takes a minute to respond.
+  appendChatLog(runId, message, acc, provider, model);
+
   return { provider, model, full: acc };
+}
+
+/** One row per turn — question and reply. Never throws into the chat path:
+ *  a failed audit write must not cost the user their answer. */
+function appendChatLog(
+  runId: string,
+  question: string,
+  answer: string,
+  provider: string,
+  model: string,
+): void {
+  try {
+    const now = Date.now();
+    const stmt = db.prepare(
+      `INSERT INTO chat_log (run_id, role, content, provider, model, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    );
+    stmt.run(runId, 'user', question, null, null, now);
+    stmt.run(runId, 'assistant', answer, provider || null, model || null, now + 1);
+  } catch (e) {
+    console.warn('[chat-log] append failed:', e instanceof Error ? e.message : e);
+  }
 }
