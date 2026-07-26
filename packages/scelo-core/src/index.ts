@@ -434,3 +434,18 @@ export function applyFilters(rows: Row[], filters: Filter[]): Row[] {
   if (filters.length === 0) return rows;
   return rows.filter((row) => filters.every((f) => matchesFilter(row, f)));
 }
+
+// The bundled sample datasets — shared so the IDE and the TUI offer the
+// same examples rather than drifting copies. See samples.ts.
+export {
+  SAMPLES,
+  SAMPLE_BY_KEY,
+  type SampleKey,
+  type SampleSpec,
+  type ClimateSampleRow,
+  CLIMATE_SAMPLE,
+  buildDirtySample,
+  buildWorkspaceDemo,
+  WORKSPACE_DEMO_READOUTS,
+  WORKSPACE_DEMO_REFLEXIVE,
+} from "./samples";

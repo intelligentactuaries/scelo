@@ -1335,6 +1335,16 @@ ipcMain.handle(
     event: IpcMainInvokeEvent,
     req: StreamExecRequest,
   ): { sessionId: string } | { error: string } => {
+    // Mark everything this IDE spawns — terminals above all — so CLIs
+    // running inside can detect the host and target the open workspace,
+    // the same contract VS Code (TERM_PROGRAM) and RStudio (RSTUDIO)
+    // publish for theirs. scelo-tui uses it to land exports in the
+    // workspace the user is looking at. The workspace may legitimately be
+    // empty (no folder open); consumers must treat "" as unset.
+    const hostEnv: Record<string, string> = {
+      SCELO_IDE: "1",
+      SCELO_IDE_WORKSPACE: _activeWorkspace(event) ?? "",
+    };
     let binary: string | null = null;
     let argv: string[] = [];
     // Set when the R script was staged to a temp file (Windows path below);
@@ -1401,7 +1411,7 @@ ipcMain.handle(
             cols: 100,
             rows: 30,
             cwd,
-            env: _augmentedEnv() as NodeJS.ProcessEnv,
+            env: _augmentedEnv(hostEnv) as NodeJS.ProcessEnv,
           });
           _execSessions.set(sessionId, { kind: "pty", pty: term });
           term.onData((data) => {
@@ -1438,7 +1448,7 @@ ipcMain.handle(
 
     const sessionId = _nextSessionId();
     const child = spawn(binary, argv, {
-      env: _augmentedEnv(),
+      env: _augmentedEnv(hostEnv),
       cwd: req.cwd && existsSync(req.cwd) ? req.cwd : undefined,
     });
     // stdin is written both below and later via scelo:exec:write — a child
