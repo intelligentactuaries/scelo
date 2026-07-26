@@ -69,6 +69,23 @@ db.exec(`
     FOREIGN KEY (run_id) REFERENCES runs(id) ON DELETE CASCADE
   );
   CREATE INDEX IF NOT EXISTS idx_justifications_run ON justifications(run_id);
+
+  -- Append-only transcript of the council chatbot, one row per TURN (so a
+  -- user question and its reply are two rows). Deliberately NOT foreign-keyed
+  -- to runs: the audit trail must survive a run being deleted, which is the
+  -- whole point of keeping it. Scelo reads this over /api/chat-log and merges
+  -- it with its own chat history into one timeline.
+  CREATE TABLE IF NOT EXISTS chat_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id TEXT NOT NULL,
+    role TEXT NOT NULL,          -- 'user' | 'assistant'
+    content TEXT NOT NULL,
+    provider TEXT,               -- assistant turns only
+    model TEXT,                  -- assistant turns only
+    created_at INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_chat_log_created ON chat_log(created_at);
+  CREATE INDEX IF NOT EXISTS idx_chat_log_run ON chat_log(run_id);
 `);
 
 // Defensive in-place migration: older DBs were created before runs had a

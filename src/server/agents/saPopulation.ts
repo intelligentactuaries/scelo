@@ -300,18 +300,56 @@ function baselineMortality(age: number, sex: 'M' | 'F'): number {
 
 // ─── Sampler ──────────────────────────────────────────────────────────────
 
+/**
+ * How the age pyramid is weighted when drawing the cohort.
+ *
+ * `population` (default) — StatsSA mid-year weights. The cohort matches SA's
+ * real age structure, which is REQUIRED anywhere the results are scaled to
+ * national totals: `aggregateMacro` multiplies cohort rates by the country
+ * population, so a non-representative cohort biases excess mortality,
+ * admissions and GDP drag directly.
+ *
+ * `age-balanced` — weight each band by its year span instead, giving a
+ * roughly uniform draw over ages 0-100 and therefore comparable numbers in
+ * every age decade. SA's pyramid is young: the 80+ band carries ~0.3-0.6
+ * weight against ~5.4 for 0-4, so a representative draw leaves the elderly
+ * decades empty or backed by a single agent.
+ *
+ * This is ONLY valid for estimators that condition on age — the augment
+ * lookup takes a median *within* each age × sex × comorbidity bucket, and a
+ * conditional estimate is invariant to the marginal age distribution.
+ * Oversampling the elderly therefore sharpens the elderly buckets without
+ * biasing any of them. Do NOT use it for anything that aggregates across
+ * ages.
+ *
+ * Everything downstream of the age draw — education, employment,
+ * comorbidity prevalence, baseline mortality — is conditional on age, so
+ * reweighting the band choice alone leaves every one of those priors intact.
+ */
+export type AgeWeighting = 'population' | 'age-balanced';
+
 export function sampleSAPopulation(args: {
   size: number;
   seed?: number;
+  ageWeighting?: AgeWeighting;
 }): SocietyAgent[] {
   const rand = mulberry32(args.seed ?? 1);
+  const balanced = args.ageWeighting === 'age-balanced';
   const agents: SocietyAgent[] = [];
   for (let i = 0; i < args.size; i++) {
     const sex: 'M' | 'F' = rand() < 0.51 ? 'F' : 'M';
-    // Age — pick band by weight then uniform within band.
+    // Age — pick band by weight then uniform within band. Weighting a band
+    // by its year span makes the resulting age draw uniform, which is what
+    // gives every decade comparable coverage under 'age-balanced'.
     const band = pick(
       rand,
-      SA_AGE_BANDS.map((b) => [b, sex === 'M' ? b.mWeight : b.fWeight] as [typeof b, number]),
+      SA_AGE_BANDS.map(
+        (b) =>
+          [
+            b,
+            balanced ? b.band[1] - b.band[0] + 1 : sex === 'M' ? b.mWeight : b.fWeight,
+          ] as [typeof b, number],
+      ),
     );
     const age = Math.floor(band.band[0] + rand() * (band.band[1] - band.band[0] + 1));
 
