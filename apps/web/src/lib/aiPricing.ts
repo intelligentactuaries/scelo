@@ -15,9 +15,20 @@ export interface Price {
 
 const PRICES: Record<string, Array<[string, Price]>> = {
   anthropic: [
-    ["claude-opus", { inputPerMTok: 15.0, outputPerMTok: 75.0 }],
+    // Order matters: first prefix match wins, so the dated legacy Opus
+    // families sit above the general `claude-opus` rate. Current sheet:
+    // Fable/Mythos 5 $10/$50 · Opus 4.6→5 $5/$25 · Sonnet $3/$15 ·
+    // Haiku 4.5 $1/$5. (Opus ≤4.1 kept its old $15/$75.)
+    ["claude-fable", { inputPerMTok: 10.0, outputPerMTok: 50.0 }],
+    ["claude-mythos", { inputPerMTok: 10.0, outputPerMTok: 50.0 }],
+    ["claude-opus-4-1", { inputPerMTok: 15.0, outputPerMTok: 75.0 }],
+    ["claude-opus-4-0", { inputPerMTok: 15.0, outputPerMTok: 75.0 }],
+    // Opus 4.0's dated full ID has no "-0" (claude-opus-4-20250514), so the
+    // alias prefix above misses it.
+    ["claude-opus-4-20250514", { inputPerMTok: 15.0, outputPerMTok: 75.0 }],
+    ["claude-opus", { inputPerMTok: 5.0, outputPerMTok: 25.0 }],
     ["claude-sonnet", { inputPerMTok: 3.0, outputPerMTok: 15.0 }],
-    ["claude-haiku", { inputPerMTok: 0.8, outputPerMTok: 4.0 }],
+    ["claude-haiku", { inputPerMTok: 1.0, outputPerMTok: 5.0 }],
   ],
   openai: [
     ["gpt-5", { inputPerMTok: 5.0, outputPerMTok: 20.0 }],
