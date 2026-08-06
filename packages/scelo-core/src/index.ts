@@ -409,6 +409,125 @@ export function boxStats(values: number[]): {
   return { stats: [lo, q1, median, q3, hi], outliers };
 }
 
+// ─── descriptive profile ──────────────────────────────────────────────────
+//
+// The ONE definition of "descriptive statistics" every Scelo surface uses —
+// the IDE's descriptive report, the TUI's describe analysis, and anything
+// else that summarises numeric columns. Lives here so the two can never
+// print different medians for the same file.
+//
+// Conventions (chosen to match what statisticians / actuaries expect from
+// R, numpy and SAS):
+//   • quantiles — the shared `quantile` above: linear interpolation on
+//     (n−1)p, i.e. R type 7 / numpy default.
+//   • spread — sample sd with Bessel's correction (n−1).
+//   • shape — adjusted Fisher–Pearson G1 / excess-kurtosis G2 (what R's
+//     e1071 type 2, SAS and Excel report); null when n is too small or the
+//     column is constant.
+//   • Jarque–Bera — on the UNadjusted g1/g2 (the asymptotic form);
+//     χ²(2) survival is exactly exp(−JB/2). Null below n = 8, where the
+//     statistic is numerology.
+//   • ranking — coefficient of variation (sd/|mean|), descending: unit-free,
+//     so a premium column in cents can't outrank a loss ratio just by scale.
+//     Columns with mean ≈ 0 (CV undefined) rank last, by sd among themselves.
+export type NumericColumnProfile = {
+  name: string;
+  count: number;
+  /** Cells that are null or non-numeric — invisible in `count` alone. */
+  missing: number;
+  missingPct: number;
+  mean: number;
+  sd: number;
+  /** Standard error of the mean, sd/√n. */
+  se: number;
+  /** sd/|mean|; null when the mean is ≈ 0 and the ratio is undefined. */
+  cv: number | null;
+  min: number;
+  q1: number;
+  median: number;
+  q3: number;
+  max: number;
+  iqr: number;
+  /** Adjusted Fisher–Pearson skewness G1; null when n < 3 or sd = 0. */
+  skewness: number | null;
+  /** Adjusted excess kurtosis G2 (normal ≈ 0); null when n < 4 or sd = 0. */
+  kurtosis: number | null;
+  jarqueBera: { stat: number; p: number } | null;
+};
+
+export function profileNumericColumns(dataset: Dataset): NumericColumnProfile[] {
+  const profiles: NumericColumnProfile[] = [];
+  const totalRows = dataset.rows.length;
+  for (const col of dataset.columns) {
+    const values: number[] = [];
+    for (const row of dataset.rows) {
+      const v = row[col];
+      if (typeof v === "number" && Number.isFinite(v)) values.push(v);
+    }
+    if (values.length === 0) continue;
+    values.sort((a, b) => a - b);
+    const n = values.length;
+    const missing = totalRows - n;
+    const mean = values.reduce((a, b) => a + b, 0) / n;
+    // Two-pass central moments: mean first, then deviations — stable, and
+    // one loop gives m2..m4 for spread + shape + JB together.
+    let m2 = 0;
+    let m3 = 0;
+    let m4 = 0;
+    for (const v of values) {
+      const dev = v - mean;
+      const dev2 = dev * dev;
+      m2 += dev2;
+      m3 += dev2 * dev;
+      m4 += dev2 * dev2;
+    }
+    m2 /= n;
+    m3 /= n;
+    m4 /= n;
+    const sd = n > 1 ? Math.sqrt((m2 * n) / (n - 1)) : 0;
+    const se = sd / Math.sqrt(n);
+    const cv = Math.abs(mean) > 1e-12 ? sd / Math.abs(mean) : null;
+    const g1 = m2 > 0 ? m3 / m2 ** 1.5 : null;
+    const g2 = m2 > 0 ? m4 / (m2 * m2) - 3 : null;
+    const skewness = g1 !== null && n > 2 ? (Math.sqrt(n * (n - 1)) / (n - 2)) * g1 : null;
+    const kurtosis =
+      g2 !== null && n > 3 ? ((n - 1) / ((n - 2) * (n - 3))) * ((n + 1) * g2 + 6) : null;
+    let jarqueBera: NumericColumnProfile["jarqueBera"] = null;
+    if (g1 !== null && g2 !== null && n >= 8) {
+      const stat = (n / 6) * (g1 * g1 + (g2 * g2) / 4);
+      jarqueBera = { stat, p: Math.exp(-stat / 2) };
+    }
+    const q1 = quantile(values, 0.25);
+    const q3 = quantile(values, 0.75);
+    profiles.push({
+      name: col,
+      count: n,
+      missing,
+      missingPct: totalRows > 0 ? missing / totalRows : 0,
+      mean,
+      sd,
+      se,
+      cv,
+      min: values[0],
+      q1,
+      median: quantile(values, 0.5),
+      q3,
+      max: values[n - 1],
+      iqr: q3 - q1,
+      skewness,
+      kurtosis,
+      jarqueBera,
+    });
+  }
+  profiles.sort((a, b) => {
+    if (a.cv === null && b.cv !== null) return 1;
+    if (b.cv === null && a.cv !== null) return -1;
+    if (a.cv !== null && b.cv !== null && b.cv !== a.cv) return b.cv - a.cv;
+    return b.sd - a.sd;
+  });
+  return profiles;
+}
+
 // ─── filters ──────────────────────────────────────────────────────────────
 
 export function filterId(f: Filter): string {
