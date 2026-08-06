@@ -31,8 +31,8 @@
 // is ALWAYS shown for geographic columns; we never fall back to a scatter
 // or bubble overlay for these.
 
+import ReactECharts from "@/components/ReactEChartsCrisp";
 import { streamOrchestrator } from "@/lib/api";
-import ReactECharts from "echarts-for-react";
 import {
   BarChart,
   BoxplotChart,

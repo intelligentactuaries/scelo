@@ -8,8 +8,8 @@
 // is to make the soft→tools→hard story end-to-end visible without round-
 // tripping every cell to the backend.
 
+import { type Dataset, type Row, quantile } from "@scelo/core";
 import { isDesktopIDE } from "../../lib/sceloIDE";
-import type { Dataset, Row } from "@scelo/core";
 import { runForecast, runSensitivity } from "./forecast/runner";
 import { DEFAULT_WMTR_SINGLE_PARAMS, type WmtrSingleParams } from "./forecast/wmtr";
 import { parseModelPoints, runBasicTermProjection } from "./lifelibBasicTerm";
@@ -214,44 +214,115 @@ export function sampleRowsCapped(rows: Row[], cap: number): { rows: Row[]; sampl
 }
 
 // Full numeric profile of every numeric-bearing column, used by the
-// descriptive runner and its card table. Sorted by variance descending so
-// callers can take "the interesting handful" off the top.
+// descriptive runner's card table, the detail modal's diagnostics table,
+// and its hypothesis-test panel.
+//
+// Conventions (chosen to match what statisticians / actuaries expect from
+// R, numpy and SAS, and to agree with the rest of the app):
+//   • quantiles — shared `quantile` from @scelo/core: linear interpolation
+//     on (n−1)p, i.e. R type 7 / numpy default. The soft-data box plots use
+//     the same function, so both surfaces print the same Q1/median/Q3.
+//   • spread — sample sd with Bessel's correction (n−1).
+//   • shape — adjusted Fisher–Pearson G1 / excess-kurtosis G2 (what R's
+//     e1071 type 2, SAS and Excel report); null when n is too small or the
+//     column is constant.
+//   • Jarque–Bera — on the UNadjusted g1/g2 (the asymptotic form);
+//     χ²(2) survival is exactly exp(−JB/2). Null below n = 8, where the
+//     statistic is numerology.
+//   • ranking — coefficient of variation (sd/|mean|), descending: unit-free,
+//     so a premium column in cents can't outrank a loss ratio just by scale.
+//     Columns with mean ≈ 0 (CV undefined) rank last, by sd among themselves.
 export type NumericColumnProfile = {
   name: string;
   count: number;
+  /** Cells that are null or non-numeric — invisible in `count` alone. */
+  missing: number;
+  missingPct: number;
   mean: number;
   sd: number;
+  /** Standard error of the mean, sd/√n. */
+  se: number;
+  /** sd/|mean|; null when the mean is ≈ 0 and the ratio is undefined. */
+  cv: number | null;
   min: number;
   q1: number;
   median: number;
   q3: number;
   max: number;
+  iqr: number;
+  /** Adjusted Fisher–Pearson skewness G1; null when n < 3 or sd = 0. */
+  skewness: number | null;
+  /** Adjusted excess kurtosis G2 (normal ≈ 0); null when n < 4 or sd = 0. */
+  kurtosis: number | null;
+  jarqueBera: { stat: number; p: number } | null;
 };
 
 export function profileNumericColumns(dataset: Dataset): NumericColumnProfile[] {
   const profiles: NumericColumnProfile[] = [];
+  const totalRows = dataset.rows.length;
   for (const col of dataset.columns) {
     const values = numericCol(dataset.rows, col);
     if (values.length === 0) continue;
     values.sort((a, b) => a - b);
     const n = values.length;
+    const missing = totalRows - n;
     const mean = values.reduce((a, b) => a + b, 0) / n;
-    const varSum = values.reduce((a, b) => a + (b - mean) * (b - mean), 0);
-    const sd = n > 1 ? Math.sqrt(varSum / (n - 1)) : 0;
-    const q = (p: number) => values[Math.min(n - 1, Math.floor(p * n))];
+    // Two-pass central moments: mean first, then deviations — stable, and
+    // one loop gives m2..m4 for spread + shape + JB together.
+    let m2 = 0;
+    let m3 = 0;
+    let m4 = 0;
+    for (const v of values) {
+      const dev = v - mean;
+      const dev2 = dev * dev;
+      m2 += dev2;
+      m3 += dev2 * dev;
+      m4 += dev2 * dev2;
+    }
+    m2 /= n;
+    m3 /= n;
+    m4 /= n;
+    const sd = n > 1 ? Math.sqrt((m2 * n) / (n - 1)) : 0;
+    const se = sd / Math.sqrt(n);
+    const cv = Math.abs(mean) > 1e-12 ? sd / Math.abs(mean) : null;
+    const g1 = m2 > 0 ? m3 / m2 ** 1.5 : null;
+    const g2 = m2 > 0 ? m4 / (m2 * m2) - 3 : null;
+    const skewness = g1 !== null && n > 2 ? (Math.sqrt(n * (n - 1)) / (n - 2)) * g1 : null;
+    const kurtosis =
+      g2 !== null && n > 3 ? ((n - 1) / ((n - 2) * (n - 3))) * ((n + 1) * g2 + 6) : null;
+    let jarqueBera: NumericColumnProfile["jarqueBera"] = null;
+    if (g1 !== null && g2 !== null && n >= 8) {
+      const stat = (n / 6) * (g1 * g1 + (g2 * g2) / 4);
+      jarqueBera = { stat, p: Math.exp(-stat / 2) };
+    }
+    const q1 = quantile(values, 0.25);
+    const q3 = quantile(values, 0.75);
     profiles.push({
       name: col,
       count: n,
+      missing,
+      missingPct: totalRows > 0 ? missing / totalRows : 0,
       mean,
       sd,
+      se,
+      cv,
       min: values[0],
-      q1: q(0.25),
-      median: q(0.5),
-      q3: q(0.75),
+      q1,
+      median: quantile(values, 0.5),
+      q3,
       max: values[n - 1],
+      iqr: q3 - q1,
+      skewness,
+      kurtosis,
+      jarqueBera,
     });
   }
-  profiles.sort((a, b) => b.sd * b.sd - a.sd * a.sd);
+  profiles.sort((a, b) => {
+    if (a.cv === null && b.cv !== null) return 1;
+    if (b.cv === null && a.cv !== null) return -1;
+    if (a.cv !== null && b.cv !== null && b.cv !== a.cv) return b.cv - a.cv;
+    return b.sd - a.sd;
+  });
   return profiles;
 }
 
@@ -1203,14 +1274,25 @@ function runDBValuation({ dataset }: Args): RunResult {
   };
 }
 
-// How many top-variance columns get the full stat row on the card table;
-// the rest are listed by name so nothing silently disappears.
+// How many top-ranked columns get the full stat row on the card table; the
+// rest are listed by name so nothing silently disappears. The COMPLETE
+// per-column profile — quartiles, IQR, shape, missingness, Jarque–Bera —
+// renders in the detail modal's diagnostics + hypothesis panels.
 const DESCRIPTIVE_TABLE_COLS = 5;
 
+/** Fraction digits that keep a stat readable at its magnitude — a fixed
+ *  `precision: 0` printed a rate-like mean of 0.0412 as "0". */
+function statPrecision(v: number): number {
+  const abs = Math.abs(v);
+  if (abs >= 1000) return 0;
+  if (abs >= 1) return 2;
+  return 4;
+}
+
 function runDescriptive({ dataset }: Args): RunResult {
-  // Profile EVERY numeric column, not a hardcoded `paid`. Full quartile
-  // profiles for all of them live in `detail`; the card table shows the
-  // top-variance handful.
+  // Profile EVERY numeric column, not a hardcoded `paid`. Full profiles for
+  // all of them live in `detail`; the card table shows the handful with the
+  // widest RELATIVE spread (CV) — unit-free, so scale can't gerrymander it.
   const profiles = profileNumericColumns(dataset);
   if (profiles.length === 0)
     return makeUnsupported(
@@ -1230,13 +1312,18 @@ function runDescriptive({ dataset }: Args): RunResult {
     meta.sampled && sourceRows > dataset.rows.length
       ? `${dataset.rows.length.toLocaleString()} sampled of ${sourceRows.toLocaleString()}`
       : dataset.rows.length.toLocaleString();
+  const gappy = profiles.filter((p) => p.missingPct > 0.1).length;
   return {
     modelId: "descriptive",
     family: "general",
     status: "done",
     startedAt: Date.now(),
     finishedAt: Date.now(),
-    headline: { label: `mean (${lead.name})`, value: lead.mean, precision: 0 },
+    headline: {
+      label: `mean (${lead.name})`,
+      value: lead.mean,
+      precision: statPrecision(lead.mean),
+    },
     secondary: [
       { label: "numeric columns", value: String(profiles.length) },
       { label: "rows", value: rowsLabel },
@@ -1245,13 +1332,25 @@ function runDescriptive({ dataset }: Args): RunResult {
         : []),
     ],
     tableSpec: {
-      headers: ["column", "n", "mean", "sd", "min", "max"],
-      rows: top.map((p) => [p.name, p.count, p.mean, p.sd, p.min, p.max]),
+      // `miss %` as a number so the renderer right-aligns it with the rest.
+      headers: ["column", "n", "miss %", "mean", "sd", "cv", "min", "median", "max"],
+      rows: top.map((p) => [
+        p.name,
+        p.count,
+        Math.round(p.missingPct * 1000) / 10,
+        p.mean,
+        p.sd,
+        p.cv === null ? "—" : Math.round(p.cv * 100) / 100,
+        p.min,
+        p.median,
+        p.max,
+      ]),
     },
-    blurb:
-      `Descriptive: ${profiles.length} numeric columns profiled; highest-variance is ` +
-      `\`${lead.name}\` (mean ${fmt(lead.mean, 0)}, sd ${fmt(lead.sd, 0)}, ` +
-      `range [${fmt(lead.min, 0)}, ${fmt(lead.max, 0)}]).`,
+    blurb: `Descriptive: ${profiles.length} numeric columns profiled — sample moments (Bessel), type-7 quantiles, G1/G2 shape, Jarque–Bera normality. Widest relative spread is \`${lead.name}\`${lead.cv !== null ? ` (CV ${fmt(lead.cv)})` : ""}: mean ${fmt(lead.mean)}, sd ${fmt(lead.sd)}, range [${fmt(lead.min)}, ${fmt(lead.max)}].${
+      gappy > 0
+        ? ` ${gappy} column${gappy === 1 ? " is" : "s are"} >10% missing/non-numeric — worth resolving before any fit.`
+        : ""
+    }`,
     detail: { profiles },
   };
 }

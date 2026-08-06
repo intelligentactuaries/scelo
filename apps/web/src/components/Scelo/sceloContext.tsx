@@ -244,11 +244,18 @@ type SceloState = {
   // Session-only by design: the history is deliberately NOT persisted, since
   // serialising a dozen dataset revisions into localStorage would blow the
   // session-snapshot budget that `sliceDatasetForPersist` exists to protect.
-  /** Snapshot the CURRENT dataset + filters under `label`, immediately
-   *  before replacing them. Label is what the undo affordance shows. */
-  pushHistory: (label: string) => void;
-  /** Restore the newest snapshot. Returns the label that was undone, or
-   *  null when there is nothing to undo. */
+  /** Snapshot the CURRENT dataset + filters + derived-column registry under
+   *  `label`, immediately before replacing them. Label is what the undo
+   *  affordance shows. `scope` records how much of the grid the step
+   *  touches: pass `{ kind: "columns", columns }` for an action confined to
+   *  named columns so undo can restore ONLY those; omit (or pass
+   *  `{ kind: "table" }`) for whole-spreadsheet actions. */
+  pushHistory: (label: string, scope?: HistoryScope) => void;
+  /** Reverse the newest step, honouring its scope: a column-scoped entry
+   *  puts back just the recorded columns (values, membership, their filters
+   *  and derived formulas), leaving the rest of the grid exactly as it is
+   *  now; a table-scoped entry restores the whole snapshot. Returns the
+   *  label that was undone, or null when there is nothing to undo. */
   undo: () => string | null;
   /** Label of the step `undo()` would reverse — for button text/tooltips. */
   undoLabel: string | null;
@@ -326,7 +333,57 @@ type SceloState = {
 
 const SceloContext = createContext<SceloState | null>(null);
 
-export type HistoryEntry = { label: string; dataset: Dataset | null; filters: Filter[] };
+/** How much of the grid an undoable step touched. "columns" carries every
+ *  column the step changed — added, removed, renamed (both names) or
+ *  cell-edited — and promises the step changed NOTHING else: no row
+ *  membership, no other columns. Steps that can't promise that (dedupe,
+ *  augment, combine, auto-clean, whole-table cell sweeps) are "table". */
+export type HistoryScope = { kind: "table" } | { kind: "columns"; columns: string[] };
+
+export type HistoryEntry = {
+  label: string;
+  dataset: Dataset | null;
+  filters: Filter[];
+  /** Derived-column registry at snapshot time, so undoing an `add derived
+   *  column` also retires its formula badge instead of leaving it stale. */
+  derived: Record<string, string>;
+  scope: HistoryScope;
+};
+
+/** Column-scoped restore: copy the touched columns back out of `snapshot`
+ *  into `current`, leaving every other column exactly as it is now.
+ *  Handles all three membership cases per touched column:
+ *    • in both        → values overwritten from the snapshot
+ *    • only in current → removed (the step ADDED it — e.g. derived column)
+ *    • only in snapshot → re-inserted at its old position with its values
+ *      (the step REMOVED it — drop-column — or renamed it away).
+ *  Callers must pre-check row counts match; cell-level column ops preserve
+ *  row order and count, which is what makes index alignment sound. */
+export function restoreColumnsFromSnapshot(
+  current: Dataset,
+  snapshot: Dataset,
+  columns: string[],
+): Dataset {
+  const touched = new Set(columns);
+  const snapCols = new Set(snapshot.columns);
+  const cols = current.columns.filter((c) => !(touched.has(c) && !snapCols.has(c)));
+  for (let i = 0; i < snapshot.columns.length; i++) {
+    const c = snapshot.columns[i];
+    if (touched.has(c) && !cols.includes(c)) {
+      cols.splice(Math.min(i, cols.length), 0, c);
+    }
+  }
+  const rows = current.rows.map((row, i) => {
+    const next = { ...row };
+    const snapRow = snapshot.rows[i];
+    for (const c of touched) {
+      if (snapCols.has(c)) next[c] = snapRow?.[c] ?? null;
+      else delete next[c];
+    }
+    return next;
+  });
+  return { ...current, columns: cols, rows };
+}
 
 /** Depth cap. Deep enough that a chat exchange of several edits stays
  *  reversible, shallow enough to bound retention. */
@@ -386,13 +443,24 @@ export function SceloProvider({ children }: { children: ReactNode }) {
   const datasetRef = useRef(dataset);
   const filtersRef = useRef(filters);
   const historyRef = useRef(history);
+  const derivedRef = useRef(derivedColumns);
   datasetRef.current = dataset;
   filtersRef.current = filters;
   historyRef.current = history;
+  derivedRef.current = derivedColumns;
 
-  const pushHistory = useCallback((label: string) => {
+  const pushHistory = useCallback((label: string, scope: HistoryScope = { kind: "table" }) => {
     setHistory((prev) =>
-      trimHistory([...prev, { label, dataset: datasetRef.current, filters: filtersRef.current }]),
+      trimHistory([
+        ...prev,
+        {
+          label,
+          dataset: datasetRef.current,
+          filters: filtersRef.current,
+          derived: derivedRef.current,
+          scope,
+        },
+      ]),
     );
   }, []);
 
@@ -400,8 +468,39 @@ export function SceloProvider({ children }: { children: ReactNode }) {
     const prev = historyRef.current;
     if (prev.length === 0) return null;
     const entry = prev[prev.length - 1];
-    setDataset(entry.dataset);
-    setFilters(entry.filters);
+    const current = datasetRef.current;
+    const snap = entry.dataset;
+    // Column-scoped steps restore ONLY what they touched — an edit made to
+    // one column must never drag filters or values on other columns back
+    // in time with it. Falls back to the full swap when row counts drifted
+    // (a column-scoped step never changes row membership, so a mismatch
+    // means the entry predates something bigger and byte-exact restore is
+    // the honest move).
+    if (
+      entry.scope.kind === "columns" &&
+      snap !== null &&
+      current !== null &&
+      snap.rows.length === current.rows.length
+    ) {
+      const touched = new Set(entry.scope.columns);
+      setDataset(restoreColumnsFromSnapshot(current, snap, entry.scope.columns));
+      setFilters((cur) => [
+        ...cur.filter((f) => !touched.has(f.column)),
+        ...entry.filters.filter((f) => touched.has(f.column)),
+      ]);
+      setDerivedColumns((cur) => {
+        const next = { ...cur };
+        for (const c of touched) {
+          if (entry.derived[c] !== undefined) next[c] = entry.derived[c];
+          else delete next[c];
+        }
+        return next;
+      });
+    } else {
+      setDataset(entry.dataset);
+      setFilters(entry.filters);
+      setDerivedColumns(entry.derived);
+    }
     setHistory((h) => h.slice(0, -1));
     return entry.label;
   }, []);

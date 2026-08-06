@@ -50,11 +50,20 @@ export default function Welcome() {
     }
   };
 
+  // Recent-workspace row being switched to, or null — the IPC round-trip
+  // leaves the whole list inert, so the pressed row must say it's working
+  // (its template-card siblings already do).
+  const [switchingId, setSwitchingId] = useState<string | null>(null);
   const switchTo = async (rec: WorkspaceRecord) => {
-    if (!desktop) return;
-    const r = await window.scelo!.workspace.setForWindow(rec.id);
-    if (r.ok) navigate("/workspace");
-    else emitToast(r.error ?? "Could not switch workspace", "error");
+    if (!desktop || switchingId) return;
+    setSwitchingId(rec.id);
+    try {
+      const r = await window.scelo!.workspace.setForWindow(rec.id);
+      if (r.ok) navigate("/workspace");
+      else emitToast(r.error ?? "Could not switch workspace", "error");
+    } finally {
+      setSwitchingId(null);
+    }
   };
 
   const createFromTemplate = async (spec: SampleWorkspaceSpec) => {
@@ -195,9 +204,21 @@ export default function Welcome() {
                   <button
                     type="button"
                     onClick={() => switchTo(w)}
-                    className="flex w-full items-baseline justify-between gap-3 rounded border border-transparent px-2 py-1 text-left text-sm hover:border-border hover:bg-bg-2"
+                    disabled={switchingId !== null}
+                    className="flex w-full items-baseline justify-between gap-3 rounded border border-transparent px-2 py-1 text-left text-sm hover:border-border hover:bg-bg-2 disabled:cursor-wait disabled:opacity-60"
                   >
-                    <span className="truncate text-fg">{pathLeaf(w.path)}</span>
+                    <span className="flex min-w-0 items-baseline gap-2 truncate text-fg">
+                      {switchingId === w.id && (
+                        <span
+                          aria-hidden
+                          className="ia-pip ia-load-pip shrink-0 self-center"
+                          style={{ background: "rgb(var(--rgb-primary))" }}
+                        />
+                      )}
+                      <span className="truncate">
+                        {switchingId === w.id ? "opening…" : pathLeaf(w.path)}
+                      </span>
+                    </span>
                     <span className="shrink-0 truncate font-mono text-[11px] text-fg-mute">
                       {w.path}
                     </span>

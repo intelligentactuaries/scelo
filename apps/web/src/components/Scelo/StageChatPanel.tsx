@@ -16,6 +16,7 @@ import { ChatInputPill } from "./ChatInputPill";
 import { ResizablePanel } from "./ResizablePanel";
 import { SceloChatMarkdown } from "./SceloChatMarkdown";
 import type { Dataset } from "./SoftDataWorkstation";
+import { nextPaint } from "./UploadIndicator";
 import { useScelo } from "./sceloContext";
 import { useNodeChat } from "./useNodeChat";
 
@@ -87,29 +88,48 @@ export function StageChatPanel({
   /** id of the action currently running, or null. Actions are serialised:
    *  one at a time, and never while a reply is streaming. */
   const [runningAction, setRunningAction] = useState<string | null>(null);
+  /** True while a TYPED local command is executing. Same reason as the
+   *  action chips' busy state: the deterministic handlers are synchronous
+   *  and CPU-bound (auto-clean, augment, whole-column rewrites), so without
+   *  a painted indicator the panel looks dead until they finish. */
+  const [runningLocal, setRunningLocal] = useState(false);
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: scroll on every messages change.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: scroll on message + busy changes.
   useEffect(() => {
     const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [messages]);
+  }, [messages, runningLocal]);
 
   const submit = () => {
     const text = draft.trim();
-    if (!text || isStreaming) return;
+    if (!text || isStreaming || runningLocal) return;
     setDraft("");
-    // Deterministic intents (e.g. "clean my data") are answered locally and
-    // never hit the orchestrator — so they work offline and respond instantly.
-    const localReply = onLocalCommand?.(
-      text,
-      messages.filter((m) => m.role === "assistant").map((m) => m.content),
-    );
-    if (localReply != null) {
-      sendLocal(text, localReply);
+    if (!onLocalCommand) {
+      void send(text);
       return;
     }
-    void send(text);
+    // Deterministic intents (e.g. "clean my data") are answered locally and
+    // never hit the orchestrator — so they work offline. They are NOT
+    // instant, though: paint the busy pip first (nextPaint), then run, the
+    // same contract the action chips follow.
+    setRunningLocal(true);
+    void (async () => {
+      try {
+        await nextPaint();
+        const localReply = onLocalCommand(
+          text,
+          messages.filter((m) => m.role === "assistant").map((m) => m.content),
+        );
+        if (localReply != null) {
+          sendLocal(text, localReply);
+        } else {
+          void send(text);
+        }
+      } finally {
+        setRunningLocal(false);
+      }
+    })();
   };
 
   const runAction = async (action: ChatAction) => {
@@ -138,11 +158,11 @@ export function StageChatPanel({
         <div className="flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.18em] text-accent-2">
           <span aria-hidden className="inline-block h-1 w-1 rounded-full bg-current opacity-70" />
           <span>{badge}</span>
-          {isStreaming && (
+          {(isStreaming || runningLocal) && (
             <span
               aria-hidden
               className="ml-1 inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-accent-2"
-              title="streaming"
+              title={isStreaming ? "streaming" : "working"}
             />
           )}
           {/* Shared by all three stage chats, so the audit view is reachable
@@ -207,6 +227,19 @@ export function StageChatPanel({
               );
             })}
           </ul>
+        )}
+        {runningLocal && (
+          <output
+            aria-live="polite"
+            className="mt-3 flex items-center gap-2 font-mono text-[10px] uppercase tracking-wider text-fg-dim"
+          >
+            <span
+              aria-hidden
+              className="ia-pip ia-load-pip"
+              style={{ background: "rgb(var(--rgb-primary))" }}
+            />
+            working…
+          </output>
         )}
       </div>
 

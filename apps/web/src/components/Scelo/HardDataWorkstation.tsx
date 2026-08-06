@@ -16,10 +16,10 @@
 // optional tiny chart (line or bar). Clicking a result node fills the
 // right panel with the full detail and the AI narrative.
 
+import ReactECharts from "@/components/ReactEChartsCrisp";
 import { streamOrchestrator } from "@/lib/api";
 import { openInSwarm } from "@/lib/swarmBus";
 import { useTheme } from "@/lib/theme";
-import ReactECharts from "echarts-for-react";
 import { BarChart, BoxplotChart, LineChart, ScatterChart } from "echarts/charts";
 import { GridComponent, TooltipComponent } from "echarts/components";
 import * as echarts from "echarts/core";
@@ -72,6 +72,7 @@ import {
 } from "./modelCatalog";
 import {
   BRIDGED_MODEL_IDS,
+  type NumericColumnProfile,
   type RunResult,
   detectFrequencyTarget,
   detectMonetaryColumn,
@@ -1827,13 +1828,25 @@ function LifelibNotebookCta({
   modelId: string;
   dataset: Dataset | null;
 }) {
-  const onDownload = () => {
+  // Building the notebook serialises the whole model-point file into JSON —
+  // paint the busy label first, and SURFACE a failure (it used to vanish
+  // into console.error, leaving a button that just did nothing).
+  const [nbBusy, setNbBusy] = useState(false);
+  const [nbError, setNbError] = useState<string | null>(null);
+  const onDownload = async () => {
+    if (nbBusy) return;
+    setNbBusy(true);
+    setNbError(null);
+    await nextPaint();
     try {
       const nb = buildLifelibNotebook(modelId, dataset);
       const fname = `${modelId}_lifelib.ipynb`;
       triggerNotebookDownload(fname, nb);
     } catch (e) {
       console.error("lifelib notebook export failed", e);
+      setNbError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setNbBusy(false);
     }
   };
   return (
@@ -1848,11 +1861,22 @@ function LifelibNotebookCta({
       </p>
       <button
         type="button"
-        onClick={onDownload}
-        className="mt-2 inline-flex items-center gap-1.5 rounded border border-border bg-bg px-2.5 py-1 font-mono text-[10px] uppercase tracking-wider text-fg transition hover:border-fg-dim hover:text-fg"
+        onClick={() => void onDownload()}
+        disabled={nbBusy}
+        className="mt-2 inline-flex items-center gap-1.5 rounded border border-border bg-bg px-2.5 py-1 font-mono text-[10px] uppercase tracking-wider text-fg transition hover:border-fg-dim hover:text-fg disabled:cursor-wait disabled:opacity-60"
       >
-        ↓ Export · lifelib notebook
+        {nbBusy && (
+          <span
+            aria-hidden
+            className="ia-pip ia-load-pip"
+            style={{ background: "rgb(var(--rgb-primary))" }}
+          />
+        )}
+        {nbBusy ? "building notebook…" : "↓ Export · lifelib notebook"}
       </button>
+      {nbError && (
+        <div className="mt-1.5 text-[10px] text-error">notebook export failed — {nbError}</div>
+      )}
       {!dataset && (
         <div className="mt-1.5 text-[10px] text-fg-dim italic">
           No MP file attached — notebook ships with an empty DataFrame; replace with{" "}
@@ -2334,21 +2358,31 @@ function BlackboardCta({ doneRuns }: { doneRuns: RunResult[] }) {
     return scored.sort((a, b) => b.rank - a.rank).slice(0, CAP);
   }, [doneRuns]);
 
-  const convene = () => {
-    for (const c of claims) {
-      const dir = c.ws?.directions[0]?.name;
-      emitWorkspaceFact({
-        id: `swarm:blackboard:${c.r.modelId}`,
-        label: `${MODEL_BY_ID.get(c.r.modelId)?.name ?? c.r.modelId}: ${c.r.headline.label} = ${formatHeadline(c.r.headline)}${dir ? ` · ${dir}` : ""}`,
-        surface: "swarm",
-        validated: c.validated,
-        detail: c.ws
-          ? `workspace PR ${c.ws.participationRatio.toFixed(2)}${c.ws.swap ? `, swap R² ${c.ws.swap.r2InBand.toFixed(2)}` : ""}`
-          : c.r.blurb,
-        createdAt: Date.now(),
-      });
+  // Brief but real work (a fact emitted per claim) — the busy flip keeps
+  // this CTA consistent with its four sibling cards, which all animate.
+  const [convening, setConvening] = useState(false);
+  const convene = async () => {
+    if (convening) return;
+    setConvening(true);
+    await nextPaint();
+    try {
+      for (const c of claims) {
+        const dir = c.ws?.directions[0]?.name;
+        emitWorkspaceFact({
+          id: `swarm:blackboard:${c.r.modelId}`,
+          label: `${MODEL_BY_ID.get(c.r.modelId)?.name ?? c.r.modelId}: ${c.r.headline.label} = ${formatHeadline(c.r.headline)}${dir ? ` · ${dir}` : ""}`,
+          surface: "swarm",
+          validated: c.validated,
+          detail: c.ws
+            ? `workspace PR ${c.ws.participationRatio.toFixed(2)}${c.ws.swap ? `, swap R² ${c.ws.swap.r2InBand.toFixed(2)}` : ""}`
+            : c.r.blurb,
+          createdAt: Date.now(),
+        });
+      }
+      setBroadcast(true);
+    } finally {
+      setConvening(false);
     }
-    setBroadcast(true);
   };
 
   if (doneRuns.length < 2) return null;
@@ -2383,10 +2417,18 @@ function BlackboardCta({ doneRuns }: { doneRuns: RunResult[] }) {
       </ul>
       <button
         type="button"
-        onClick={convene}
-        className="mt-2 inline-flex items-center gap-1.5 rounded border border-border bg-bg px-2.5 py-1 font-mono text-[10px] uppercase tracking-wider text-fg transition hover:border-fg-dim hover:text-fg"
+        onClick={() => void convene()}
+        disabled={convening}
+        className="mt-2 inline-flex items-center gap-1.5 rounded border border-border bg-bg px-2.5 py-1 font-mono text-[10px] uppercase tracking-wider text-fg transition hover:border-fg-dim hover:text-fg disabled:cursor-wait disabled:opacity-60"
       >
-        {broadcast ? "✓ broadcast" : "◉ convene + broadcast"}
+        {convening && (
+          <span
+            aria-hidden
+            className="ia-pip ia-load-pip"
+            style={{ background: "rgb(var(--rgb-primary))" }}
+          />
+        )}
+        {convening ? "convening…" : broadcast ? "✓ broadcast" : "◉ convene + broadcast"}
       </button>
     </div>
   );
@@ -3568,6 +3610,27 @@ export function HardDataWorkstation() {
 // AI narrative + a flat table of model headlines and blurbs. Future work
 // could embed the consensus / trajectory charts as SVG, paginate per
 // section, add a cover page, etc. — the modal is the right place to grow it.
+// Scanning placeholder holding a chart's exact footprint while the report's
+// SVG instances mount — same indeterminate-rail vocabulary as the intake
+// indicator, so "still working" reads instantly.
+function ChartPlaceholder({ height }: { height: number }) {
+  return (
+    <output
+      aria-live="polite"
+      aria-busy="true"
+      className="flex w-full flex-col items-center justify-center"
+      style={{ height }}
+    >
+      <span className="ia-rail h-1.5 w-full max-w-[320px]">
+        <span className="ia-rail-scan" style={{ background: "rgb(var(--rgb-accent-3) / 0.6)" }} />
+      </span>
+      <span className="mt-2 font-mono text-[10px] uppercase tracking-wider text-fg-dim">
+        rendering charts…
+      </span>
+    </output>
+  );
+}
+
 function ReportPreviewModal({
   dataset,
   domain,
@@ -3584,6 +3647,22 @@ function ReportPreviewModal({
   const { project } = useScelo();
   const done = runsList.filter((r) => r.status === "done");
   const generatedAt = new Date().toLocaleString();
+
+  // The pack mounts an SVG ECharts instance per chart; with several runs
+  // the click → first-paint gap reads as a dead button. Paint the shell +
+  // narrative immediately, then mount the charts one frame later behind a
+  // scanning placeholder ("download pdf" waits for them, so a skeleton can
+  // never end up in the printed PDF).
+  const [chartsReady, setChartsReady] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    void nextPaint().then(() => {
+      if (!cancelled) setChartsReady(true);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // Close on Esc.
   useEffect(() => {
@@ -3618,9 +3697,10 @@ function ReportPreviewModal({
             <button
               type="button"
               onClick={() => window.print()}
-              className="rounded border border-primary/60 bg-primary/10 px-3 py-1 font-mono text-[10px] uppercase tracking-wider text-primary hover:border-primary hover:bg-primary/20"
+              disabled={!chartsReady}
+              className="rounded border border-primary/60 bg-primary/10 px-3 py-1 font-mono text-[10px] uppercase tracking-wider text-primary hover:border-primary hover:bg-primary/20 disabled:cursor-wait disabled:opacity-50"
             >
-              download pdf
+              {chartsReady ? "download pdf" : "preparing…"}
             </button>
           </div>
         </header>
@@ -3720,16 +3800,20 @@ function ReportPreviewModal({
                 >
                   estimates · {estimatesMode(done) === "forest" ? "forest" : "metrics"}
                 </h2>
-                <ForestPlot
-                  doneRuns={done}
-                  familyPalette={FAMILY_COLOR_LIGHT}
-                  primary="#009669"
-                  textDim="#8a8a86"
-                  textMute="#5a5a56"
-                  grid="#e6e4df"
-                  renderer="svg"
-                  heightOverride={220}
-                />
+                {chartsReady ? (
+                  <ForestPlot
+                    doneRuns={done}
+                    familyPalette={FAMILY_COLOR_LIGHT}
+                    primary="#009669"
+                    textDim="#8a8a86"
+                    textMute="#5a5a56"
+                    grid="#e6e4df"
+                    renderer="svg"
+                    heightOverride={220}
+                  />
+                ) : (
+                  <ChartPlaceholder height={220} />
+                )}
               </section>
             )}
 
@@ -3741,15 +3825,19 @@ function ReportPreviewModal({
                 >
                   trajectory
                 </h2>
-                <TrajectoryOverlay
-                  doneRuns={done}
-                  familyPalette={FAMILY_COLOR_LIGHT}
-                  textDim="#8a8a86"
-                  textMute="#5a5a56"
-                  grid="#e6e4df"
-                  renderer="svg"
-                  heightOverride={200}
-                />
+                {chartsReady ? (
+                  <TrajectoryOverlay
+                    doneRuns={done}
+                    familyPalette={FAMILY_COLOR_LIGHT}
+                    textDim="#8a8a86"
+                    textMute="#5a5a56"
+                    grid="#e6e4df"
+                    renderer="svg"
+                    heightOverride={200}
+                  />
+                ) : (
+                  <ChartPlaceholder height={200} />
+                )}
               </section>
             )}
 
@@ -4032,7 +4120,14 @@ function ModelDetailModal({
                 ))}
               </div>
               {run.blurb && (
-                <p className="mt-3 text-[12px] leading-relaxed text-fg-mute">{run.blurb}</p>
+                // Markdown, like the board-pack surfaces that show the same
+                // blurb — otherwise backticked column names render literally
+                // here and nowhere else.
+                <div className="mt-3 text-[12px] leading-relaxed text-fg-mute">
+                  <SceloChatMarkdown dataset={null} size="xs">
+                    {run.blurb}
+                  </SceloChatMarkdown>
+                </div>
               )}
               {run.wiredFrom && run.wiredFrom.length > 0 && (
                 <div className="mt-2 flex flex-wrap gap-1.5">
@@ -4115,6 +4210,103 @@ function DetailStat({
 // Per-model diagnostics. Looks at the run's `detail` blob for known shapes
 // and renders the appropriate plot/table. Models whose detail we don't yet
 // know how to chart fall through to a generic "raw detail" expandable.
+// Full descriptive-statistics profiles carried by the descriptive run's
+// detail blob. The shape check keys on the fields ADDED in the profile
+// overhaul (missingPct/median) so runs persisted by older builds — which
+// lack them — fall through to the generic tableSpec renderer instead of
+// rendering a table of blanks.
+function isProfileArray(v: unknown): v is NumericColumnProfile[] {
+  if (!Array.isArray(v) || v.length === 0) return false;
+  const first = v[0] as Partial<NumericColumnProfile>;
+  return (
+    typeof first?.name === "string" &&
+    typeof first?.median === "number" &&
+    typeof first?.missingPct === "number"
+  );
+}
+
+// The descriptive run's diagnostics ARE the statistics table: every numeric
+// column, full location / spread / shape / missingness profile — the
+// numbers a statistician or actuary reaches for first. Wide by necessity;
+// it scrolls horizontally rather than dropping columns.
+function DescriptiveStatsTable({ profiles }: { profiles: NumericColumnProfile[] }) {
+  const shapeCell = (v: number | null) => {
+    if (v === null) return <span className="text-fg-dim">—</span>;
+    // |G| > 1 is the conventional "meaningfully non-normal shape" eyebrow.
+    const cls = Math.abs(v) > 1 ? "text-warn" : "text-fg-mute";
+    return <span className={cls}>{formatNumber(v)}</span>;
+  };
+  const headers = [
+    "column",
+    "n",
+    "missing",
+    "mean",
+    "sd",
+    "se",
+    "cv",
+    "min",
+    "q1",
+    "median",
+    "q3",
+    "max",
+    "iqr",
+    "skew G₁",
+    "kurt G₂",
+  ];
+  return (
+    <div className="overflow-auto rounded border border-border">
+      <table className="w-full whitespace-nowrap font-mono text-[10px]">
+        <thead className="bg-bg-2 text-fg-dim">
+          <tr>
+            {headers.map((h, i) => (
+              <th
+                key={h}
+                className={`px-2 py-1 ${i === 0 ? "text-left" : "text-right"} font-normal uppercase tracking-wider`}
+              >
+                {h}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {profiles.map((p) => (
+            <tr key={p.name} className="border-t border-border/60">
+              <td className="px-2 py-1 text-left text-fg">{p.name}</td>
+              <td className="px-2 py-1 text-right text-fg-mute">{p.count.toLocaleString()}</td>
+              <td
+                className={`px-2 py-1 text-right ${p.missingPct > 0.1 ? "text-warn" : "text-fg-mute"}`}
+              >
+                {p.missing === 0
+                  ? "0"
+                  : `${p.missing.toLocaleString()} (${(p.missingPct * 100).toFixed(1)}%)`}
+              </td>
+              <td className="px-2 py-1 text-right text-fg">{formatNumber(p.mean)}</td>
+              <td className="px-2 py-1 text-right text-fg-mute">{formatNumber(p.sd)}</td>
+              <td className="px-2 py-1 text-right text-fg-mute">{formatNumber(p.se)}</td>
+              <td className="px-2 py-1 text-right text-fg-mute">
+                {p.cv === null ? "—" : formatNumber(p.cv)}
+              </td>
+              <td className="px-2 py-1 text-right text-fg-mute">{formatNumber(p.min)}</td>
+              <td className="px-2 py-1 text-right text-fg-mute">{formatNumber(p.q1)}</td>
+              <td className="px-2 py-1 text-right text-fg">{formatNumber(p.median)}</td>
+              <td className="px-2 py-1 text-right text-fg-mute">{formatNumber(p.q3)}</td>
+              <td className="px-2 py-1 text-right text-fg-mute">{formatNumber(p.max)}</td>
+              <td className="px-2 py-1 text-right text-fg-mute">{formatNumber(p.iqr)}</td>
+              <td className="px-2 py-1 text-right">{shapeCell(p.skewness)}</td>
+              <td className="px-2 py-1 text-right">{shapeCell(p.kurtosis)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <div className="border-t border-border/60 bg-bg-2/50 px-2 py-1 font-mono text-[9px] text-fg-dim">
+        sample sd/se (n−1) · quantiles: linear interpolation (R type 7, numpy default) · CV =
+        sd/|mean| · G₁/G₂: adjusted Fisher–Pearson, normal ≈ 0 · sorted by CV, so scale never
+        decides the order
+      </div>
+    </div>
+  );
+}
+
 function ModelDiagnostics({ run, color }: { run: RunResult; color: string }) {
   const d = run.detail as Record<string, unknown> | undefined;
   if (!d) {
@@ -4129,6 +4321,12 @@ function ModelDiagnostics({ run, color }: { run: RunResult; color: string }) {
   // spectra, swap consistency, and selectivity inline.
   if (d.workspace && typeof d.workspace === "object") {
     return <WorkspaceInline report={d.workspace as WorkspaceReport} />;
+  }
+
+  // Descriptive statistics: render the complete per-column profile table
+  // (the quartiles used to be computed and then never shown anywhere).
+  if (isProfileArray(d.profiles)) {
+    return <DescriptiveStatsTable profiles={d.profiles} />;
   }
 
   // Chain-ladder / Mack / Bootstrap all carry ATA factors → render as a
@@ -4516,12 +4714,64 @@ function BootstrapRange({
   );
 }
 
-// Placeholder hypothesis-test panel. Today it surfaces a small fixed set
-// of "what would we test for THIS model?" rows with a result column that
-// reads `tbd` — the panel is here so the dashboard's structure is right
-// when we wire actual tests in (Mack residual independence, GLM Wald,
+// Hypothesis-test panel. The descriptive run carries REAL computed tests —
+// Jarque–Bera normality per column — rendered with their statistics and
+// p-values. Every other model still shows the "what would we test here?"
+// scaffold rows with a `tbd` badge, so the dashboard's structure is right
+// as actual tests get wired in (Mack residual independence, GLM Wald,
 // Lee-Carter forecasting residuals, etc.).
+function JarqueBeraPanel({ profiles }: { profiles: NumericColumnProfile[] }) {
+  const fmtP = (p: number) => (p < 0.001 ? "<0.001" : p.toFixed(3));
+  return (
+    <div className="overflow-auto rounded border border-border">
+      <table className="w-full whitespace-nowrap font-mono text-[10px]">
+        <thead className="bg-bg-2 text-fg-dim">
+          <tr>
+            <th className="px-2 py-1 text-left font-normal uppercase tracking-wider">
+              Jarque–Bera · column
+            </th>
+            <th className="px-2 py-1 text-right font-normal uppercase tracking-wider">n</th>
+            <th className="px-2 py-1 text-right font-normal uppercase tracking-wider">JB</th>
+            <th className="px-2 py-1 text-right font-normal uppercase tracking-wider">p (χ²₂)</th>
+            <th className="px-2 py-1 text-left font-normal uppercase tracking-wider">
+              verdict at 5%
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {profiles.map((p) => {
+            const jb = p.jarqueBera;
+            if (!jb) return null;
+            const rejected = jb.p < 0.05;
+            return (
+              <tr key={p.name} className="border-t border-border/60">
+                <td className="px-2 py-1 text-fg">{p.name}</td>
+                <td className="px-2 py-1 text-right text-fg-mute">{p.count.toLocaleString()}</td>
+                <td className="px-2 py-1 text-right text-fg-mute">{formatNumber(jb.stat)}</td>
+                <td className="px-2 py-1 text-right text-fg-mute">{fmtP(jb.p)}</td>
+                <td className={`px-2 py-1 ${rejected ? "text-warn" : "text-primary"}`}>
+                  {rejected ? "reject normality" : "consistent with normal"}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+      <div className="border-t border-border/60 bg-bg-2/50 px-2 py-1 font-mono text-[9px] text-fg-dim">
+        JB = n/6 · (g₁² + g₂²/4), asymptotically χ² with 2 df — treat p-values as indicative below n
+        ≈ 50
+      </div>
+    </div>
+  );
+}
+
 function HypothesisTestsScaffold({ run }: { run: RunResult }) {
+  const d = run.detail as Record<string, unknown> | undefined;
+  const profiles = run.modelId === "descriptive" ? d?.profiles : undefined;
+  if (isProfileArray(profiles)) {
+    const withJb = profiles.filter((p) => p.jarqueBera != null);
+    if (withJb.length > 0) return <JarqueBeraPanel profiles={withJb} />;
+  }
   const tests = hypothesisTestsForModel(run.modelId);
   if (tests.length === 0) {
     return (

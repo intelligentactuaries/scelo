@@ -325,7 +325,14 @@ export function ConversationSidebar({ version = 0, collapsed = false, onToggleCo
       {/* Brand + collapse */}
       <div className="flex items-center justify-between border-b border-border px-3 py-2">
         <Link to="/" className="flex items-center gap-2">
-          <img src="/logo_math.JPG" alt="(Iα)ai" className="h-5 w-5" />
+          <img
+            src="/logo_math_48.png"
+            srcSet="/logo_math_48.png 2x, /logo_math_96.png 4x, /logo_math_192.png 8x"
+            alt="(Iα)ai"
+            width={20}
+            height={20}
+            className="h-5 w-5"
+          />
           <span className="font-mono text-xs">
             <span className="text-primary">(Iα)</span>
             <span className="text-fg-mute">ₐᵢ</span>
