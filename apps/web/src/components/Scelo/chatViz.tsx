@@ -615,7 +615,7 @@ function chartOption(
       const yk = typeof yv === "number" ? String(yv) : yv;
       xSet.add(xk);
       ySet.add(yk);
-      const key = `${xk} ${yk}`;
+      const key = `${xk}\u0000${yk}`;
       const arr = buckets.get(key) ?? [];
       if (spec.valueCol) arr.push(r[spec.valueCol]);
       else arr.push(1);
@@ -628,7 +628,7 @@ function chartOption(
     const cells: Array<[number, number, number]> = [];
     for (let i = 0; i < xs.length; i++) {
       for (let j = 0; j < ys.length; j++) {
-        const key = `${xs[i]} ${ys[j]}`;
+        const key = `${xs[i]}\u0000${ys[j]}`;
         const vals = buckets.get(key) ?? [];
         const v = aggregate(vals, heatAgg);
         if (typeof v === "number" && Number.isFinite(v)) {
