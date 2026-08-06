@@ -58,6 +58,7 @@ import {
   augmentDataset,
   autoCleanDataset,
   cleanColumnCells,
+  cleaningOpsTouchedColumns,
   clearNonDateCells,
   defaultEnabled,
   describeOp,
@@ -91,7 +92,7 @@ import {
 } from "./combineData";
 import { type ExportFormat, exportDataset } from "./exportDataset";
 import { compileFormula, previewFormula, validateColumnName } from "./formulaEvaluator";
-import { useScelo } from "./sceloContext";
+import { type HistoryScope, useScelo } from "./sceloContext";
 import { useNodeChat } from "./useNodeChat";
 import { columnRelevance, numericColumns as workspaceNumericColumns } from "./workspace";
 
@@ -1845,10 +1846,14 @@ export function SoftDataWorkstation() {
   // Snapshot-then-replace. Every dataset TRANSFORM goes through here so it
   // is reversible; loading or clearing a dataset deliberately does not (see
   // clearHistory at those sites) because undoing across a file swap would
-  // resurrect the previous file.
+  // resurrect the previous file. `scope` narrows what undo will restore:
+  // pass `{ kind: "columns", columns }` for steps confined to named columns
+  // (per-column ops, derived columns, date reformat of specific columns) so
+  // undoing them puts back ONLY those columns; leave it off for steps that
+  // rewrite the whole table (auto-clean, dedupe, augment, combine).
   const commitDataset = useCallback(
-    (label: string, next: Dataset) => {
-      pushHistory(label);
+    (label: string, next: Dataset, scope?: HistoryScope) => {
+      pushHistory(label, scope);
       setDataset(next);
     },
     [pushHistory, setDataset],
@@ -1897,7 +1902,9 @@ export function SoftDataWorkstation() {
         ...r,
         [name]: compiled.evaluate(r),
       }));
-      pushHistory(`add derived column \`${name}\``);
+      // Column-scoped: undoing this removes ONLY the new column (and its
+      // formula badge, via the entry's derived snapshot).
+      pushHistory(`add derived column \`${name}\``, { kind: "columns", columns: [name] });
       setDataset({
         name: dataset.name,
         columns: [...dataset.columns, name],
@@ -1997,31 +2004,60 @@ export function SoftDataWorkstation() {
   const applyCleaningOps = useCallback(
     (ops: Set<CleaningOpKey>): string[] => {
       if (!dataset || !cleaningPlan) return [];
+      const enabledOpObjects = cleaningPlan.ops.filter((op) => ops.has(op.key));
       const cleaned = applyCleaning(dataset, cleaningPlan, ops);
-      const opLabels = cleaningPlan.ops
-        .filter((op) => ops.has(op.key))
-        .map((op) => describeOp(op, cleaningPlan.sampled).title);
+      const opLabels = enabledOpObjects.map((op) => describeOp(op, cleaningPlan.sampled).title);
+      // When every enabled op is confined to named columns, record a
+      // column-scoped undo entry — undoing it then restores just those
+      // columns instead of time-travelling the whole grid. Table-wide
+      // sweeps (trim, dedupe, …) stay table-scoped.
+      const touched = cleaningOpsTouchedColumns(enabledOpObjects);
       commitDataset(
         opLabels.length === 1 ? opLabels[0] : `cleaning (${opLabels.length} steps)`,
         cleaned,
+        touched ? { kind: "columns", columns: touched } : undefined,
       );
       // Recompute happens automatically through the dataset dep. We close the
       // panel so the user immediately sees the cleaner state.
       setCleaningOpen(false);
       setCleaningDismissed(false);
-      // Reset filters because column/row identity may have shifted.
-      setFilters([]);
+      // Reset filters because column/row identity may have shifted — but
+      // only the touched columns' filters when the ops were confined, so an
+      // unrelated drill-down survives a one-column clean (and the scoped
+      // undo above can restore state exactly).
+      if (touched === null) {
+        setFilters([]);
+      } else {
+        const touchedSet = new Set(touched);
+        setFilters((cur) => cur.filter((f) => !touchedSet.has(f.column)));
+      }
       logEvent({ stage: "soft", kind: "cleaning.apply", payload: { opLabels } });
       return opLabels;
     },
     [dataset, cleaningPlan, setFilters, logEvent, commitDataset],
   );
 
+  // Ops being applied right now (count), or null. `applyCleaning` rewrites
+  // every row synchronously, so the overlay must paint BEFORE the work —
+  // this was the one data-mutating button in Soft without the nextPaint
+  // treatment import and combine both have.
+  const [cleanBusy, setCleanBusy] = useState<number | null>(null);
+
   // Banner "apply cleaning" button — runs whatever the user currently has
   // checked. (Wired to onClick, so it must stay argless: the click event must
   // not leak in as an op set.)
-  const onApplyCleaning = useCallback(() => {
-    applyCleaningOps(enabledOps);
+  const onApplyCleaning = useCallback(async () => {
+    if (enabledOps.size === 0) return;
+    setCleanBusy(enabledOps.size);
+    await nextPaint();
+    const startedAt = performance.now();
+    try {
+      applyCleaningOps(enabledOps);
+    } finally {
+      const remaining = 350 - (performance.now() - startedAt);
+      if (remaining > 0) await new Promise<void>((r) => setTimeout(r, remaining));
+      setCleanBusy(null);
+    }
   }, [applyCleaningOps, enabledOps]);
 
   // ── Autonomous clean ───────────────────────────────────────────────────
@@ -2120,8 +2156,14 @@ export function SoftDataWorkstation() {
       if (changed === 0) {
         return `${cols.length === 1 ? `\`${cols[0]}\` is` : "Those date columns are"} already in ${DATE_STYLE_LABEL[style]} format — nothing to change.`;
       }
-      commitDataset(`reformat dates to ${DATE_STYLE_LABEL[style]}`, next);
-      setFilters([]);
+      // Confined to the named date columns → column-scoped undo, and only
+      // those columns' filters are invalidated.
+      commitDataset(`reformat dates to ${DATE_STYLE_LABEL[style]}`, next, {
+        kind: "columns",
+        columns: cols,
+      });
+      const colSet = new Set(cols);
+      setFilters((cur) => cur.filter((f) => !colSet.has(f.column)));
       logEvent({
         stage: "soft",
         kind: "cleaning.reformat-dates",
@@ -2177,9 +2219,24 @@ export function SoftDataWorkstation() {
   const runColumnOpIntent = useCallback(
     (column: string, intent: ColumnOpIntent): string => {
       if (!dataset) return "Load a dataset first.";
-      const commit = (next: Dataset, action: string, affected: number, reply: string): string => {
-        commitDataset(`${action} on \`${column}\``, next);
-        setFilters([]);
+      // Column-scoped by default: undoing one of these puts back ONLY this
+      // column. `remove-outliers` opts out below — it deletes whole rows,
+      // which is a table-level change however column-flavoured the trigger.
+      const commit = (
+        next: Dataset,
+        action: string,
+        affected: number,
+        reply: string,
+        scope: HistoryScope = { kind: "columns", columns: [column] },
+      ): string => {
+        commitDataset(`${action} on \`${column}\``, next, scope);
+        // Matching filter hygiene: a confined op only invalidates a filter
+        // on the column it rewrote — drill-downs on other columns survive.
+        if (scope.kind === "columns") {
+          setFilters((cur) => cur.filter((f) => f.column !== column));
+        } else {
+          setFilters([]);
+        }
         logEvent({ stage: "soft", kind: "cleaning.column", payload: { column, action, affected } });
         return reply;
       };
@@ -2289,6 +2346,7 @@ export function SoftDataWorkstation() {
             "removed outlier rows",
             res.removed,
             `Done — removed ${res.removed.toLocaleString()} row${plural(res.removed)} where \`${column}\` fell outside the Tukey fences [${res.lo.toLocaleString()}, ${res.hi.toLocaleString()}]. The dataset now has ${res.dataset.rows.length.toLocaleString()} rows.`,
+            { kind: "table" },
           );
         }
         case "drop-column": {
@@ -2367,8 +2425,11 @@ export function SoftDataWorkstation() {
         if (cleared === 0) {
           return `Every value in \`${column}\` already parses as a date — nothing to remove.`;
         }
-        commitDataset(`clear non-dates in \`${column}\``, next);
-        setFilters([]);
+        commitDataset(`clear non-dates in \`${column}\``, next, {
+          kind: "columns",
+          columns: [column],
+        });
+        setFilters((cur) => cur.filter((f) => f.column !== column));
         logEvent({
           stage: "soft",
           kind: "cleaning.column",
@@ -2429,8 +2490,8 @@ export function SoftDataWorkstation() {
             isDateCol() ? ", or non-date" : ""
           } issues to fix.`;
         }
-        commitDataset(`clean \`${column}\``, working);
-        setFilters([]);
+        commitDataset(`clean \`${column}\``, working, { kind: "columns", columns: [column] });
+        setFilters((cur) => cur.filter((f) => f.column !== column));
         logEvent({
           stage: "soft",
           kind: "cleaning.column",
@@ -2691,31 +2752,50 @@ export function SoftDataWorkstation() {
   const [samplePickerOpen, setSamplePickerOpen] = useState(false);
   const [simulateOpen, setSimulateOpen] = useState(false);
   const [workspacePreviewOpen, setWorkspacePreviewOpen] = useState(false);
+  // Sample being built right now (its label), or null. `opt.build()` and the
+  // profiling that follows are synchronous, so — like import and combine —
+  // the overlay must paint BEFORE the work starts or the picker just
+  // freezes. New users hit this path first; it deserves the same choreography
+  // as the most-instrumented flow in the app.
+  const [sampleBusy, setSampleBusy] = useState<string | null>(null);
   const loadSample = useCallback(
-    (key: SampleKey) => {
+    async (key: SampleKey) => {
       const opt = SAMPLE_OPTIONS.find((o) => o.key === key);
       if (!opt) return;
-      const ds = opt.build();
-      // Loading a fresh dataset starts a new reproducibility session — wipe
-      // the prior log so the new export doesn't replay events from the old
-      // dataset that no longer exist.
-      clearEvents();
-      clearHistory();
-      setDataset(ds);
-      setSelected(ds.columns[0]);
-      setFilters([]);
-      logEvent({
-        stage: "soft",
-        kind: "dataset.load",
-        payload: {
-          name: ds.name,
-          rows: ds.rows.length,
-          cols: ds.columns.length,
-          columns: ds.columns,
-          source: "sample",
-        },
-      });
+      // Close the picker FIRST — the "building" overlay lives on the canvas
+      // underneath, and a modal in front would hide the very feedback this
+      // exists to show.
       setSamplePickerOpen(false);
+      setSampleBusy(opt.title);
+      await nextPaint();
+      const startedAt = performance.now();
+      try {
+        const ds = opt.build();
+        // Loading a fresh dataset starts a new reproducibility session — wipe
+        // the prior log so the new export doesn't replay events from the old
+        // dataset that no longer exist.
+        clearEvents();
+        clearHistory();
+        setDataset(ds);
+        setSelected(ds.columns[0]);
+        setFilters([]);
+        logEvent({
+          stage: "soft",
+          kind: "dataset.load",
+          payload: {
+            name: ds.name,
+            rows: ds.rows.length,
+            cols: ds.columns.length,
+            columns: ds.columns,
+            source: "sample",
+          },
+        });
+      } finally {
+        // Min-visible floor: a fast build still animates instead of flashing.
+        const remaining = 350 - (performance.now() - startedAt);
+        if (remaining > 0) await new Promise<void>((r) => setTimeout(r, remaining));
+        setSampleBusy(null);
+      }
     },
     [clearEvents, setDataset, setFilters, logEvent, clearHistory],
   );
@@ -3413,6 +3493,20 @@ export function SoftDataWorkstation() {
               layout="overlay"
               accent="accent-2"
               state={{ verb: "combining", name: `${combineBusy} datasets` }}
+            />
+          )}
+          {cleanBusy != null && (
+            <UploadIndicator
+              layout="overlay"
+              accent="accent-2"
+              state={{ verb: "cleaning", name: `${cleanBusy} step${cleanBusy === 1 ? "" : "s"}` }}
+            />
+          )}
+          {sampleBusy != null && (
+            <UploadIndicator
+              layout="overlay"
+              accent="primary"
+              state={{ verb: "building", name: sampleBusy }}
             />
           )}
         </main>
@@ -4360,18 +4454,34 @@ function ColumnChatPopover({
     if (el) el.scrollTop = el.scrollHeight;
   }, [messages]);
 
+  // True while a typed local command is executing — the deterministic
+  // handlers rewrite whole columns synchronously, so the pip must paint
+  // BEFORE the work starts or the popover looks dead until it finishes.
+  const [runningLocal, setRunningLocal] = useState(false);
   const submit = () => {
     const text = draft.trim();
-    if (!text || isStreaming) return;
+    if (!text || isStreaming || runningLocal) return;
     setDraft("");
-    // Deterministic per-column intents (e.g. "make this american") answer
-    // locally and never hit the provider.
-    const localReply = onLocalCommand?.(text);
-    if (localReply != null) {
-      sendLocal(text, localReply);
+    if (!onLocalCommand) {
+      void send(text);
       return;
     }
-    void send(text);
+    // Deterministic per-column intents (e.g. "make this american") answer
+    // locally and never hit the provider.
+    setRunningLocal(true);
+    void (async () => {
+      try {
+        await nextPaint();
+        const localReply = onLocalCommand(text);
+        if (localReply != null) {
+          sendLocal(text, localReply);
+        } else {
+          void send(text);
+        }
+      } finally {
+        setRunningLocal(false);
+      }
+    })();
   };
 
   // ── Placement ──────────────────────────────────────────────────────────
@@ -4637,6 +4747,19 @@ function ColumnChatPopover({
           </ul>
         </div>
       )}
+      {runningLocal && (
+        <output
+          aria-live="polite"
+          className="flex shrink-0 items-center gap-2 px-3 py-1.5 font-mono text-[9px] uppercase tracking-wider text-fg-dim"
+        >
+          <span
+            aria-hidden
+            className="ia-pip ia-load-pip"
+            style={{ background: "rgb(var(--rgb-primary))" }}
+          />
+          working…
+        </output>
+      )}
       <div className="shrink-0 border-t border-border bg-bg-1 px-3 py-2">
         <ChatInputPill
           draft={draft}
@@ -4860,10 +4983,41 @@ function ExportMenu({ dataset }: { dataset: Dataset }) {
     };
   }, [open]);
 
-  const doExport = (fmt: ExportFormat) => {
-    exportDataset(dataset, fmt);
-    setOpen(false);
+  // Format being written right now, or null. Serialising a 500k-row dataset
+  // is a multi-second synchronous stringify — without the busy row the menu
+  // just closed and NOTHING happened until the download shelf popped.
+  const [writing, setWriting] = useState<ExportFormat | null>(null);
+
+  const doExport = async (fmt: ExportFormat) => {
+    if (writing) return;
+    setWriting(fmt);
+    await nextPaint();
+    const startedAt = performance.now();
+    try {
+      exportDataset(dataset, fmt);
+    } finally {
+      // Min-visible floor so a small dataset's instant export still reads
+      // as "did something" rather than a flicker.
+      const remaining = 350 - (performance.now() - startedAt);
+      if (remaining > 0) await new Promise<void>((r) => setTimeout(r, remaining));
+      setWriting(null);
+      setOpen(false);
+    }
   };
+
+  const itemLabel = (fmt: ExportFormat, label: string) =>
+    writing === fmt ? (
+      <span className="flex items-center gap-1.5 text-fg-mute">
+        <span
+          aria-hidden
+          className="ia-pip ia-load-pip"
+          style={{ background: "rgb(var(--rgb-primary))" }}
+        />
+        writing {label.toLowerCase()}…
+      </span>
+    ) : (
+      <span>{label}</span>
+    );
 
   return (
     <div ref={wrapRef} className="relative">
@@ -4882,18 +5036,20 @@ function ExportMenu({ dataset }: { dataset: Dataset }) {
         <div className="absolute right-0 top-full z-30 mt-1 w-44 overflow-hidden rounded border border-border bg-bg-1 shadow-lg">
           <button
             type="button"
-            onClick={() => doExport("csv")}
-            className="flex w-full items-center justify-between px-2.5 py-1.5 text-left font-mono text-[11px] text-fg hover:bg-bg-2"
+            onClick={() => void doExport("csv")}
+            disabled={writing !== null}
+            className="flex w-full items-center justify-between px-2.5 py-1.5 text-left font-mono text-[11px] text-fg hover:bg-bg-2 disabled:cursor-wait"
           >
-            <span>CSV</span>
+            {itemLabel("csv", "CSV")}
             <span className="font-mono text-[9px] uppercase tracking-wider text-fg-dim">.csv</span>
           </button>
           <button
             type="button"
-            onClick={() => doExport("json")}
-            className="flex w-full items-center justify-between border-t border-border px-2.5 py-1.5 text-left font-mono text-[11px] text-fg hover:bg-bg-2"
+            onClick={() => void doExport("json")}
+            disabled={writing !== null}
+            className="flex w-full items-center justify-between border-t border-border px-2.5 py-1.5 text-left font-mono text-[11px] text-fg hover:bg-bg-2 disabled:cursor-wait"
           >
-            <span>JSON</span>
+            {itemLabel("json", "JSON")}
             <span className="font-mono text-[9px] uppercase tracking-wider text-fg-dim">.json</span>
           </button>
           <div className="border-t border-border bg-bg-2/40 px-2.5 py-1 font-mono text-[9px] uppercase tracking-wider text-fg-dim">

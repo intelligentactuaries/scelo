@@ -6,8 +6,8 @@
 // temperature and total precipitation for a Pretoria grid-cell across all
 // three reanalyses so the user can see the ensemble agreement-and-spread.
 
+import ReactECharts from "@/components/ReactEChartsCrisp";
 import { useTheme } from "@/lib/theme";
-import ReactECharts from "echarts-for-react";
 import { LineChart } from "echarts/charts";
 import {
   GridComponent,

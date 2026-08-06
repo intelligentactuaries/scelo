@@ -242,13 +242,22 @@ export function ChatHistoryOverlay({ onClose }: { onClose: () => void }) {
           scelo: {local.length.toLocaleString()} turn{local.length === 1 ? "" : "s"}
         </span>
         <span>·</span>
-        <span>
+        <span className="inline-flex items-center gap-1.5">
           swarm:{" "}
-          {swarmState === "loading"
-            ? "checking…"
-            : swarmState === "unreachable"
-              ? "server unreachable (:3010) — its history is not included"
-              : `${swarm.length.toLocaleString()} turn${swarm.length === 1 ? "" : "s"}`}
+          {swarmState === "loading" ? (
+            <>
+              <span
+                aria-hidden
+                className="ia-pip ia-load-pip"
+                style={{ background: "rgb(var(--rgb-accent-2))" }}
+              />
+              checking…
+            </>
+          ) : swarmState === "unreachable" ? (
+            "server unreachable (:3010) — its history is not included"
+          ) : (
+            `${swarm.length.toLocaleString()} turn${swarm.length === 1 ? "" : "s"}`
+          )}
         </span>
         <div className="ml-auto flex items-center gap-2">
           {confirmClear ? (

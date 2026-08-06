@@ -410,6 +410,12 @@ The Hard Data card relabels M / T / R per source family.
 `.trim(),
 };
 
+// Later-authored entries that OVERRIDE the base MODEL_THEORY text above
+// (the merge loop below lets these win). Same escaping contract as the base
+// dictionary: these are ordinary template literals, so every LaTeX command
+// needs a DOUBLED backslash — a single one is eaten by JS string escaping
+// (\\bar → backspace, \\t → tab, \\sum → "sum") and the formula reaches
+// KaTeX as garbage. modelTheory.test.ts guards this.
 const EXTRA_THEORY: Record<string, string> = {
   mack: `
 **Mack's model** wraps the chain-ladder point estimate in a distribution-free standard error: the same development factors, plus an explicit variance assumption, give an estimation + process error for each origin's reserve without assuming any claim-count distribution.
@@ -420,9 +426,9 @@ const EXTRA_THEORY: Record<string, string> = {
 
 **Formula**
 $$
-\hat\sigma_k^2 = \frac{1}{n_k-1}\sum_o C_{o,k}\Big(\frac{C_{o,k+1}}{C_{o,k}} - \hat f_k\Big)^2,
-\qquad
-\widehat{\mathrm{mse}}(\hat R_o) = \hat C_{o,n}^2 \sum_{k} \frac{\hat\sigma_k^2/\hat f_k^2}{\hat C_{o,k}}\Big(1 + \frac{1}{\sum_j C_{j,k}}\Big).
+\\hat\\sigma_k^2 = \\frac{1}{n_k-1}\\sum_o C_{o,k}\\Big(\\frac{C_{o,k+1}}{C_{o,k}} - \\hat f_k\\Big)^2,
+\\qquad
+\\widehat{\\mathrm{mse}}(\\hat R_o) = \\hat C_{o,n}^2 \\sum_{k} \\frac{\\hat\\sigma_k^2/\\hat f_k^2}{\\hat C_{o,k}}\\Big(1 + \\frac{1}{\\sum_j C_{j,k}}\\Big).
 $$
 
 **Caveat** — the in-app run reports an illustrative damped SE; the bundled-Python path computes the full Mack MSE. Both inherit chain-ladder's blindness to calendar-year effects.
@@ -437,7 +443,7 @@ $$
 
 **Formula**
 $$
-\operatorname{logit}\, q(x,t) = \kappa_t^{(1)} + \kappa_t^{(2)}\,(x - \bar x).
+\\operatorname{logit}\\, q(x,t) = \\kappa_t^{(1)} + \\kappa_t^{(2)}\\,(x - \\bar x).
 $$
 
 **Caveat** — the in-app run is a deterministic contrast against Lee-Carter, not a fitted CBD; use the exported script for a real fit with parameter uncertainty.
@@ -452,7 +458,7 @@ $$
 
 **Formula**
 $$
-\ddot a_x = \sum_{t\ge 0} v^t\,{}_tp_x, \qquad A_x = \sum_{t\ge 0} v^{t+1}\,{}_tp_x\,q_{x+t}, \qquad v = \tfrac{1}{1+i}.
+\\ddot a_x = \\sum_{t\\ge 0} v^t\\,{}_tp_x, \\qquad A_x = \\sum_{t\\ge 0} v^{t+1}\\,{}_tp_x\\,q_{x+t}, \\qquad v = \\tfrac{1}{1+i}.
 $$
 
 **Caveat** — EPVs are only as good as the mortality behind them: wire Lee-Carter in to price on the projected table instead of the canned curve.
@@ -467,7 +473,7 @@ $$
 
 **Formula**
 $$
-dr_t = a(b - r_t)\,dt + \sigma\,dW_t
+dr_t = a(b - r_t)\\,dt + \\sigma\\,dW_t
 $$
 with the reported curve the 1st-percentile path of \`r_t\` across simulations.
 
@@ -483,7 +489,7 @@ with the reported curve the 1st-percentile path of \`r_t\` across simulations.
 
 **Formula**
 $$
-\mathrm{AAL} = \sum_{e} f_e \sum_{i} V\big(I_{e,i}\big)\, E_i
+\\mathrm{AAL} = \\sum_{e} f_e \\sum_{i} V\\big(I_{e,i}\\big)\\, E_i
 $$
 over events \`e\` with frequency \`f_e\`, sites \`i\`, intensity \`I\`, vulnerability \`V\`, exposure \`E\`.
 
@@ -499,24 +505,31 @@ over events \`e\` with frequency \`f_e\`, sites \`i\`, intensity \`I\`, vulnerab
 
 **Formula**
 $$
-F_m(x) = F_{m-1}(x) + \nu\, h_m(x), \qquad h_m \approx -\nabla_{F} \mathcal{L}\big(y, F_{m-1}\big).
+F_m(x) = F_{m-1}(x) + \\nu\\, h_m(x), \\qquad h_m \\approx -\\nabla_{F} \\mathcal{L}\\big(y, F_{m-1}\\big).
 $$
 
 **Caveat** — the in-app run is a screening approximation (its label says so): the score drifts with row count and the feature ranking is a between-group variance screen, not a fitted model. Export the script for a real LightGBM fit.
 `.trim(),
 
   descriptive: `
-**Descriptive statistics** are the hygiene pass before any model: moments, quantiles and missingness per column, so distributional oddities are seen *before* they bend a fit.
+**Descriptive statistics** are the hygiene pass before any model: location, spread, shape and missingness per column, so distributional oddities are seen *before* they bend a fit.
 
 **Assumptions**
 - None beyond "the sample at hand is what you intend to model".
 
-**Formula**
+**Formulae** — sample moments with Bessel's correction, quantiles by linear interpolation (R type 7, the numpy/R default):
 $$
-\bar x = \tfrac{1}{n}\sum_i x_i, \qquad s^2 = \tfrac{1}{n-1}\sum_i (x_i-\bar x)^2, \qquad Q_p = F^{-1}(p).
+\\bar x = \\frac{1}{n}\\sum_i x_i, \\qquad s^2 = \\frac{1}{n-1}\\sum_i (x_i-\\bar x)^2, \\qquad \\mathrm{CV} = \\frac{s}{|\\bar x|}, \\qquad Q_p = F_n^{-1}(p).
 $$
+Shape via the adjusted Fisher–Pearson coefficients (what R's \`e1071\` type 2, SAS and Excel report):
+$$
+G_1 = \\frac{\\sqrt{n(n-1)}}{n-2}\\, \\frac{m_3}{m_2^{3/2}}, \\qquad
+G_2 = \\frac{n-1}{(n-2)(n-3)}\\Big((n+1)\\,\\frac{m_4}{m_2^2} - 3(n-1)\\Big), \\qquad
+m_r = \\frac{1}{n}\\sum_i (x_i-\\bar x)^r.
+$$
+Normality screen per column via Jarque–Bera on the unadjusted moments: $\\mathrm{JB} = \\tfrac{n}{6}\\big(g_1^2 + \\tfrac{1}{4}g_2^2\\big) \\sim \\chi^2_2$ under normality.
 
-**Caveat** — description is not inference: an outlier that survives scrutiny here still needs a robustness check in the downstream model.
+**Caveat** — description is not inference: an outlier that survives scrutiny here still needs a robustness check in the downstream model, and JB's asymptotics are unreliable below n ≈ 50.
 `.trim(),
 };
 

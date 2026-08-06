@@ -15,6 +15,7 @@ import "reactflow/dist/style.css";
 import { ExportButton } from "./ExportScreen";
 import { FlowControls } from "./FlowControls";
 import { SceloNode, type SceloNodeData } from "./SceloNode";
+import { nextPaint } from "./UploadIndicator";
 import { downloadSce, parseSce } from "./projectFile";
 import { useScelo } from "./sceloContext";
 
@@ -157,6 +158,10 @@ function ProjectFileActions() {
   const fileRef = useRef<HTMLInputElement | null>(null);
   const [note, setNote] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   const noteTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Which file action is in flight. Serialising / parsing a session with a
+  // full dataset in it is a several-second synchronous JSON pass — the only
+  // feedback used to be the "saved …" flash AFTER the freeze ended.
+  const [busy, setBusy] = useState<"save" | "open" | null>(null);
 
   const flash = (kind: "ok" | "err", text: string) => {
     setNote({ kind, text });
@@ -164,28 +169,41 @@ function ProjectFileActions() {
     noteTimer.current = setTimeout(() => setNote(null), kind === "ok" ? 3500 : 6000);
   };
 
-  const onSave = () => {
+  const onSave = async () => {
+    if (busy) return;
+    setBusy("save");
+    // Paint the busy label before the synchronous stringify blocks the tab.
+    await nextPaint();
     try {
       const { filename } = downloadSce(snapshotSession(), project, dataset?.name ?? null);
       flash("ok", `saved ${filename}`);
     } catch (e) {
       flash("err", `save failed — ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setBusy(null);
     }
   };
 
   const onOpen = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (fileRef.current) fileRef.current.value = ""; // allow re-picking the same file
-    if (!file) return;
+    if (!file || busy) return;
     if (dataset && !window.confirm("Open this project? It will replace your current session.")) {
       return;
     }
+    setBusy("open");
     try {
-      const { session, project: proj } = parseSce(await file.text());
+      const text = await file.text();
+      // The parse + restore are synchronous from here — make sure the
+      // "opening…" label has painted before they block.
+      await nextPaint();
+      const { session, project: proj } = parseSce(text);
       restoreSession(session, proj);
       flash("ok", `opened ${file.name}${proj ? ` · ${proj.name}` : ""}`);
     } catch (err) {
       flash("err", err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(null);
     }
   };
 
@@ -211,23 +229,38 @@ function ProjectFileActions() {
       <button
         type="button"
         onClick={() => fileRef.current?.click()}
+        disabled={busy !== null}
         title="Open a saved .sce project file (replaces the current session)"
-        className="rounded border border-border bg-bg-2 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider text-fg-mute hover:border-primary hover:text-primary"
+        className="inline-flex items-center gap-1.5 rounded border border-border bg-bg-2 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider text-fg-mute hover:border-primary hover:text-primary disabled:cursor-wait disabled:opacity-60"
       >
-        open .sce
+        {busy === "open" && (
+          <span
+            aria-hidden
+            className="ia-pip ia-load-pip"
+            style={{ background: "rgb(var(--rgb-primary))" }}
+          />
+        )}
+        {busy === "open" ? "opening…" : "open .sce"}
       </button>
       <button
         type="button"
-        onClick={onSave}
-        disabled={!dataset}
+        onClick={() => void onSave()}
+        disabled={!dataset || busy !== null}
         title={
           dataset
             ? "Save the whole session (data, filters, model picks, runs) to a .sce project file"
             : "Load a dataset first — there's nothing to save yet"
         }
-        className="rounded border border-border bg-bg-2 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider text-fg-mute hover:border-primary hover:text-primary disabled:cursor-not-allowed disabled:opacity-40"
+        className="inline-flex items-center gap-1.5 rounded border border-border bg-bg-2 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider text-fg-mute hover:border-primary hover:text-primary disabled:cursor-not-allowed disabled:opacity-40"
       >
-        save .sce
+        {busy === "save" && (
+          <span
+            aria-hidden
+            className="ia-pip ia-load-pip"
+            style={{ background: "rgb(var(--rgb-primary))" }}
+          />
+        )}
+        {busy === "save" ? "saving…" : "save .sce"}
       </button>
     </>
   );

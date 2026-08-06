@@ -50,22 +50,33 @@ export default function FileBrowser({ onOpen, activePath, onWorkspaceChange }: P
     return m;
   }, [git]);
 
+  // Both IPC waits get visible states: the initial listing renders skeleton
+  // rows, and a first-expand marks its own row — otherwise the tree shows
+  // nothing (or a dead chevron) until the round-trip returns.
+  const [rootLoading, setRootLoading] = useState(false);
+  const [loadingDirs, setLoadingDirs] = useState<ReadonlySet<string>>(() => new Set());
+
   const loadRoot = useCallback(async () => {
     if (!isDesktopIDE()) return;
-    const ws = await window.scelo!.workspace.get();
-    setWorkspace(ws.path);
-    onWorkspaceChange?.(ws.path);
-    if (!ws.path) {
-      setRoot([]);
-      return;
+    setRootLoading(true);
+    try {
+      const ws = await window.scelo!.workspace.get();
+      setWorkspace(ws.path);
+      onWorkspaceChange?.(ws.path);
+      if (!ws.path) {
+        setRoot([]);
+        return;
+      }
+      const list = await window.scelo!.workspace.list();
+      if (list.error) {
+        setError(list.error);
+        return;
+      }
+      setRoot(list.entries.map((e) => toNode(e, "")));
+      setError(null);
+    } finally {
+      setRootLoading(false);
     }
-    const list = await window.scelo!.workspace.list();
-    if (list.error) {
-      setError(list.error);
-      return;
-    }
-    setRoot(list.entries.map((e) => toNode(e, "")));
-    setError(null);
   }, [onWorkspaceChange]);
 
   useEffect(() => {
@@ -83,16 +94,25 @@ export default function FileBrowser({ onOpen, activePath, onWorkspaceChange }: P
   };
 
   const toggle = async (path: string) => {
-    const next = await mutateAt(root, path, async (n) => {
-      if (n.kind !== "dir") return n;
-      if (!n.loaded) {
-        const list = await window.scelo!.workspace.list(path);
-        const children = (list.entries ?? []).map((e) => toNode(e, path));
-        return { ...n, expanded: true, loaded: true, children };
-      }
-      return { ...n, expanded: !n.expanded };
-    });
-    setRoot(next);
+    setLoadingDirs((prev) => new Set(prev).add(path));
+    try {
+      const next = await mutateAt(root, path, async (n) => {
+        if (n.kind !== "dir") return n;
+        if (!n.loaded) {
+          const list = await window.scelo!.workspace.list(path);
+          const children = (list.entries ?? []).map((e) => toNode(e, path));
+          return { ...n, expanded: true, loaded: true, children };
+        }
+        return { ...n, expanded: !n.expanded };
+      });
+      setRoot(next);
+    } finally {
+      setLoadingDirs((prev) => {
+        const next = new Set(prev);
+        next.delete(path);
+        return next;
+      });
+    }
   };
 
   if (!isDesktopIDE()) {
@@ -128,7 +148,17 @@ export default function FileBrowser({ onOpen, activePath, onWorkspaceChange }: P
         </div>
       )}
       <div className="flex-1 overflow-auto p-1 text-sm">
-        {!workspace ? (
+        {rootLoading ? (
+          <output aria-busy="true" aria-live="polite" className="block space-y-1.5 p-3">
+            {[0.85, 0.6, 0.75, 0.5, 0.65].map((w, i) => (
+              <span
+                key={w}
+                className="ia-skel-cell h-3"
+                style={{ width: `${w * 100}%`, animationDelay: `${i * 90}ms` }}
+              />
+            ))}
+          </output>
+        ) : !workspace ? (
           <div className="p-3 text-[11px] text-fg-mute">
             No workspace selected. Click <em>choose…</em> above to pick a folder
             on disk; files become editable inside Scelo IDE.
@@ -143,6 +173,7 @@ export default function FileBrowser({ onOpen, activePath, onWorkspaceChange }: P
             onOpen={onOpen}
             activePath={activePath ?? null}
             gitDecorations={gitDecorations}
+            loadingDirs={loadingDirs}
           />
         )}
       </div>
@@ -157,6 +188,7 @@ function Tree({
   onOpen,
   activePath,
   gitDecorations,
+  loadingDirs,
 }: {
   nodes: Node[];
   depth: number;
@@ -164,6 +196,7 @@ function Tree({
   onOpen: (path: string) => void;
   activePath: string | null;
   gitDecorations: Map<string, string>;
+  loadingDirs: ReadonlySet<string>;
 }) {
   return (
     <ul className="m-0 list-none p-0">
@@ -177,7 +210,25 @@ function Tree({
                 className="flex w-full items-baseline gap-1 rounded px-2 py-0.5 text-left text-xs hover:bg-bg"
                 style={{ paddingLeft: `${depth * 12 + 6}px` }}
               >
-                <span className="w-3 text-fg-mute">{n.expanded ? "▾" : "▸"}</span>
+                <span className="w-3 text-fg-mute">
+                  {/* First expand hits the disk over IPC — pulse instead of a
+                      chevron that looks like it didn't register the click. */}
+                  {loadingDirs.has(n.path) && !n.loaded ? (
+                    <span
+                      aria-hidden
+                      className="ia-pip ia-load-pip"
+                      style={{
+                        width: "0.45em",
+                        height: "0.45em",
+                        background: "rgb(var(--rgb-fg-dim))",
+                      }}
+                    />
+                  ) : n.expanded ? (
+                    "▾"
+                  ) : (
+                    "▸"
+                  )}
+                </span>
                 <span className="font-mono">{n.name}/</span>
               </button>
               {n.expanded && n.children.length > 0 && (
@@ -188,6 +239,7 @@ function Tree({
                   onOpen={onOpen}
                   activePath={activePath}
                   gitDecorations={gitDecorations}
+                  loadingDirs={loadingDirs}
                 />
               )}
             </>

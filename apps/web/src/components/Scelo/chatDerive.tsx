@@ -321,7 +321,8 @@ type DeriveOutcome =
 
 export function ChatDerive({ raw }: { raw: string }) {
   const parsed = useMemo(() => safeParseDerive(raw), [raw]);
-  const { dataset, setDataset, derivedColumns, setDerivedColumns, logEvent } = useScelo();
+  const { dataset, setDataset, derivedColumns, setDerivedColumns, logEvent, pushHistory } =
+    useScelo();
   const [outcome, setOutcome] = useState<DeriveOutcome>({ kind: "pending" });
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: only re-run on spec / dataset identity changes.
@@ -354,6 +355,13 @@ export function ChatDerive({ raw }: { raw: string }) {
     }
     const newValues: CellValue[] = dataset.rows.map((r) => compiled.evaluate(r));
     const newRows: Row[] = dataset.rows.map((r, i) => ({ ...r, [spec.name]: newValues[i] }));
+    // Column-scoped undo entry — this path used to skip the history stack
+    // entirely, so the next undo restored a much older snapshot. Undoing
+    // now removes just the added column (and its formula badge).
+    pushHistory(`add derived column \`${spec.name}\``, {
+      kind: "columns",
+      columns: [spec.name],
+    });
     setDataset({
       name: dataset.name,
       columns: [...dataset.columns, spec.name],
@@ -431,7 +439,7 @@ type TransformOutcome =
 
 export function ChatTransform({ raw }: { raw: string }) {
   const parsed = useMemo(() => safeParseTransform(raw), [raw]);
-  const { dataset, setDataset, transformLog, setTransformLog, logEvent } = useScelo();
+  const { dataset, setDataset, transformLog, setTransformLog, logEvent, pushHistory } = useScelo();
   const [outcome, setOutcome] = useState<TransformOutcome>({ kind: "pending" });
   const fingerprint = "error" in parsed ? "" : `${parsed.column}::${parsed.formula}`;
 
@@ -468,6 +476,12 @@ export function ChatTransform({ raw }: { raw: string }) {
     const before: CellValue[] = dataset.rows.map((r) => r[spec.column] as CellValue);
     const after: CellValue[] = dataset.rows.map((r) => compiled.evaluate(r));
     const newRows: Row[] = dataset.rows.map((r, i) => ({ ...r, [spec.column]: after[i] }));
+    // Column-scoped undo entry — an in-place transform touches exactly one
+    // column, and undoing it must restore only that column's values.
+    pushHistory(`transform \`${spec.column}\``, {
+      kind: "columns",
+      columns: [spec.column],
+    });
     setDataset({
       name: dataset.name,
       columns: dataset.columns,

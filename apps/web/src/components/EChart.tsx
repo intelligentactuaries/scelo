@@ -6,7 +6,6 @@ import type { ChartSpec } from "@/lib/api";
 import { prepareChartOption } from "@/lib/echarts/options";
 import { IA_DARK_NAME, IA_LIGHT_NAME } from "@/lib/echarts/theme";
 import { useTheme } from "@/lib/theme";
-import ReactECharts from "echarts-for-react";
 import {
   BarChart,
   GaugeChart,
@@ -27,6 +26,8 @@ import {
 import * as echarts from "echarts/core";
 import { CanvasRenderer } from "echarts/renderers";
 import { type ReactNode, useEffect, useState } from "react";
+
+import ReactECharts from "@/components/ReactEChartsCrisp";
 
 echarts.use([
   TitleComponent,
