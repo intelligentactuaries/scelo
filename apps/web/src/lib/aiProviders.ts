@@ -96,7 +96,7 @@ export const PROVIDER_CATALOG: ProviderDescriptor[] = [
     blurb: "Hosted Claude models — strongest reasoning, slower than OpenAI on equivalent tiers.",
     needsKey: true,
     defaultModel: "claude-sonnet-4-6",
-    modelHint: "e.g. claude-opus-4-7, claude-sonnet-4-6, claude-haiku-4-5",
+    modelHint: "e.g. claude-fable-5, claude-opus-5, claude-sonnet-5, claude-haiku-4-5",
     needsBaseUrl: false,
     keyHelpUrl: "https://console.anthropic.com/settings/keys",
   },
