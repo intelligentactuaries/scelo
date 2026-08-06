@@ -1,7 +1,8 @@
 // Custom processing/done labels rendered in place of "thinking…" / "done"
-// across the chat UI. Mirror copies live in:
-//   - apps/tui/ia_tui/ui_indicators.py
-//   - apps/vscode/src/webview/uiIndicators.ts
+// across the chat UI. (Stale mirror pointers removed: the old Python TUI's
+// ui_indicators.py and the vscode webview copy no longer exist — the
+// current scelo-tui repo has its own glyph spinner and does not use these
+// word lists.)
 
 export const PROCESSING_WORDS = [
   "stephenificating",
