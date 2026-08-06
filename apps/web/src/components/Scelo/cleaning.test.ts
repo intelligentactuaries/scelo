@@ -11,6 +11,7 @@ import {
   autoCleanDataset,
   canonicaliseDateCell,
   cleanColumnCells,
+  cleaningOpsTouchedColumns,
   clearNonDateCells,
   coerceNumericValue,
   defaultEnabled,
@@ -831,5 +832,57 @@ describe("autoCleanDataset", () => {
     // return a half-built dataset.
     expect(result.passes.length).toBeLessThanOrEqual(AUTO_CLEAN_MAX_PASSES);
     expect(result.dataset.columns.length).toBeGreaterThanOrEqual(0);
+  });
+});
+
+describe("cleaningOpsTouchedColumns (undo scoping)", () => {
+  test("cell-level sweeps and dedupe force table scope (null)", () => {
+    expect(cleaningOpsTouchedColumns([{ key: "trim", cells: 3, safe: true }])).toBeNull();
+    expect(
+      cleaningOpsTouchedColumns([{ key: "drop-duplicates", rows: 2, safe: false }]),
+    ).toBeNull();
+    // One table-wide op poisons an otherwise confined set.
+    expect(
+      cleaningOpsTouchedColumns([
+        { key: "parse-numeric", columns: ["a"], cells: 1, safe: true },
+        { key: "missing-tokens", cells: 4, tokens: ["NULL"], safe: true },
+      ]),
+    ).toBeNull();
+  });
+
+  test("column-confined ops union their column names", () => {
+    const touched = cleaningOpsTouchedColumns([
+      { key: "parse-numeric", columns: ["a", "b"], cells: 5, safe: true },
+      {
+        key: "recode-value",
+        column: "c",
+        from: "Seperated",
+        to: "Separated",
+        cells: 2,
+        safe: false,
+      },
+      {
+        key: "coerce-numeric",
+        columns: [{ name: "d", converted: 1, nulled: 0 }],
+        cells: 1,
+        safe: true,
+      },
+    ]);
+    expect(touched?.slice().sort()).toEqual(["a", "b", "c", "d"]);
+  });
+
+  test("renames contribute BOTH names so scoped undo can swap them back", () => {
+    const touched = cleaningOpsTouchedColumns([
+      {
+        key: "rename-snake-case",
+        columns: [{ from: "Sum Insured", to: "sum_insured" }],
+        safe: false,
+      },
+    ]);
+    expect(touched?.slice().sort()).toEqual(["Sum Insured", "sum_insured"]);
+  });
+
+  test("empty op set is table scope, defensively", () => {
+    expect(cleaningOpsTouchedColumns([])).toBeNull();
   });
 });

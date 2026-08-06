@@ -34,6 +34,7 @@ import {
   type CleaningOpKey,
   analyseCleaning,
   applyCleaning,
+  cleaningOpsTouchedColumns,
   describeOp,
 } from "./cleaning";
 import { useScelo } from "./sceloContext";
@@ -271,7 +272,8 @@ type Outcome =
 export function ChatClean({ raw }: { raw: string }) {
   // Reuses `transformLog`/`setTransformLog` for clean-block idempotency — see
   // the file header. Clean fingerprints are namespaced `clean::…`.
-  const { dataset, setDataset, setFilters, transformLog, setTransformLog, logEvent } = useScelo();
+  const { dataset, setDataset, setFilters, transformLog, setTransformLog, logEvent, pushHistory } =
+    useScelo();
   const [outcome, setOutcome] = useState<Outcome>({ kind: "pending" });
   // Once this instance has resolved to a terminal outcome we stop re-running,
   // so the rich summary isn't downgraded to the compact "already applied"
@@ -344,11 +346,27 @@ export function ChatClean({ raw }: { raw: string }) {
       details.push(d.detail);
     }
 
+    // Record the step in the undo history BEFORE swapping the dataset in —
+    // this path used to skip it, which desynced the stack: the next undo
+    // restored a snapshot from several steps back and reverted everything
+    // since, not just the clean. Scope mirrors the banner: column-scoped
+    // when every applied op is confined to named columns, table otherwise.
+    const touched = cleaningOpsTouchedColumns(appliedOps);
+    pushHistory(
+      titles.length === 1 ? titles[0] : `cleaning (${titles.length} steps)`,
+      touched ? { kind: "columns", columns: touched } : undefined,
+    );
     setDataset(cleaned);
     // Cleaning can drop/rename columns and drop rows, so any active filter may
-    // now reference a column that no longer exists — clear them, matching the
-    // banner's apply behaviour.
-    setFilters([]);
+    // now reference a column that no longer exists — clear the affected ones,
+    // matching the banner's apply behaviour (all of them for a table-wide
+    // sweep, just the touched columns' for a confined clean).
+    if (touched === null) {
+      setFilters([]);
+    } else {
+      const touchedSet = new Set(touched);
+      setFilters((cur) => cur.filter((f) => !touchedSet.has(f.column)));
+    }
     setTransformLog((prev) => {
       const next = new Set(prev);
       next.add(fingerprint);

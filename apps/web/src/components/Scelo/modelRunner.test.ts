@@ -126,7 +126,7 @@ describe("detection helpers", () => {
 });
 
 describe("descriptive runner", () => {
-  test("profiles ALL numeric columns, sorted by variance", () => {
+  test("profiles ALL numeric columns, sorted by coefficient of variation", () => {
     const profiles = profileNumericColumns(makeMotorDataset());
     const names = profiles.map((p) => p.name);
     expect(names).toContain("sum_insurd");
@@ -134,22 +134,103 @@ describe("descriptive runner", () => {
     expect(names).toContain("past_claims");
     expect(names).toContain("car_year");
     expect(names).toContain("tar_weight");
-    // sum_insurd has by far the widest spread → first
-    expect(profiles[0].name).toBe("sum_insurd");
+    // Ranking is scale-free: CV descending, undefined-CV columns last.
+    // past_claims (counts 0–4, mean ≈ 2) has far wider RELATIVE spread
+    // than the big-money sum_insurd column that raw variance used to pick.
+    expect(profiles[0].name).toBe("past_claims");
+    for (let i = 1; i < profiles.length; i++) {
+      const prev = profiles[i - 1].cv;
+      const cur = profiles[i].cv;
+      if (prev !== null && cur !== null) expect(prev).toBeGreaterThanOrEqual(cur);
+      if (prev === null) expect(cur).toBeNull();
+    }
     expect(profiles[0].count).toBe(400);
+    expect(profiles[0].missing).toBe(0);
     expect(profiles[0].sd).toBeGreaterThan(0);
     expect(profiles[0].min).toBeLessThanOrEqual(profiles[0].q1);
     expect(profiles[0].q1).toBeLessThanOrEqual(profiles[0].median);
     expect(profiles[0].median).toBeLessThanOrEqual(profiles[0].q3);
     expect(profiles[0].q3).toBeLessThanOrEqual(profiles[0].max);
+    expect(profiles[0].iqr).toBeCloseTo(profiles[0].q3 - profiles[0].q1, 12);
   });
 
-  test("runs done over numeric columns with a top-variance table", () => {
+  test("moments, quantiles and shape match hand-computed values", () => {
+    // n = 4 even count: type-7 median is the AVERAGE of the middle two —
+    // the old nearest-rank floor picked the upper one (3, not 2.5).
+    const ds: Dataset = {
+      name: "t.csv",
+      columns: ["x"],
+      rows: [{ x: 1 }, { x: 2 }, { x: 3 }, { x: 4 }],
+    };
+    const [p] = profileNumericColumns(ds);
+    expect(p.median).toBe(2.5);
+    expect(p.q1).toBe(1.75); // (n-1)*0.25 = 0.75 → 1 + 0.75·(2−1)
+    expect(p.q3).toBe(3.25);
+    expect(p.mean).toBe(2.5);
+    expect(p.sd).toBeCloseTo(Math.sqrt(5 / 3), 12); // sample variance 5/3
+    expect(p.se).toBeCloseTo(Math.sqrt(5 / 3) / 2, 12);
+    expect(p.cv).toBeCloseTo(Math.sqrt(5 / 3) / 2.5, 12);
+    // Symmetric data → zero skewness exactly.
+    expect(p.skewness).toBeCloseTo(0, 12);
+  });
+
+  test("missing and non-numeric cells are counted, constant columns stay sane", () => {
+    const ds: Dataset = {
+      name: "t.csv",
+      columns: ["x", "k"],
+      rows: [
+        { x: 1, k: 7 },
+        { x: null, k: 7 },
+        { x: "n/a", k: 7 },
+        { x: 5, k: 7 },
+      ],
+    };
+    const profiles = profileNumericColumns(ds);
+    const x = profiles.find((p) => p.name === "x");
+    const k = profiles.find((p) => p.name === "k");
+    expect(x?.count).toBe(2);
+    expect(x?.missing).toBe(2);
+    expect(x?.missingPct).toBeCloseTo(0.5, 12);
+    // Constant column: sd 0, CV 0, shape undefined (m2 = 0), JB undefined.
+    expect(k?.sd).toBe(0);
+    expect(k?.cv).toBe(0);
+    expect(k?.skewness).toBeNull();
+    expect(k?.kurtosis).toBeNull();
+    expect(k?.jarqueBera).toBeNull();
+  });
+
+  test("Jarque–Bera is near zero for symmetric flat data, large for a spike", () => {
+    const rng = makeRng(7);
+    // Roughly normal via CLT: sum of 12 uniforms.
+    const normalish: Row[] = Array.from({ length: 500 }, () => {
+      let s = 0;
+      for (let i = 0; i < 12; i++) s += rng();
+      return { x: s - 6 };
+    });
+    const [pn] = profileNumericColumns({ name: "n.csv", columns: ["x"], rows: normalish });
+    expect(pn.jarqueBera).not.toBeNull();
+    expect(pn.jarqueBera?.p).toBeGreaterThan(0.05);
+    // Heavy right tail → JB rejects loudly.
+    const skewed: Row[] = Array.from({ length: 500 }, (_, i) => ({
+      x: i < 490 ? 1 : 10_000,
+    }));
+    const [ps] = profileNumericColumns({ name: "s.csv", columns: ["x"], rows: skewed });
+    expect(ps.jarqueBera).not.toBeNull();
+    expect(ps.jarqueBera?.p).toBeLessThan(0.001);
+    expect(ps.skewness).toBeGreaterThan(1);
+  });
+
+  test("runs done over numeric columns with a CV-ranked table", () => {
     const r = runModel("descriptive", makeMotorDataset());
     expect(r.status).toBe("done");
     expect(r.source).toBe("browser");
-    expect(r.headline.label).toBe("mean (sum_insurd)");
+    expect(r.headline.label).toBe("mean (past_claims)");
     expect(r.headline.value).toBeGreaterThan(0);
+    // Sub-unit means keep enough digits to be legible on the card.
+    expect(r.headline.precision).toBeGreaterThanOrEqual(2);
+    expect(r.tableSpec?.headers).toContain("cv");
+    expect(r.tableSpec?.headers).toContain("median");
+    expect(r.tableSpec?.headers).toContain("miss %");
     expect(r.tableSpec?.rows.length).toBeLessThanOrEqual(5);
     // nothing silently dropped: remaining numerics are listed by name
     const also = r.secondary.find((s) => s.label === "also numeric");

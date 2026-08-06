@@ -218,7 +218,10 @@
        • square 4 px corners (matches tailwind's borderRadius DEFAULT)
        • hairline 1 px border in the existing token palette
        • restrained hover — border + bg shift, never a colour pop
-       • geometric type rendering to stay crisp at 11–12 px
+       • platform-default text rasterisation — subpixel AA + hinting keep
+         11–12 px labels crisp at every window-zoom level (an earlier
+         antialiased/geometricPrecision override disabled both and read
+         soft, especially once zoom magnified the stems)
        • inert focus ring (2 px ring-fg/30) — visible but not jarring
 
      Pair with one size + one variant :
@@ -232,9 +235,6 @@
      ───────────────────────────────────────────────────────────────────── */
   .ia-btn {
     @apply inline-flex items-center justify-center gap-1.5 rounded font-sans text-xs leading-none transition;
-    -webkit-font-smoothing: antialiased;
-    -moz-osx-font-smoothing: grayscale;
-    text-rendering: geometricPrecision;
   }
   .ia-btn:focus-visible {
     outline: 2px solid rgb(var(--rgb-fg) / 0.3);
@@ -339,13 +339,15 @@
     transition: background-color 200ms cubic-bezier(0.2, 0.7, 0.2, 1),
                 border-color 200ms cubic-bezier(0.2, 0.7, 0.2, 1),
                 box-shadow 200ms cubic-bezier(0.2, 0.7, 0.2, 1);
-    /* Render hints: antialiased fonts, hinted geometric layout,
-       integer-pixel snap. These three combined keep text crisp even
-       when React Flow's transform sits at a non-1.0 zoom. */
-    -webkit-font-smoothing: antialiased;
-    -moz-osx-font-smoothing: grayscale;
-    text-rendering: geometricPrecision;
-    transform: translateZ(0);
+    /* No render-hint overrides here, deliberately. A previous revision
+       forced `-webkit-font-smoothing: antialiased` (drops subpixel AA),
+       `text-rendering: geometricPrecision` (drops hinting + pixel-grid
+       snapping — the opposite of the "integer snap" it was meant to buy),
+       and `transform: translateZ(0)` (pins the card to its own compositor
+       layer, whose cached texture gets bitmap-stretched — i.e. blurred —
+       across window-zoom and canvas-zoom changes). Platform-default
+       rasterisation re-hints and re-rasters text at every effective scale,
+       which is what actually keeps the cards crisp. */
   }
   .glass-card:hover {
     background: rgb(var(--rgb-bg-2));
@@ -775,6 +777,12 @@
     background: #ffffff !important;
     page-break-inside: avoid;
   }
+  /* A display equation split across an A4 page break is unreadable — keep
+     each KaTeX block on one page, like the cards above. */
+  [data-print-region] .katex-display {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
   [data-print-region] [data-print-muted] {
     color: #5a5a5a !important;
   }
@@ -800,8 +808,18 @@
          (React Flow, ECharts DOM tooltips) needs to be overridden too.
    Canvas-rendered ECharts text and SVG-embedded `font-family=` attributes
    are NOT reachable via CSS — those are updated in the .tsx sources
-   alongside this rule.                                                  */
+   alongside this rule.
+
+   KaTeX exemption: the `.katex` subtree is carved out via `:not()` because
+   mathematics MUST render in KaTeX's own fonts (KaTeX_Main, KaTeX_Math,
+   KaTeX_Size1–4, …). Those faces carry the ∑ ∏ ∫ operators, the stretchy
+   delimiters, and the exact glyph metrics KaTeX's pixel-precise layout is
+   computed against — forced into SN Pro, formulas lose their operators and
+   every superscript/fraction bar drifts off-position. The `:where()`
+   wrappers keep this selector at the same (0,1,0) specificity as the plain
+   `.scelo-app *` it replaces, so higher-specificity escapes like
+   `.scelo-app .ia-num` (JetBrains Mono counters) keep winning.           */
 .scelo-app,
-.scelo-app * {
+.scelo-app *:where(:not(.katex)):where(:not(.katex *)) {
   font-family: 'SN Pro', 'Inter', ui-sans-serif, system-ui, sans-serif !important;
 }
