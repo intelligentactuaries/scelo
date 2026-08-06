@@ -317,6 +317,48 @@ export type CleaningPlan = {
   sampleSize: number;
 };
 
+/** The columns a set of cleaning ops is confined to, for scoping the undo
+ *  entry — or null when any op sweeps the whole table (cell passes over
+ *  every string column) or changes row membership (dedupe), in which case
+ *  only a table-scoped undo is honest. Renames contribute BOTH names so a
+ *  scoped restore can retire the new name and re-insert the old one. */
+export function cleaningOpsTouchedColumns(ops: CleaningOp[]): string[] | null {
+  const cols = new Set<string>();
+  for (const op of ops) {
+    switch (op.key) {
+      case "trim":
+      case "collapse-whitespace":
+      case "fix-encoding":
+      case "missing-tokens":
+      case "drop-duplicates":
+        return null;
+      case "parse-numeric":
+      case "parse-dates":
+        for (const c of op.columns) cols.add(c);
+        break;
+      case "recode-value":
+        cols.add(op.column);
+        break;
+      case "rename-snake-case":
+        for (const c of op.columns) {
+          cols.add(c.from);
+          cols.add(c.to);
+        }
+        break;
+      case "coerce-numeric":
+      case "null-future-years":
+      case "standardise-booleans":
+      case "replace-numeric-sentinels":
+      case "lowercase-categoricals":
+      case "drop-empty-cols":
+      case "drop-constant-cols":
+        for (const c of op.columns) cols.add(c.name);
+        break;
+    }
+  }
+  return cols.size > 0 ? [...cols] : null;
+}
+
 // Format helper — flips count to "~X (sampled)" when the analyser took a
 // shortcut, so users know the figure is an estimate not an exact tally.
 function formatCount(n: number, sampled: boolean): string {

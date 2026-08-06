@@ -28,7 +28,17 @@ export function Header({ conversationTitle, showTitle = true }: Props) {
   return (
     <header className="sticky top-0 z-20 flex h-12 shrink-0 items-center justify-between border-b border-border bg-bg-1 px-4">
       <Link to="/" className="flex items-center gap-2">
-        <img src="/logo_math.JPG" alt="(Iα)ₐᵢ" className="h-6 w-6" />
+        {/* Pre-scaled PNG mips + x-descriptors: window zoom raises the effective
+            devicePixelRatio, and Chromium re-picks the sharper source instead of
+            stretching a stale decode of the huge original. */}
+        <img
+          src="/logo_math_48.png"
+          srcSet="/logo_math_48.png 2x, /logo_math_96.png 4x, /logo_math_192.png 8x"
+          alt="(Iα)ₐᵢ"
+          width={24}
+          height={24}
+          className="h-6 w-6"
+        />
         <span className="font-mono text-sm">
           <span className="text-primary">(Iα)</span>
           <span className="text-fg-mute">ₐᵢ</span>

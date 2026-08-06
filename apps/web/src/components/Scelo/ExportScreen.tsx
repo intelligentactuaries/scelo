@@ -8,6 +8,7 @@
 // like the rest of Scelo's modal family.
 
 import { useEffect, useMemo, useState } from "react";
+import { nextPaint } from "./UploadIndicator";
 import { type Stage, eventsThroughStage } from "./activityLog";
 import { useScelo } from "./sceloContext";
 import { type ExportLang, fileExtensionFor, generateScript } from "./scriptExporter";
@@ -69,10 +70,29 @@ export function ExportScreen({
 
   const stageLabel = stage === "macro" ? "macro · all stages" : stage;
 
-  const script = useMemo(
-    () => generateScript({ lang, events: scoped, stage: stageLabel }),
-    [lang, scoped, stageLabel],
-  );
+  // Generation walks the whole activity log — visible time on a long
+  // session. It used to run inside render (useMemo), so opening the modal
+  // or clicking a language tab froze the UI with zero feedback until the
+  // script appeared. Paint the "generating…" placeholder first, then do
+  // the work on the next frame.
+  const [script, setScript] = useState("");
+  const [generating, setGenerating] = useState(false);
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    setGenerating(true);
+    void (async () => {
+      await nextPaint();
+      if (cancelled) return;
+      const out = generateScript({ lang, events: scoped, stage: stageLabel });
+      if (cancelled) return;
+      setScript(out);
+      setGenerating(false);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open, lang, scoped, stageLabel]);
 
   const copy = async () => {
     try {
@@ -151,14 +171,16 @@ export function ExportScreen({
           <button
             type="button"
             onClick={copy}
-            className="rounded border border-border bg-bg-2 px-2 py-1 font-mono text-[11px] text-fg-mute hover:border-primary hover:text-primary"
+            disabled={generating}
+            className="rounded border border-border bg-bg-2 px-2 py-1 font-mono text-[11px] text-fg-mute hover:border-primary hover:text-primary disabled:cursor-wait disabled:opacity-50"
           >
             {copied ? "copied ✓" : "copy"}
           </button>
           <button
             type="button"
             onClick={download}
-            className="rounded border border-primary/60 bg-primary/10 px-2 py-1 font-mono text-[11px] text-primary hover:border-primary hover:bg-primary/20"
+            disabled={generating}
+            className="rounded border border-primary/60 bg-primary/10 px-2 py-1 font-mono text-[11px] text-primary hover:border-primary hover:bg-primary/20 disabled:cursor-wait disabled:opacity-50"
           >
             download .{fileExtensionFor(lang)}
           </button>
@@ -170,6 +192,18 @@ export function ExportScreen({
               No activity recorded yet. Load a dataset (or step through Soft → Tools → Hard) and
               come back — every meaningful action lands in this log.
             </p>
+          ) : generating ? (
+            <output
+              aria-live="polite"
+              className="flex items-center gap-2 font-mono text-[11px] text-fg-dim"
+            >
+              <span
+                aria-hidden
+                className="ia-pip ia-load-pip"
+                style={{ background: "rgb(var(--rgb-primary))" }}
+              />
+              generating {TAB_LABELS[lang]} script…
+            </output>
           ) : (
             <pre className="whitespace-pre-wrap break-words font-mono text-[11px] leading-snug text-fg-mute">
               {script}

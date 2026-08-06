@@ -1,6 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import type { Dataset } from "@scelo/core";
-import { type HistoryEntry, sliceDatasetForPersist, trimHistory } from "./sceloContext";
+import {
+  type HistoryEntry,
+  restoreColumnsFromSnapshot,
+  sliceDatasetForPersist,
+  trimHistory,
+} from "./sceloContext";
 
 // ── fixtures ─────────────────────────────────────────────────────────────
 
@@ -69,6 +74,8 @@ describe("trimHistory (undo retention)", () => {
     label,
     dataset: makeDataset(rowCount),
     filters: [],
+    derived: {},
+    scope: { kind: "table" },
   });
 
   test("keeps everything when well under both caps", () => {
@@ -103,7 +110,84 @@ describe("trimHistory (undo retention)", () => {
   });
 
   test("a null dataset (the 'clear' step) counts as zero rows", () => {
-    const stack = [{ label: "clear dataset", dataset: null, filters: [] }, entry("x", 10)];
+    const stack: HistoryEntry[] = [
+      { label: "clear dataset", dataset: null, filters: [], derived: {}, scope: { kind: "table" } },
+      entry("x", 10),
+    ];
     expect(trimHistory(stack)).toHaveLength(2);
+  });
+});
+
+describe("restoreColumnsFromSnapshot (column-scoped undo)", () => {
+  const snapshot: Dataset = {
+    name: "t.csv",
+    columns: ["a", "b", "c"],
+    rows: [
+      { a: 1, b: "x", c: 10 },
+      { a: 2, b: "y", c: 20 },
+    ],
+  };
+
+  test("restores only the touched column's values, keeps the rest current", () => {
+    // Snapshot → op uppercased `b` → later (untracked) tweak bumped `c`.
+    const current: Dataset = {
+      name: "t.csv",
+      columns: ["a", "b", "c"],
+      rows: [
+        { a: 1, b: "X", c: 11 },
+        { a: 2, b: "Y", c: 21 },
+      ],
+    };
+    const out = restoreColumnsFromSnapshot(current, snapshot, ["b"]);
+    // b reverted…
+    expect(out.rows.map((r) => r.b)).toEqual(["x", "y"]);
+    // …while c keeps its CURRENT values — a column undo must not time-travel
+    // the rest of the grid.
+    expect(out.rows.map((r) => r.c)).toEqual([11, 21]);
+    expect(out.columns).toEqual(["a", "b", "c"]);
+  });
+
+  test("removes a column the step added (derived-column undo)", () => {
+    const current: Dataset = {
+      name: "t.csv",
+      columns: ["a", "b", "c", "d"],
+      rows: [
+        { a: 1, b: "x", c: 10, d: 100 },
+        { a: 2, b: "y", c: 20, d: 200 },
+      ],
+    };
+    const out = restoreColumnsFromSnapshot(current, snapshot, ["d"]);
+    expect(out.columns).toEqual(["a", "b", "c"]);
+    expect(out.rows[0]).toEqual({ a: 1, b: "x", c: 10 });
+  });
+
+  test("re-inserts a dropped column at its old position, with its values", () => {
+    const current: Dataset = {
+      name: "t.csv",
+      columns: ["a", "c"],
+      rows: [
+        { a: 1, c: 10 },
+        { a: 2, c: 20 },
+      ],
+    };
+    const out = restoreColumnsFromSnapshot(current, snapshot, ["b"]);
+    expect(out.columns).toEqual(["a", "b", "c"]);
+    expect(out.rows.map((r) => r.b)).toEqual(["x", "y"]);
+  });
+
+  test("undoes a rename when both names are in scope", () => {
+    // `b` was renamed to `b_new`: snapshot has b, current has b_new.
+    const current: Dataset = {
+      name: "t.csv",
+      columns: ["a", "b_new", "c"],
+      rows: [
+        { a: 1, b_new: "x", c: 10 },
+        { a: 2, b_new: "y", c: 20 },
+      ],
+    };
+    const out = restoreColumnsFromSnapshot(current, snapshot, ["b", "b_new"]);
+    expect(out.columns).toEqual(["a", "b", "c"]);
+    expect(out.rows.map((r) => r.b)).toEqual(["x", "y"]);
+    expect("b_new" in out.rows[0]).toBe(false);
   });
 });
