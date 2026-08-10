@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+
+{% block extrahead %}
+  <script>
+    // One-time reset of the stored palette choice.
+    //
+    // Both sub-sites default to light, but Material persists whatever a
+    // reader last toggled, scoped per sub-path ("/scelo/.__palette",
+    // "/scelo-atlas/.__palette"). Anyone who tried dark before this shipped
+    // stays dark forever. This clears those keys once so the whole domain
+    // lands on the cream default, then never touches them again: the stamp
+    // is checked first and written immediately, and it lives on the shared
+    // origin, so one visit to either sub-site resets both.
+    //
+    // It runs in <head>, ahead of Material's bundle, so Material simply
+    // finds no stored preference and applies the first palette. Doing it
+    // later would paint dark and only correct on the next navigation.
+    //
+    // Bump the stamp only to force another reset on every reader's browser.
+    (function () {
+      var STAMP = "ia.palette-reset.1";
+      try {
+        if (localStorage.getItem(STAMP)) return;
+        localStorage.setItem(STAMP, "1");
+        // Backwards: removeItem reindexes the store as we go.
+        for (var i = localStorage.length - 1; i >= 0; i--) {
+          var key = localStorage.key(i);
+          if (key && key.indexOf("__palette") !== -1) {
+            localStorage.removeItem(key);
+          }
+        }
+      } catch (e) {
+        /* storage unavailable: there is nothing to reset */
+      }
+    })();
+  </script>
+{% endblock %}
