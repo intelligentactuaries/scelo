@@ -79,6 +79,13 @@ markdown_extensions:
       emoji_generator: !!python/name:material.extensions.emoji.to_svg
 
 extra:
+  # Drop the "Made with Material for MkDocs" line from the footer. This is
+  # the theme's own supported setting, and mkdocs-material is MIT, so the
+  # notice is a courtesy rather than a licence condition. The copyright
+  # headers inside the bundled assets are untouched, which is what the
+  # licence does ask for. The footer keeps our own copyright and the link
+  # back to the hub.
+  generator: false
   # Points the masthead at the hub rather than at this sub-site's own
   # index, so the logo reads as "up a level", the way it does on any
   # portal. The sub-site's front page stays one click away on Home.
