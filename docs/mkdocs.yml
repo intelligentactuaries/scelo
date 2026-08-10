@@ -1,7 +1,11 @@
 site_name: Scelo IDE
 site_description: The actuarial workbench — soft data → models → hard results, with a bundled Python + R runtime and AI co-pilots scoped to each stage.
 site_url: https://docs.intelligentactuaries.com/scelo/
-copyright: Copyright © 2026 Intelligent Actuaries
+# Rendered as HTML in the footer of every page. Carries the way back up to
+# the hub, since this sub-site is one of several on the domain.
+copyright: >-
+  Copyright © 2026 Intelligent Actuaries ·
+  <a href="https://docs.intelligentactuaries.com/">All documentation</a>
 
 extra_css:
   - stylesheets/extra.css
@@ -13,9 +17,17 @@ extra_javascript:
 theme:
   name: material
   language: en
+  # overrides/main.html only adds a <head> script: the one-time palette
+  # reset, which has to run before Material's bundle reads localStorage.
+  custom_dir: overrides
   font:
     text: Inter
     code: JetBrains Mono
+  # Neither entry carries a `media:` key, which is deliberate: Material
+  # then selects the first palette for a fresh visitor rather than
+  # following the OS, so everyone starts on the cream default. The toggle
+  # still works and Material persists the choice per sub-site path. Do not
+  # add `media:` here without meaning to hand the default back to the OS.
   palette:
     # Light (default) — IA warm cream
     - scheme: default
@@ -65,6 +77,12 @@ markdown_extensions:
   - pymdownx.emoji:
       emoji_index: !!python/name:material.extensions.emoji.twemoji
       emoji_generator: !!python/name:material.extensions.emoji.to_svg
+
+extra:
+  # Points the masthead at the hub rather than at this sub-site's own
+  # index, so the logo reads as "up a level", the way it does on any
+  # portal. The sub-site's front page stays one click away on Home.
+  homepage: https://docs.intelligentactuaries.com/
 
 plugins:
   - search
