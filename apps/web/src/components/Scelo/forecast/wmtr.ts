@@ -276,10 +276,15 @@ export interface OutcomeThresholds {
   collapse: number; // W < collapse * W0 → collapsed candidate
   recovery: number; // consecutive periods needed to confirm collapse
   growth: number; // W(T) > W0 * (1 + growth) → grew
-  stability: number; // |W(T)-W0| / W0 ≤ stability → stabilized
+  stability: number; // W(T) < W0 * (1 - stability) → declined; in between → stabilized
 }
 
-function classify(wHist: number[], w0: number, th: OutcomeThresholds): Outcome {
+// Exported so surfaces can re-classify a PREFIX of a path — `classify(wHist
+// .slice(0, t + 1), …)` answers "which bucket would this path be in if the
+// simulation had stopped at year t", which is how the outcome-mix-over-time
+// chart is derived. Re-deriving that rule at the call site would let the
+// chart drift from the bars it has to agree with, so there is one copy.
+export function classify(wHist: number[], w0: number, th: OutcomeThresholds): Outcome {
   // Consecutive collapse run check
   let run = 0;
   for (const w of wHist) {
@@ -292,8 +297,15 @@ function classify(wHist: number[], w0: number, th: OutcomeThresholds): Outcome {
   }
   const wT = wHist[wHist.length - 1];
   if (wT > w0 * (1 + th.growth)) return "grew";
-  if (Math.abs(wT - w0) / w0 <= th.stability) return "stabilized";
-  return "declined";
+  // A path only "declined" if it actually ended DOWN — below the stability
+  // tolerance. Leaving `declined` as the fall-through bucket labelled every
+  // path that merely missed the growth bar as a decline, so with the default
+  // thresholds the entire (+10%, +20%] band — real gains — came back
+  // "declined". The society-frame classifier already guards this with its
+  // `w < W0` check; this is that same guard for the single community.
+  if (wT < w0 * (1 - th.stability)) return "declined";
+  // Inside the tolerance band, or up but short of the growth bar.
+  return "stabilized";
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -566,6 +578,71 @@ export function runSingleCommunity(params: WmtrSingleParams): WmtrSingleResult {
     config: params,
     elapsedMs: performance.now() - t0,
   };
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Driver attribution
+// ─────────────────────────────────────────────────────────────────────────
+
+export interface DriverContributions {
+  /** Elasticity-weighted log CHANGE of each component, in natural log units. */
+  M: number;
+  T: number;
+  R: number;
+  /** Mean log change in W. Equals M + T + R exactly. */
+  net: number;
+}
+
+/**
+ * How much of W's movement each component accounts for.
+ *
+ * W is Cobb-Douglas — ln W = αM·ln M + αT·ln T + αR·ln R — so differencing
+ * from the start gives an EXACT, residual-free decomposition:
+ *
+ *     ln W_T - ln W_0 = αM·Δln M + αT·Δln T + αR·Δln R
+ *
+ * The difference from the start is the whole point. Ranking the log LEVELS
+ * instead (what this used to do) silently measures where a component sits
+ * rather than how far it moved, and the two are not comparable across
+ * components: M always starts at 1, so αM·ln M_T happens to equal its log
+ * change, but T is a fraction of a day and R a [0,1] index, so their logs
+ * are large and negative even when they never move. That handed T a
+ * ~-0.26 "contribution" on a run where it was flat, and made it the named
+ * driver on ~88% of runs regardless of what actually moved.
+ *
+ * Accumulated per path and then averaged, which keeps the identity exact.
+ * Decomposing the mean series instead leaves a Jensen gap, because the mean
+ * of a product is not the product of the means.
+ */
+export function driverContributions(r: WmtrSingleResult): DriverContributions {
+  const p = r.config;
+  const aSum = p.alphaM + p.alphaT + p.alphaR || 1;
+  const aM = p.alphaM / aSum;
+  const aT = p.alphaT / aSum;
+  const aR = p.alphaR / aSum;
+  const last = r.years.length - 1;
+  const ln = (x: number | undefined) => Math.log(Math.max(x ?? 0, 1e-9));
+
+  let M = 0,
+    T = 0,
+    R = 0,
+    net = 0;
+  for (const path of r.paths) {
+    M += aM * (ln(path.mHist[last]) - ln(path.mHist[0]));
+    T += aT * (ln(path.tHist[last]) - ln(path.tHist[0]));
+    R += aR * (ln(path.rHist[last]) - ln(path.rHist[0]));
+    net += ln(path.wHist[last]) - ln(path.wHist[0]);
+  }
+  const n = r.paths.length || 1;
+  return { M: M / n, T: T / n, R: R / n, net: net / n };
+}
+
+/** Which component moved W the most, by absolute contribution. */
+export function dominantDriver(r: WmtrSingleResult): "M" | "T" | "R" {
+  const c = driverContributions(r);
+  return (["M", "T", "R"] as const).reduce((best, k) =>
+    Math.abs(c[k]) > Math.abs(c[best]) ? k : best,
+  );
 }
 
 // ─────────────────────────────────────────────────────────────────────────
