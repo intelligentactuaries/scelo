@@ -12,12 +12,16 @@ import type { Run, InterventionCluster, RunWmtr } from '../../shared/types';
 import { OUTCOME_COLOR, type Outcome } from '../../shared/wmtr';
 import { colorsForTheme } from '../../shared/constants';
 import { useTheme } from '../lib/theme';
+import { voiceFor } from '../lib/forecastVoice';
 import {
   InterventionRow,
   WmtrChart,
+  OUTCOME_BY_LABEL,
   componentsOption,
-  survivalOption,
-  trajectoryOption,
+  driverBridgeOption,
+  outcomeGaugeOption,
+  outcomeMixMatchesBars,
+  outcomeMixOption,
 } from './WmtrStrip';
 
 interface Props {
@@ -38,6 +42,83 @@ interface Props {
 }
 
 const pct = (x: number) => `${(x * 100).toFixed(0)}%`;
+
+/**
+ * Plain-language answer to "why THIS outcome?", shown on hover over the
+ * verdict.
+ *
+ * Written for the person the forecast is *for*, not the person who built it.
+ * The label alone is a bare assertion — a reader can't tell whether
+ * STABILIZED means "comfortably flat" or "edged out DECLINED by two runs" —
+ * and the modelling vocabulary that used to explain it (paths, W against W₀,
+ * thresholds, the driver as a bare letter) answers a question nobody asked.
+ * So: what the verdict means for this scenario, how it was arrived at, how
+ * close it was, and what moved it — in the scenario's own terms, with the
+ * numbers kept and the jargon dropped.
+ */
+function explainOutcome(run: Run): string {
+  const wmtr = run.wmtr;
+  if (!wmtr) return '';
+  const cfg = wmtr.config;
+  const res = wmtr.result;
+  const dom = wmtr.dominantOutcome;
+  const th = cfg.thresholds;
+  const v = voiceFor(run.scenario);
+
+  const last = res.years.length - 1;
+  const ratio = res.w0 > 0 ? (res.meanW[last] ?? 0) / res.w0 : 0;
+  const endDelta = Math.round(Math.abs(ratio - 1) * 100);
+  const endWord = ratio >= 1 ? 'above' : 'below';
+  const growth = Math.round(th.growth * 100);
+  const stability = Math.round(th.stability * 100);
+  const collapse = Math.round(th.collapse * 100);
+
+  const share = res.outcomeFractions[dom] ?? 0;
+  const count = Math.round(share * cfg.nPaths);
+
+  // What the verdict means, said as an outcome rather than as a rule.
+  const MEANING: Record<Outcome, string> = {
+    grew: `${v.subject} ends up clearly better than it started — more than ${growth}% ahead after ${cfg.horizon} years.`,
+    stabilized: `${v.subject} ends up roughly where it started after ${cfg.horizon} years: not more than ${stability}% down, and not the ${growth}%-plus gain we'd call real growth.`,
+    declined: `${v.subject} ends up worse than it started — more than ${stability}% down after ${cfg.horizon} years.`,
+    collapsed: `${v.subject} falls below ${collapse}% of where it started and stays there for ${th.recovery} years or more — it doesn't recover.`,
+  };
+
+  const PLAIN: Record<Outcome, string> = {
+    grew: 'clearly better off',
+    stabilized: 'about where they started',
+    declined: 'worse off',
+    collapsed: 'in collapse',
+  };
+
+  const ranked = (Object.entries(res.outcomeFractions) as [Outcome, number][]).sort(
+    (a, b) => b[1] - a[1],
+  );
+  const runner = ranked[1];
+  const gap = runner ? (share - runner[1]) * 100 : 100;
+  // A plurality this thin is inside the sampling noise of nPaths draws.
+  // Saying "it could flip" is the honest version of that, and it is the one
+  // sentence here a reader most needs in order not to over-trust the label.
+  const closeness =
+    runner && runner[1] > 0 && gap <= 10
+      ? `It was close, though. ${pct(runner[1])} of the runs ended ${PLAIN[runner[0]]} instead — near enough that a different roll of the dice could change the headline. Treat it as "could go either way", not a firm call.`
+      : runner && runner[1] > 0
+        ? `The next most common ending was ${PLAIN[runner[0]]}, in ${pct(runner[1])} of runs.`
+        : 'No other ending occurred in any run.';
+
+  const DRIVER: Record<'M' | 'T' | 'R', string> = { M: v.M, T: v.T, R: v.R };
+  const others = (['M', 'T', 'R'] as const).filter((k) => k !== wmtr.driver);
+
+  return [
+    `What this means — ${MEANING[dom]}`,
+    `How we got it — we played the scenario out ${cfg.nPaths} times over ${cfg.horizon} years, letting ${v.setbacks} land at random (set to "${cfg.shock}"). ${count} of those ${cfg.nPaths} runs (${pct(share)}) ended that way, more than any other result. That is what "most likely" means here — the commonest ending, not a certainty.`,
+    closeness,
+    // The three capital labels are themselves phrases containing "and", so
+    // "ahead of X and Y" produces a two-"and" pile-up. Split the comparison
+    // into its own sentence and join the pair with "or".
+    `What moved it most — ${DRIVER[wmtr.driver]}. That counted for more than ${DRIVER[others[0]]}, or ${DRIVER[others[1]]}. Averaged over every run, ${v.subject} finished about ${endDelta}% ${endWord} where it began.`,
+  ].join('\n\n');
+}
 
 export function ForecastCanvas({
   run,
@@ -84,6 +165,12 @@ export function ForecastCanvas({
           <span
             className="forecast-headline-verdict"
             style={{ color: OUTCOME_COLOR[dom], borderColor: OUTCOME_COLOR[dom] }}
+            data-tooltip={explainOutcome(run)}
+            // Focusable so the explanation is reachable by keyboard, not just
+            // by hovering a mouse over it.
+            tabIndex={0}
+            role="note"
+            aria-label={`${dom} — ${explainOutcome(run).replace(/\n+/g, ' ')}`}
           >
             {dom.toUpperCase()}
           </span>
@@ -98,28 +185,60 @@ export function ForecastCanvas({
         </div>
       </header>
 
-      {/* ─── Big chart grid (the headline artifact) ────────────────────── */}
+      {/* ─── Big chart grid (the headline artifact) ──────────────────────
+          Two co-primary plots on the top row: the wealth trajectory and the
+          W(M,T,R) decomposition that explains it — the trajectory says what
+          happened, the components say which of money / time / relationships
+          drove it. The outcome split — where the paths landed, then how they
+          got there — is the supporting row. DOM order is the layout order, so
+          the primaries also come first when the grid collapses to one column
+          on narrow screens. */}
       <div className="forecast-grid">
-        <ForecastPanel title="Wealth trajectory · mean ± 25–75 band" className="forecast-panel--wide">
-          <WmtrChart options={trajectoryOption(wmtr, colors)} height={300} />
+        <ForecastPanel
+          title="What moved W · money, time and relationships"
+          className="forecast-panel--primary"
+        >
+          <WmtrChart options={driverBridgeOption(wmtr, colors)} height={300} />
         </ForecastPanel>
-        <ForecastPanel title="Survival probability · S(t)">
-          <WmtrChart options={survivalOption(wmtr, colors)} height={300} />
+        <ForecastPanel
+          title="W(M,T,R) components · mean across paths"
+          className="forecast-panel--primary"
+        >
+          <WmtrChart
+            options={componentsOption(wmtr, colors, { compact: false })}
+            height={300}
+          />
         </ForecastPanel>
+        {/* Paired with the mix chart beside it: where the paths landed at the
+            end of the horizon, then how they got there. */}
         <ForecastPanel
           title="Outcome distribution · click to drill into divergent agents"
           onClickHeader={onFilterByOutcome ? () => onFilterByOutcome(dom) : undefined}
         >
-          <ClickableOutcomes
-            buckets={buckets}
-            onClick={(o) => {
+          {/* The rings carry the same drill-down the bar rows did: clicking
+              one filters the council to agents whose vote diverges from that
+              bucket. */}
+          <WmtrChart
+            options={outcomeGaugeOption(wmtr, colors)}
+            height={280}
+            onSelect={(name) => {
+              const o = OUTCOME_BY_LABEL[name];
+              if (!o) return;
               onFilterByOutcome?.(o);
               onShowCouncil?.();
             }}
           />
         </ForecastPanel>
-        <ForecastPanel title="W(M,T,R) components · mean across paths">
-          <WmtrChart options={componentsOption(wmtr, colors)} height={220} />
+        <ForecastPanel
+          title={
+            outcomeMixMatchesBars(res)
+              ? 'Outcome mix over time · where the paths stood at each year'
+              : 'Outcome mix over time · re-derived under the current rule, which this older run pre-dates'
+          }
+        >
+          {/* Matches the gauge beside it so the row has no dead strip under
+              the shorter panel. */}
+          <WmtrChart options={outcomeMixOption(wmtr, colors)} height={280} />
         </ForecastPanel>
       </div>
 
@@ -173,53 +292,6 @@ function ForecastPanel({
       </header>
       <div className="forecast-panel-body">{children}</div>
     </section>
-  );
-}
-
-// ─── Outcome bars (custom, clickable, replaces the ECharts version so we
-//     get a real DOM click target with affordance) ─────────────────────────
-
-const OUTCOMES_ORDER: Outcome[] = ['grew', 'stabilized', 'declined', 'collapsed'];
-const OUTCOME_LABEL: Record<Outcome, string> = {
-  grew: 'Grew',
-  stabilized: 'Stabilized',
-  declined: 'Declined',
-  collapsed: 'Collapsed',
-};
-
-function ClickableOutcomes({
-  buckets,
-  onClick,
-}: {
-  buckets: Record<Outcome, number>;
-  onClick: (o: Outcome) => void;
-}) {
-  const maxV = Math.max(...OUTCOMES_ORDER.map((o) => buckets[o]), 0.01);
-  return (
-    <div className="forecast-outcomes">
-      {OUTCOMES_ORDER.map((o) => {
-        const v = buckets[o];
-        const w = (v / maxV) * 100;
-        return (
-          <button
-            key={o}
-            type="button"
-            className="forecast-outcome-row"
-            onClick={() => onClick(o)}
-            title={`drill into council agents whose vote diverges from "${OUTCOME_LABEL[o]}"`}
-          >
-            <span className="forecast-outcome-label">{OUTCOME_LABEL[o]}</span>
-            <span className="forecast-outcome-track">
-              <span
-                className="forecast-outcome-fill"
-                style={{ width: `${w}%`, background: OUTCOME_COLOR[o] }}
-              />
-            </span>
-            <span className="forecast-outcome-pct">{pct(v)}</span>
-          </button>
-        );
-      })}
-    </div>
   );
 }
 
