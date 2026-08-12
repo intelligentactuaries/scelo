@@ -51,7 +51,7 @@ export function CouncilGraph({
   const colors = useMemo(() => colorsForTheme(resolved), [resolved]);
   // Measured canvas size drives the labelled-region grid layout; it's remeasured
   // on container resize so the region boxes always fill the panel.
-  const [size, setSize] = useState({ w: 0, h: 0 });
+  const [size, setSize] = useState({ w: 0, h: 0, padTop: 0 });
   // Keep the latest onCrossHighlight + crossHighlight in refs so the
   // chart.on(...) handlers (registered once on mount) always read the
   // live values without re-registering.
@@ -115,7 +115,24 @@ export function CouncilGraph({
     const applySize = () => {
       const w = el.clientWidth;
       const h = el.clientHeight;
-      if (w > 0 && h > 0) setSize((s) => (s.w === w && s.h === h ? s : { w, h }));
+      // The legend floats over the canvas as an absolutely positioned sibling
+      // with a higher z-index, so professions laid out beneath it are hidden
+      // AND unhoverable. Measure how far down it reaches and keep the layout
+      // clear of that band.
+      const parent = el.parentElement;
+      let pad = 0;
+      if (parent) {
+        const base = el.getBoundingClientRect().top;
+        for (const box of parent.querySelectorAll('.graph-legend')) {
+          const r = (box as HTMLElement).getBoundingClientRect();
+          if (r.height > 0) pad = Math.max(pad, r.bottom - base);
+        }
+      }
+      // + room for the hull's own label, which is drawn ABOVE the disc:
+      // clearing only the disc left the label tucked under the legend.
+      const padTop = Math.round(pad > 0 ? pad + 28 : 0);
+      if (w > 0 && h > 0)
+        setSize((s) => (s.w === w && s.h === h && s.padTop === padTop ? s : { w, h, padTop }));
     };
     let sizeTimer: ReturnType<typeof setTimeout> | undefined;
     const onResize = () => {
@@ -361,7 +378,7 @@ export function CouncilGraph({
 function buildOption(
   run: Run,
   colors: ThemeColors,
-  size: { w: number; h: number },
+  size: { w: number; h: number; padTop?: number },
   dark: boolean,
 ): { option: echarts.EChartsCoreOption; hulls: HullDatum[]; basePos: Map<string, { x: number; y: number }> } {
   const STANCE_BORDER = stanceColors(colors);
@@ -376,7 +393,14 @@ function buildOption(
   const groups: Group[] = present.map((p) => ({ key: p, label: p, color: professionColor(p, dark) }));
   const W = size.w > 0 ? size.w : 900;
   const H = size.h > 0 ? size.h : 600;
-  const cells = layoutCells(groups, W, H);
+  // EDGE_PAD keeps a node's label off the canvas edge; padTop clears the legend.
+  const EDGE_PAD = 26;
+  const cells = layoutCells(groups, W, H, {
+    top: Math.max(size.padTop ?? 0, EDGE_PAD),
+    left: EDGE_PAD,
+    right: EDGE_PAD,
+    bottom: EDGE_PAD,
+  });
   // edge-tooltip needs to resolve each endpoint id to its full record so we
   // can render both agents' professions / MBTI / stance side by side.
   const byId = new Map(run.councilResults.map((r) => [r.agent.id, r] as const));
