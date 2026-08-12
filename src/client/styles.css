@@ -4320,6 +4320,64 @@ body.is-resizing * {
   background: transparent;
 }
 
+/* Headers that carry a reading of their own plot. `help` rather than
+   `pointer` where the header is not also a button, so the cursor does not
+   promise a click that does nothing. */
+.forecast-panel-head--explained {
+  position: relative;
+  cursor: help;
+}
+
+.forecast-panel-head--explained.forecast-panel-head--clickable {
+  cursor: pointer;
+}
+
+.forecast-panel-head--explained:hover {
+  color: var(--fg);
+}
+
+/* Same liquid-glass bubble as the verdict's, and anchored the same way:
+   left-aligned to the header rather than centred on it. .forecast-canvas
+   scrolls vertically, which makes overflow-x compute to auto, so anything
+   overhanging its edge is clipped rather than drawn. */
+.forecast-panel-head--explained[data-tooltip]::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  z-index: 30;
+  background: rgba(20, 22, 28, 0.62);
+  /* Dark glass in BOTH themes, so the text is a fixed light cream. */
+  color: #f1ecdf;
+  -webkit-backdrop-filter: blur(9px) saturate(140%);
+  backdrop-filter: blur(9px) saturate(140%);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow:
+    0 10px 28px rgba(0, 0, 0, 0.22),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  font-family: var(--font);
+  font-size: 11.5px;
+  font-weight: 400;
+  line-height: 1.55;
+  letter-spacing: 0;
+  text-transform: none;
+  text-align: left;
+  padding: 10px 13px;
+  border-radius: 10px;
+  width: max-content;
+  /* 100% is the header, i.e. the panel width, so the bubble reflows instead
+     of spilling out of a half-width panel. */
+  max-width: min(420px, 100%);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 140ms ease 220ms;
+}
+
+.forecast-panel-head--explained:hover[data-tooltip]::after,
+.forecast-panel-head--explained:focus-visible[data-tooltip]::after {
+  opacity: 1;
+}
+
 .forecast-panel-head--clickable {
   cursor: pointer;
   transition: color 180ms var(--forecast-easing);
