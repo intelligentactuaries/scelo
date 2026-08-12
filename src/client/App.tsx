@@ -1153,6 +1153,7 @@ export function App() {
               scenario={run ? run.scenario : null}
               scenarioSummary={run?.scenarioSummary ?? null}
               summary={run?.summary ?? null}
+              councilResults={run?.councilResults}
               tab={tab}
               busy={runBusy}
               onEditScenario={run ? editScenario : undefined}

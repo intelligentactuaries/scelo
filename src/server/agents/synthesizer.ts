@@ -5,18 +5,12 @@ import type {
   RunSummary,
   Stance,
 } from '../../shared/types';
+import { riskKey } from '../../shared/risks';
 
 function topRisks(results: CouncilAgentResult[], k: number): RunSummary['topRisks'] {
   const counts = new Map<string, { display: string; count: number }>();
   for (const r of results) {
-    const key = (r.keyRisk || '')
-      .toLowerCase()
-      .replace(/[^a-z0-9 ]+/g, ' ')
-      .replace(/\s+/g, ' ')
-      .trim()
-      .split(' ')
-      .slice(0, 6)
-      .join(' ');
+    const key = riskKey(r.keyRisk);
     if (!key) continue;
     const cur = counts.get(key);
     if (cur) cur.count++;
