@@ -19,6 +19,28 @@ export const SCENARIO_PRESETS: { label: string; value: string }[] = [
     label: 'Rural village · Mozambique drought',
     value: `A rural village in northern Mozambique faces a severe drought and crop failure. Strong extended-family networks; declining religious participation; subsistence farming dominates.`,
   },
+  // Two endpoints of the outcome scale, for showing what a decisive forecast
+  // looks like. The wording is load-bearing: deriveConfigFromScenario reads
+  // cues out of the text, so each phrase below was checked against the engine
+  // rather than written to sound right.
+  //
+  // Grows: rural + a mild shock environment ("calm", "stable", "orderly",
+  // "benign") + a young population + a generational horizon to compound over.
+  // Deliberately avoids family / kinship / household wording — those cues move
+  // time out of production and cut growth to ~15%.
+  // Verified: grew 72%, stabilized 28%, declined 0%, collapsed 0%, W +23%.
+  {
+    label: 'Farming village · steady growth',
+    value: `A village of young growers in a calm, stable district enters a generational stretch of dependable harvests, secure tenure and orderly, benign conditions.`,
+  },
+  // Collapses: urban + a severe shock environment (catastrophe, war, famine,
+  // pandemic, depression) + an aging population that cannot work + a
+  // generational horizon for the drawdown to run past the collapse threshold.
+  // Verified: collapsed 71%, declined 29%, grew 0%, stabilized 0%, W -78%.
+  {
+    label: 'City district · generational collapse',
+    value: `A dense city district enters a generational crisis: catastrophic war, famine and pandemic in succession, an aging population left behind, and the collapse of every employer. The congregations that once organised relief have themselves dissolved in the severe depression.`,
+  },
 ];
 
 export const SUBSET_PRESETS: { label: string; value: number }[] = [
