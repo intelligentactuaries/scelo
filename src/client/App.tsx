@@ -20,6 +20,7 @@ import {
   saveJurisdiction,
   streamJustifyAll,
   streamRun,
+  resyncProvidersIfDrifted,
   syncKeysToServer,
   type StreamEvent,
 } from './lib/api';
@@ -419,6 +420,25 @@ export function App() {
     api.getCanon().then((c) => setCanon(c.works)).catch(() => setCanon([]));
   }, []);
 
+  // Keys and prefs live in the server's memory, so every restart drops them —
+  // including the `bun --watch` reload that fires on any src/server save. An
+  // open tab had no way to notice: the run would just quietly fall back to a
+  // local model. Poll the server's view and re-push whatever it has lost.
+  useEffect(() => {
+    const id = setInterval(() => {
+      api
+        .providers()
+        .then(async (current) => {
+          const restored = await resyncProvidersIfDrifted(current);
+          setInfo(restored ?? current);
+        })
+        .catch(() => {
+          /* server down — the health indicator already says so */
+        });
+    }, 20_000);
+    return () => clearInterval(id);
+  }, []);
+
   useEffect(() => {
     if (!selectedAgentId || !runId || !selectedAgentId.startsWith('c-')) {
       setInspector(null);
@@ -606,11 +626,16 @@ export function App() {
     return () => window.removeEventListener('keydown', onKey);
   }, [startRun, vaultOpen, helpOpen, selectedAgentId]);
 
-  const ollamaTag = info
-    ? info.ollamaSelected
-      ? `ollama: ${info.ollamaSelected}`
-      : 'ollama: none'
-    : 'ollama: …';
+  // What the council tier will actually run on — not what happens to be
+  // loaded in ollama. These differ whenever a cloud key is configured (or
+  // whenever the server has forgotten one), and the old readout could only
+  // ever say "ollama", which is what made a dropped Anthropic key invisible.
+  const providerTag = (() => {
+    if (!info) return 'provider: …';
+    const eff = info.effective?.council;
+    if (eff) return `${eff.provider}: ${eff.model}`;
+    return info.ollamaSelected ? `ollama: ${info.ollamaSelected}` : 'no provider';
+  })();
 
   const headerTitle = useMemo(() => {
     if (run) return summarise(run.scenario, 80);
@@ -776,7 +801,20 @@ export function App() {
           <span className="muted">api</span>
           <span className={health === 'ok' ? 'status-ok' : 'status-warn'}>{health}</span>
           <span className="muted">·</span>
-          <span className="muted">{ollamaTag}</span>
+          <span
+            className="muted"
+            title={
+              info
+                ? `council runs on this. ollama loaded: ${info.ollamaSelected ?? 'none'} · cloud keys: ${
+                    (['anthropic', 'openai', 'gemini', 'hf'] as const)
+                      .filter((p) => info.configured[p])
+                      .join(', ') || 'none'
+                  } · council preference: ${info.prefs.councilProvider}`
+                : 'resolving provider…'
+            }
+          >
+            {providerTag}
+          </span>
           <span className="muted">·</span>
           <span className="muted">canon: {canon == null ? '…' : canon.length}</span>
           <button

@@ -301,4 +301,15 @@ export interface ProvidersInfo {
   ollamaModels: string[];
   ollamaSelected: string | null;
   prefs: ProviderPrefs;
+  /**
+   * The provider + model each tier resolves to right now, straight from the
+   * router's own selectProvider. Null for a tier with nothing available.
+   * Read this for anything user-facing — never infer the active provider from
+   * `ollamaSelected`, which says what is loaded locally, not what is used.
+   */
+  effective?: {
+    council: { provider: string; model: string } | null;
+    society: { provider: string; model: string } | null;
+    chat: { provider: string; model: string } | null;
+  };
 }

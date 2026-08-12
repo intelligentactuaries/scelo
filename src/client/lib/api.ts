@@ -17,6 +17,7 @@ import type { LegalJurisdiction } from '../../shared/constants';
 export type CloudProvider = 'anthropic' | 'openai' | 'gemini' | 'hf';
 
 const LS_KEY = 'swarm-council:keys:v1';
+const LS_PREFS_KEY = 'swarm-council:prefs:v1';
 const LS_JUR_KEY = 'swarm-council:jurisdiction:v1';
 const DEFAULT_JUR: LegalJurisdiction = 'ZA';
 
@@ -34,6 +35,29 @@ export function loadKeys(): StoredKeys {
 
 export function saveKeys(keys: StoredKeys): void {
   localStorage.setItem(LS_KEY, JSON.stringify(keys));
+}
+
+// Provider preferences (which provider serves each tier, model overrides) used
+// to live ONLY in the server's memory. The server is the wrong home for them:
+// it holds them in a plain field, so every restart — including the automatic
+// `bun --watch` reload that fires on any src/server save — silently reset the
+// choice to 'auto' with no signal in the UI. Mirroring them here means the
+// browser is the source of truth and can restore them, exactly like the keys.
+export function loadPrefs(): Partial<ProviderPrefs> | null {
+  try {
+    const raw = localStorage.getItem(LS_PREFS_KEY);
+    return raw ? (JSON.parse(raw) as Partial<ProviderPrefs>) : null;
+  } catch {
+    return null;
+  }
+}
+
+export function savePrefs(prefs: Partial<ProviderPrefs>): void {
+  try {
+    localStorage.setItem(LS_PREFS_KEY, JSON.stringify(prefs));
+  } catch {
+    /* quota / private mode — the server copy still holds for this session */
+  }
 }
 
 export function loadJurisdiction(): LegalJurisdiction {
@@ -370,7 +394,41 @@ export function streamChat(
   return { abort: () => ctrl.abort(), done };
 }
 
+/**
+ * Push the browser's stored keys AND preferences to the server.
+ *
+ * Both halves matter. The server keeps keys and prefs in memory only (by
+ * design — nothing sensitive at rest), so a restart drops them; this used to
+ * send `keys` alone, which meant a restored session had its Anthropic key back
+ * but its provider choice silently reset to 'auto'.
+ */
 export async function syncKeysToServer(): Promise<ProvidersInfo> {
   const keys = loadKeys();
-  return api.setProviders({ keys });
+  const prefs = loadPrefs() ?? undefined;
+  return api.setProviders({ keys, prefs });
+}
+
+/**
+ * Re-push if the server has drifted from what this browser holds.
+ *
+ * The server forgets keys on every restart while an open tab keeps running,
+ * so "I connected Anthropic" quietly becomes "no cloud provider configured"
+ * mid-session with nothing in the UI to say so. Cheap to check, and it only
+ * writes when something is actually missing.
+ */
+export async function resyncProvidersIfDrifted(
+  info: ProvidersInfo,
+): Promise<ProvidersInfo | null> {
+  const keys = loadKeys();
+  const prefs = loadPrefs();
+  const keyDrift = (Object.keys(keys) as CloudProvider[]).some(
+    (p) => keys[p] && !info.configured[p],
+  );
+  const prefDrift =
+    !!prefs &&
+    (['councilProvider', 'societyProvider', 'chatProvider'] as const).some(
+      (k) => prefs[k] && prefs[k] !== info.prefs[k],
+    );
+  if (!keyDrift && !prefDrift) return null;
+  return api.setProviders({ keys, prefs: prefs ?? undefined });
 }

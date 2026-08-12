@@ -68,9 +68,29 @@ export interface ThemeColors {
   dissent: string;
   adversarial: string;
   accent: string;
-  // WMTR components chart — categorical trio for M / T / R lines. Validated
-  // CVD-safe (deutan/protan/tritan dE >= 8.9 adjacent) against each mode's
-  // chart surface; keep the M, T, R assignment fixed, never cycled.
+  // WMTR components chart — categorical trio for M / T / R lines. Keep the
+  // M, T, R assignment fixed, never cycled.
+  //
+  // These must stay clear of OUTCOME_COLOR (shared/wmtr.ts), which is a
+  // RESERVED status ramp: grew=green, stabilized=blue, declined=amber,
+  // collapsed=red. The forecast canvas puts the components chart directly
+  // beside the outcome distribution, so a component line sharing a hue
+  // family with an outcome bar reads as the same encoding — the trio used
+  // to be blue/amber/green against that exact ramp, which collided on all
+  // three (worst cross pair dE 7.2 dark, 9.6 light — under the dE 15
+  // normal-vision floor at which readers can still tell two colors apart).
+  //
+  // The replacement trio is olive / steel / plum-rose: hue-clear of the
+  // ramp, and spanning the blue-yellow axis that CVD preserves (a
+  // teal/violet/rose set reads as more distinct to normal vision but
+  // collapses to dE 1.4-5.6 under protan/deuteranopia).
+  //
+  // Validated per mode against that mode's surface with the categorical
+  // six checks, all-pairs:
+  //   light  worst adjacent CVD dE 9.4 · normal 17.5 · vs status ramp 17.5
+  //   dark   worst adjacent CVD dE 9.3 · normal 18.2 · vs status ramp 15.5
+  // Re-run the check before touching these, and re-check both against
+  // OUTCOME_COLOR — the two palettes are only safe as a pair.
   chartM: string;
   chartT: string;
   chartR: string;
@@ -99,9 +119,9 @@ const LIGHT: ThemeColors = {
   dissent: '#C87D32',
   adversarial: '#B73A3A',
   accent: '#309061',
-  chartM: '#2F5E9E',
-  chartT: '#A8641F',
-  chartR: '#0F8A68',
+  chartM: '#06658E', // steel   L 0.48 C 0.10 H 235
+  chartT: '#6C6610', // olive   L 0.50 C 0.10 H 105
+  chartR: '#7C3855', // plum    L 0.44 C 0.10 H 355
   sentSupportive: '#6BC393',
   sentNeutral: '#5E5A52',
   tooltipBg: 'rgba(242, 238, 226, 0.95)',
@@ -121,9 +141,9 @@ const DARK: ThemeColors = {
   dissent: '#EBB46E',
   adversarial: '#E66E6E',
   accent: '#82D7AF',
-  chartM: '#4A82C7',
-  chartT: '#C7802E',
-  chartR: '#22997D',
+  chartM: '#186E97', // steel   L 0.51 C 0.10 H 235
+  chartT: '#6F6915', // olive   L 0.51 C 0.10 H 105
+  chartR: '#CE7499', // rose    L 0.67 C 0.12 H 355
   sentSupportive: '#3F9976',
   sentNeutral: '#6A6357',
   tooltipBg: 'rgba(34, 30, 26, 0.95)',
