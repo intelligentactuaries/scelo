@@ -1095,6 +1095,16 @@ code {
   gap: 10px;
 }
 
+/* The footer's status message is conditional, so under the shared
+   `justify-content: space-between` the lone save button sat against the LEFT
+   edge until a message rendered and became the first child — then the button
+   jumped 631px to the right. Same button, two resting places, which reads as
+   a second save button appearing after you press the first. Anchor it right
+   whether or not anything sits beside it. */
+.modal-footer .primary-btn {
+  margin-left: auto;
+}
+
 .modal-body {
   padding: 14px;
   overflow-y: auto;
