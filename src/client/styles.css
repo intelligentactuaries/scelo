@@ -1117,7 +1117,13 @@ code {
 
 .key-row {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  /* Not 1fr 1fr: the two fields hold very different content. The key field
+     shows a short prefix ("sk-ant-…") or a masked value, while the override
+     field carries a full model id — "model override (e.g.
+     meta-llama/Llama-3.1-8B-Instruct)" needs 319px and was being cut at 303.
+     minmax(0, …) so a long value shrinks the track rather than widening the
+     card past the modal. */
+  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr);
   grid-template-rows: auto auto;
   gap: 6px;
   border: 1px solid var(--grid);
@@ -1636,15 +1642,21 @@ code {
   color: var(--muted);
 }
 
+/* Label column widths are measured against the longest label each variant
+   actually carries at the sidebar's 256px row width: "risk tolerance" needs
+   96px here, "self-employed" 92px in the dense mixes. Sliders keep 96px and
+   108px respectively, which stays comfortably draggable. */
 .slider-row {
   display: grid;
-  grid-template-columns: 92px 1fr 44px;
+  grid-template-columns: 100px 1fr 44px;
   align-items: center;
   gap: 8px;
 }
 
 .slider-row.dense {
-  grid-template-columns: 72px 1fr 40px;
+  /* 96 rather than the measured 92: "self-employed" renders at 92.x, so an
+     exact-fit column tips it onto a second line over a fraction of a pixel. */
+  grid-template-columns: 96px 1fr 40px;
   font-size: 11px;
 }
 
@@ -1653,9 +1665,13 @@ code {
   color: var(--muted);
   letter-spacing: var(--track);
   text-transform: uppercase;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  /* Wrap rather than ellipsise. These are the control's only names, so
+     clipping one ("FINANCIAL LIT…", "SELF-EMPL…") hides what the slider
+     does. Wrapping also degrades gracefully for labels longer than any
+     column width chosen today — the row grows a line instead of silently
+     truncating, which is what the fixed width + ellipsis did. */
+  overflow-wrap: break-word;
+  line-height: 1.25;
 }
 
 .slider-readout {
@@ -2402,7 +2418,19 @@ body.is-resizing * {
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   background: var(--bg);
+  /* Clips the body to the rounded corners. Only safe alongside the
+     flex-shrink rule below — see there. */
   overflow: hidden;
+  /* The sidebar is a flex column, so these sections are flex items and
+     default to flex-shrink: 1. With several sections open their content
+     exceeds the viewport, and instead of the sidebar scrolling, every
+     section was squeezed and `overflow: hidden` silently ate the remainder
+     — the last row of each mix, the subset buttons, the final provider.
+     Worse, because they shrank to fit, the sidebar's scrollHeight never
+     exceeded its clientHeight, so `overflow-y: auto` produced no scrollbar
+     and the clipped rows were unreachable rather than merely off-screen.
+     Holding their natural height is what lets the sidebar actually scroll. */
+  flex-shrink: 0;
 }
 
 .accordion-section.is-open {
@@ -4074,6 +4102,11 @@ body.is-resizing * {
   flex-wrap: wrap;
   gap: 14px;
   margin-top: 4px;
+  /* Anchor for the verdict's "why this outcome?" bubble. It hangs off this
+     row rather than off the chip itself: the chip sits ~175px in, and a
+     bubble centred on it ran off the left edge — which .forecast-canvas
+     clips, since its overflow-y:auto makes overflow-x compute to auto too. */
+  position: relative;
 }
 
 .forecast-headline-lead {
@@ -4091,7 +4124,57 @@ body.is-resizing * {
   padding: 2px 12px;
   border: 1.5px solid currentColor;
   border-radius: var(--radius-pill);
+  cursor: help;
   /* color + borderColor set via inline style from OUTCOME_COLOR */
+}
+
+/* Hover/focus explanation of WHY this outcome — the classification rule, the
+   path count behind it, and how close the runner-up was. Same liquid-glass
+   bubble and 200ms reveal delay as the scenario chip, so the two read as one
+   affordance; `pre-line` lets the text break into short paragraphs. */
+.forecast-headline-verdict[data-tooltip]::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  top: calc(100% + 10px);
+  /* Flush with the headline's left edge, so the bubble always starts inside
+     the canvas padding instead of being centred on the chip and overhanging. */
+  left: 0;
+  background: rgba(20, 22, 28, 0.58);
+  /* The bubble is dark in BOTH themes, so its text is a fixed light cream. */
+  color: #f1ecdf;
+  -webkit-backdrop-filter: blur(7px) saturate(130%);
+  backdrop-filter: blur(7px) saturate(130%);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow:
+    0 10px 28px rgba(0, 0, 0, 0.22),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  font-family: var(--font);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.55;
+  letter-spacing: 0;
+  text-transform: none;
+  padding: 10px 14px;
+  border-radius: 10px;
+  white-space: pre-line;
+  width: max-content;
+  /* Four short labelled paragraphs of plain prose — wide enough that each
+     stays a couple of lines, narrow enough to keep a readable measure. The
+     100% ceiling is the headline row, i.e. the canvas content width, so the
+     bubble reflows rather than spilling past the right edge in a narrow
+     panel (the Scelo SwarmPanel embed is the tight case). */
+  max-width: min(560px, 100%);
+  line-height: 1.6;
+  text-align: left;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 140ms ease 200ms;
+  z-index: 25;
+}
+
+.forecast-headline-verdict:hover[data-tooltip]::after,
+.forecast-headline-verdict:focus-visible[data-tooltip]::after {
+  opacity: 1;
 }
 
 .forecast-headline-share {
@@ -4109,18 +4192,26 @@ body.is-resizing * {
 
 /* ─── Chart grid ──────────────────────────────────────────────────────── */
 
+/* Two fixed columns rather than auto-fit: the top row is the pair of
+   headline plots (wealth trajectory + W(M,T,R) components), and they need
+   to stay side by side and equally sized at every width that fits them.
+   auto-fit made the column count a function of viewport width, which is
+   what left the components chart stranded at a third of the row. */
 .forecast-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 16px;
 }
 
-/* trajectory is the headline chart — let it span two columns if room */
-.forecast-panel--wide {
-  grid-column: span 2;
+/* The two co-primary charts. They carry no extra chrome — the emphasis is
+   the size and the top-row position — but the class keeps the intent
+   legible next to the supporting panels. */
+.forecast-panel--primary {
+  min-width: 0;
 }
+
 @media (max-width: 900px) {
-  .forecast-panel--wide { grid-column: span 1; }
+  .forecast-grid { grid-template-columns: minmax(0, 1fr); }
 }
 
 .forecast-panel {
@@ -4153,63 +4244,6 @@ body.is-resizing * {
 .forecast-panel-body {
   padding: 10px 12px 12px;
   min-width: 0;
-}
-
-/* ─── Clickable outcome bars ─────────────────────────────────────────── */
-
-.forecast-outcomes {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.forecast-outcome-row {
-  display: grid;
-  grid-template-columns: 96px 1fr 52px;
-  align-items: center;
-  gap: 12px;
-  background: transparent;
-  border: none;
-  padding: 4px 0;
-  cursor: pointer;
-  color: var(--fg);
-  text-align: left;
-  border-radius: 0;
-  letter-spacing: 0;
-  font-weight: 400;
-  transition: opacity 180ms var(--forecast-easing);
-}
-
-.forecast-outcome-row:hover {
-  opacity: 0.85;
-  background: transparent;
-}
-
-.forecast-outcome-label {
-  font-size: 12px;
-  color: var(--fg-2);
-}
-
-.forecast-outcome-track {
-  height: 12px;
-  background: var(--bg-2);
-  border: 1px solid var(--grid);
-  display: block;
-  position: relative;
-  overflow: hidden;
-}
-
-.forecast-outcome-fill {
-  display: block;
-  height: 100%;
-  transition: width 360ms var(--forecast-easing);
-}
-
-.forecast-outcome-pct {
-  font-size: 12px;
-  text-align: right;
-  font-variant-numeric: tabular-nums;
-  color: var(--fg-2);
 }
 
 /* ─── Council readback ───────────────────────────────────────────────── */
