@@ -33,16 +33,19 @@ export const ScenarioCard = forwardRef<HTMLTextAreaElement, Props>(function Scen
   // Auto-grow the scenario textarea until the CSS max-height kicks in,
   // after which overflow-y: auto takes over and scrolls. Reset to 'auto'
   // first so shrinking past the previous height also works.
+  // Applies in the dropped layout too. It was skipped there on the assumption
+  // that refining meant typing a short line into an empty row — but the row is
+  // now opened prefilled with the whole scenario, and at rows={1} that showed
+  // a line and a half with the rest cut off. CSS max-height still caps it.
   useLayoutEffect(() => {
     const ta = inputRef.current;
-    if (!ta || dropped) return;
+    if (!ta) return;
     ta.style.height = 'auto';
     ta.style.height = `${ta.scrollHeight}px`;
   }, [scenario, dropped]);
 
   // Re-measure on window resize since wrapping may change.
   useEffect(() => {
-    if (dropped) return;
     const onResize = () => {
       const ta = inputRef.current;
       if (!ta) return;
@@ -110,7 +113,11 @@ export const ScenarioCard = forwardRef<HTMLTextAreaElement, Props>(function Scen
       <div className="scenario-card-row">
         <span className="bottom-bar-mode-label panel-label">refine</span>
         <textarea
-          ref={ref}
+          // setRef, not the bare forwarded ref: the auto-grow effect measures
+          // through inputRef, which only the local setter populates. Wiring
+          // the parent ref straight through left this row stuck at one line
+          // with a prefilled scenario cut off mid-sentence.
+          ref={setRef}
           className="scenario-card-row-input"
           placeholder="type a refined scenario, press ⌘↵ to re-run…"
           value={scenario}

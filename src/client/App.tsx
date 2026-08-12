@@ -238,6 +238,10 @@ export function App() {
   const stalledSec = runBusy ? Math.max(0, (nowTick - lastActivityRef.current) / 1000) : null;
 
   const [scenario, setScenario] = useState<string>('');
+  // Post-run editing of the scenario text. The composer that created a run is
+  // only rendered in the empty state, so this reveals ScenarioCard's refine
+  // layout over the results instead of throwing them away to get at the text.
+  const [editingScenario, setEditingScenario] = useState<boolean>(false);
   const [subset, setSubset] = useState<number>(32);
   const [fresh, setFresh] = useState<boolean>(false);
   const [justifyAll, setJustifyAll] = useState<boolean>(false);
@@ -495,6 +499,38 @@ export function App() {
       setRunError(e instanceof Error ? e.message : 'failed to start run');
     }
   }, [scenario, subset, fresh, justifyAll, legalJurisdiction, societyParams, societySize, runBusy, run]);
+
+  // Edit: seed the composer from the run currently on screen. startRun keeps
+  // the old run rendered while the new one streams, so the results stay up
+  // until there is something to replace them with.
+  const editScenario = useCallback(() => {
+    if (run) setScenario(run.scenario);
+    setEditingScenario(true);
+    // Focus after the refine bar has mounted.
+    requestAnimationFrame(() => scenarioRef.current?.focus());
+  }, [run]);
+
+  // New: drop the run entirely so the empty-state composer — with its preset
+  // chips — comes back. Streams are closed first; leaving one open would go
+  // on writing into a run that is no longer displayed.
+  const newScenario = useCallback(() => {
+    esRef.current?.close();
+    esRef.current = null;
+    justifyEsRef.current?.close();
+    justifyEsRef.current = null;
+    setEditingScenario(false);
+    setScenario('');
+    setRun(null);
+    setRunId(null);
+    setSelectedAgentId(null);
+    setInspector(null);
+    setPinnedProfession(null);
+    setProgress([]);
+    setSociety(null);
+    setRunError(null);
+    setTab('forecast');
+    requestAnimationFrame(() => scenarioRef.current?.focus());
+  }, []);
 
   const justifyAllNow = useCallback(async () => {
     if (!runId || justifyAllBusy) return;
@@ -1118,7 +1154,44 @@ export function App() {
               scenarioSummary={run?.scenarioSummary ?? null}
               summary={run?.summary ?? null}
               tab={tab}
+              busy={runBusy}
+              onEditScenario={run ? editScenario : undefined}
+              onNewScenario={run ? newScenario : undefined}
             />
+          )}
+          {/* Refine bar — ScenarioCard's post-run layout, which existed but
+              was never rendered. Sits between the heading and the results so
+              the text being edited stays next to what it produced. */}
+          {run && editingScenario && (
+            <div className="scenario-edit-bar">
+              <ScenarioCard
+                ref={scenarioRef}
+                scenario={scenario}
+                onScenarioChange={setScenario}
+                busy={runBusy}
+                onRun={startRun}
+                dropped
+                onRefine={() => {
+                  setEditingScenario(false);
+                  // `scenario` already holds the edited text — the textarea
+                  // writes it on every keystroke — so startRun reads it
+                  // without needing the value threaded back through.
+                  void startRun();
+                }}
+              />
+              <button
+                type="button"
+                className="ghost-btn"
+                onClick={() => {
+                  setEditingScenario(false);
+                  // Discard the edit: put the running scenario back so
+                  // reopening does not resume a half-typed change.
+                  if (run) setScenario(run.scenario);
+                }}
+              >
+                cancel
+              </button>
+            </div>
           )}
           <div className="canvas-body">
             {runBusy && (
