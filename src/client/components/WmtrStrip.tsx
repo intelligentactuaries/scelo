@@ -758,6 +758,18 @@ export function outcomeGaugeOption(w: RunWmtr, colors: ThemeColors): object {
   const f = w.result.outcomeFractions;
   const nPaths = w.config.nPaths;
 
+  // Rings run largest-outward: the dominant bucket always takes the outer
+  // disc, the rest follow inward in descending order. A fixed order buried
+  // the result — on a run that declined 97%, the outer two rings were empty
+  // and the arc that carried the verdict sat third from the edge.
+  //
+  // Only the ORDER is data-driven. Colour stays bound to the outcome, so a
+  // bucket keeps its hue as its rank changes and the rings can still be read
+  // against the mix chart beside them. Array.prototype.sort is stable, so
+  // ties (two empty buckets) keep the canonical best→worst order rather than
+  // swapping between renders.
+  const ordered = [...GAUGE_ORDER].sort((a, b) => (f[b] ?? 0) - (f[a] ?? 0));
+
   // Four rows of readout share the donut hole, so they are laid out as
   // name-left / value-right on one line each rather than the stacked
   // title-above-value of a three-ring gauge, which would need eight lines.
@@ -825,7 +837,9 @@ export function outcomeGaugeOption(w: RunWmtr, colors: ThemeColors): object {
           borderWidth: 1,
           formatter: '{value}%',
         },
-        data: GAUGE_ORDER.map((o, i) => ({
+        // Readout rows follow the same order as the rings, so row three names
+        // ring three rather than making the reader map between two orders.
+        data: ordered.map((o, i) => ({
           value: +((f[o] ?? 0) * 100).toFixed(1),
           name: MIX_LABEL[o],
           itemStyle: { color: OUTCOME_COLOR[o] },
