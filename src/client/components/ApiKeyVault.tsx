@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { ProviderPrefs, ProvidersInfo } from '../../shared/types';
-import { api, loadKeys, saveKeys, type CloudProvider, type StoredKeys } from '../lib/api';
+import { api, loadKeys, saveKeys, savePrefs, type CloudProvider, type StoredKeys } from '../lib/api';
 import { LEGAL_JURISDICTIONS, type LegalJurisdiction } from '../../shared/constants';
 
 const CLOUD: { id: CloudProvider; label: string; placeholder: string }[] = [
@@ -38,17 +38,31 @@ export function ApiKeyVault({
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [testOut, setTestOut] = useState<string | null>(null);
+  // Whether this form holds edits that have not been pushed to the server.
+  // Drives both guards below: what the footer is allowed to claim, and
+  // whether a server refresh may overwrite the fields.
+  const [dirty, setDirty] = useState(false);
 
   useEffect(() => {
     if (!open) return;
     setKeysLocal(loadKeys());
     setMsg(null);
     setTestOut(null);
+    setDirty(false);
   }, [open]);
 
+  // Adopt the server's view of prefs — but never on top of unsaved edits.
+  //
+  // App polls /api/providers every 20s to notice when the server has been
+  // restarted out from under an open tab. That poll calls setInfo, which
+  // landed here and reset every field in this form: a provider chosen or a
+  // model id typed more than 20 seconds ago was silently reverted to the
+  // server's values while the user was still looking at it, and closing the
+  // modal then "saved" nothing. Only take the server's copy when there is
+  // nothing pending to lose.
   useEffect(() => {
-    if (info) setPrefsLocal(info.prefs);
-  }, [info]);
+    if (info && !dirty) setPrefsLocal(info.prefs);
+  }, [info, dirty]);
 
   if (!open || !prefs) {
     return open ? (
@@ -60,8 +74,20 @@ export function ApiKeyVault({
     ) : null;
   }
 
-  const update = (id: CloudProvider, value: string) =>
+  // Every edit path goes through one of these two, so nothing can change
+  // without the form knowing it is dirty. A stale "saved" left sitting under
+  // the save button is the whole reason this state exists.
+  const update = (id: CloudProvider, value: string) => {
     setKeysLocal((k) => ({ ...k, [id]: value }));
+    setDirty(true);
+    setMsg(null);
+  };
+
+  const editPrefs = (fn: (s: ProviderPrefs) => ProviderPrefs) => {
+    setPrefsLocal((s) => (s ? fn(s) : s));
+    setDirty(true);
+    setMsg(null);
+  };
 
   async function save() {
     setBusy(true);
@@ -79,7 +105,15 @@ export function ApiKeyVault({
         }
       }
       saveKeys(cleaned);
+      // Mirror prefs into localStorage alongside the keys. The server holds
+      // both in memory only, so without this the provider choice is lost on
+      // the next server restart while the key survives — the state that makes
+      // a connected cloud provider look connected but never get used.
+      if (prefs) savePrefs(prefs);
       const next = await api.setProviders({ keys: wire, prefs: prefs ?? undefined });
+      // Clear before onInfo so the effect above is free to adopt the server's
+      // echo of what we just pushed.
+      setDirty(false);
       onInfo(next);
       setMsg('saved');
     } catch (e) {
@@ -180,14 +214,10 @@ export function ApiKeyVault({
                     })`}
                     value={prefs.models?.[p.id] ?? ''}
                     onChange={(e) =>
-                      setPrefsLocal((s) =>
-                        s
-                          ? {
-                              ...s,
-                              models: { ...(s.models ?? {}), [p.id]: e.target.value || undefined },
-                            }
-                          : s,
-                      )
+                      editPrefs((s) => ({
+                        ...s,
+                        models: { ...(s.models ?? {}), [p.id]: e.target.value || undefined },
+                      }))
                     }
                   />
                 </label>
@@ -209,14 +239,10 @@ export function ApiKeyVault({
               <select
                 value={prefs.models?.ollama ?? ''}
                 onChange={(e) =>
-                  setPrefsLocal((s) =>
-                    s
-                      ? {
-                          ...s,
-                          models: { ...(s.models ?? {}), ollama: e.target.value || undefined },
-                        }
-                      : s,
-                  )
+                  editPrefs((s) => ({
+                    ...s,
+                    models: { ...(s.models ?? {}), ollama: e.target.value || undefined },
+                  }))
                 }
               >
                 <option value="">auto (largest preferred)</option>
@@ -241,9 +267,7 @@ export function ApiKeyVault({
                   <select
                     value={prefs[k]}
                     onChange={(e) =>
-                      setPrefsLocal((s) =>
-                        s ? { ...s, [k]: e.target.value as ProviderPrefs[typeof k] } : s,
-                      )
+                      editPrefs((s) => ({ ...s, [k]: e.target.value as ProviderPrefs[typeof k] }))
                     }
                   >
                     <option value="auto">auto</option>
@@ -281,11 +305,31 @@ export function ApiKeyVault({
               sends a one-shot "hello world" through the router; uses fresh=true so cache is
               bypassed.
             </div>
+            {/* The router resolves the tier against the SERVER's settings, so
+                a test run with edits still pending reports on the old config
+                and reads as though the change did nothing. Disabled until the
+                form matches what the server holds. `clear cache` is exempt —
+                it takes no provider settings and is unaffected by them. */}
+            {dirty && (
+              <div className="small status-warn">
+                save first — a test routes on the server's saved settings, not the edits above.
+              </div>
+            )}
             <div className="test-row">
-              <button className="ghost-btn" onClick={() => testRoute('society')} disabled={busy}>
+              <button
+                className="ghost-btn"
+                onClick={() => testRoute('society')}
+                disabled={busy || dirty}
+                title={dirty ? 'save your changes first — this tests the saved settings' : undefined}
+              >
                 test society (ollama)
               </button>
-              <button className="ghost-btn" onClick={() => testRoute('council')} disabled={busy}>
+              <button
+                className="ghost-btn"
+                onClick={() => testRoute('council')}
+                disabled={busy || dirty}
+                title={dirty ? 'save your changes first — this tests the saved settings' : undefined}
+              >
                 test council (cloud)
               </button>
               <button className="ghost-btn" onClick={clearCache} disabled={busy}>
@@ -297,9 +341,17 @@ export function ApiKeyVault({
         </div>
 
         <div className="modal-footer">
-          {msg && <span className="muted small">{msg}</span>}
+          {/* Pending edits outrank any earlier message. "saved" used to sit
+              here unchanged while the form was edited underneath it, so the
+              footer read as saved when nothing had been pushed — next to a
+              save button, that is the one thing it must never say wrongly. */}
+          {dirty ? (
+            <span className="small status-warn">unsaved changes</span>
+          ) : (
+            msg && <span className="muted small">{msg}</span>
+          )}
           <button className="primary-btn" onClick={save} disabled={busy}>
-            save
+            {dirty ? 'save changes' : 'save'}
           </button>
         </div>
       </div>
