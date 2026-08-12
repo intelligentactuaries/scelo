@@ -23,6 +23,12 @@ import {
   outcomeMixMatchesBars,
   outcomeMixOption,
 } from './WmtrStrip';
+import {
+  explainComponents,
+  explainDriverBridge,
+  explainOutcomeGauge,
+  explainOutcomeMix,
+} from '../lib/panelInsight';
 
 interface Props {
   run: Run;
@@ -197,12 +203,14 @@ export function ForecastCanvas({
         <ForecastPanel
           title="What moved W · money, time and relationships"
           className="forecast-panel--primary"
+          insight={explainDriverBridge(wmtr, run.scenario)}
         >
           <WmtrChart options={driverBridgeOption(wmtr, colors)} height={300} />
         </ForecastPanel>
         <ForecastPanel
           title="W(M,T,R) components · mean across paths"
           className="forecast-panel--primary"
+          insight={explainComponents(wmtr, run.scenario)}
         >
           <WmtrChart
             options={componentsOption(wmtr, colors, { compact: false })}
@@ -214,6 +222,7 @@ export function ForecastCanvas({
         <ForecastPanel
           title="Outcome distribution · click to drill into divergent agents"
           onClickHeader={onFilterByOutcome ? () => onFilterByOutcome(dom) : undefined}
+          insight={explainOutcomeGauge(wmtr, run.scenario)}
         >
           {/* The rings carry the same drill-down the bar rows did: clicking
               one filters the council to agents whose vote diverges from that
@@ -235,6 +244,7 @@ export function ForecastCanvas({
               ? 'Outcome mix over time · where the paths stood at each year'
               : 'Outcome mix over time · re-derived under the current rule, which this older run pre-dates'
           }
+          insight={explainOutcomeMix(wmtr, run.scenario)}
         >
           {/* Matches the gauge beside it so the row has no dead strip under
               the shorter panel. */}
@@ -274,19 +284,28 @@ function ForecastPanel({
   children,
   className,
   onClickHeader,
+  /** What this plot says about THIS run, revealed on hovering the title. */
+  insight,
 }: {
   title: string;
   children: React.ReactNode;
   className?: string;
   onClickHeader?: () => void;
+  insight?: string;
 }) {
   return (
     <section className={`forecast-panel ${className ?? ''}`}>
       <header
-        className={`forecast-panel-head ${onClickHeader ? 'forecast-panel-head--clickable' : ''}`}
+        className={`forecast-panel-head ${onClickHeader ? 'forecast-panel-head--clickable' : ''} ${
+          insight ? 'forecast-panel-head--explained' : ''
+        }`}
         onClick={onClickHeader}
         role={onClickHeader ? 'button' : undefined}
-        tabIndex={onClickHeader ? 0 : undefined}
+        // Focusable when it carries an explanation, so the reading is
+        // reachable by keyboard and not only by hovering a mouse.
+        tabIndex={onClickHeader || insight ? 0 : undefined}
+        data-tooltip={insight}
+        aria-label={insight ? `${title}. ${insight}` : undefined}
       >
         {title}
       </header>
