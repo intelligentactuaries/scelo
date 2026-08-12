@@ -17,8 +17,11 @@ import {
   type ShockEnvironment,
   type WmtrSingleParams,
   type WmtrSingleResult,
+  dominantDriver,
+  driverContributions,
   runSingleCommunity,
 } from '../shared/wmtr';
+import { matchesCue } from '../shared/cues';
 
 export type InterventionParam =
   | 'alphaM'
@@ -74,10 +77,10 @@ const SCENARIO_HASH = (s: string): number => {
   return h >>> 0;
 };
 
-const KW = (s: string, words: string[]): boolean => {
-  const lo = s.toLowerCase();
-  return words.some((w) => lo.includes(w));
-};
+// Word-bounded cue matching — see `shared/cues.ts` for why substring matching
+// was wrong here. Shared with the client so the vocabulary the forecast is
+// explained in can't drift from the config it was simulated under.
+const KW = (s: string, words: string[]): boolean => matchesCue(s, words);
 
 // Pull a coarse WMTR config from free-text scenario. Heuristic only; the
 // council can later vote to override individual params via interventions.
@@ -89,7 +92,20 @@ export function deriveConfigFromScenario(
 
   // Shock severity
   let shock: ShockEnvironment = 'moderate';
-  if (KW(scenario, ['catastroph', 'war', 'pandemic', 'famine', 'collapse', 'severe', 'crisis', 'depression']))
+  if (
+    KW(scenario, [
+      'catastroph*',
+      'war',
+      'warfare',
+      'pandemic',
+      'famine',
+      'collapse*',
+      'severe',
+      'crisis',
+      'crises',
+      'depression',
+    ])
+  )
     shock = 'severe';
   else if (KW(scenario, ['mild', 'calm', 'stable', 'benign', 'orderly', 'normal']))
     shock = 'mild';
@@ -104,7 +120,7 @@ export function deriveConfigFromScenario(
     base.wRel = 0.30;
     base.wS = 0.20;
     base.sqftPerResident = 800;
-  } else if (KW(scenario, ['urban', 'city', 'metropol', 'megacity', 'downtown'])) {
+  } else if (KW(scenario, ['urban', 'city', 'cities', 'metropol*', 'megacit*', 'downtown'])) {
     base.alphaM = 0.50;
     base.alphaT = 0.30;
     base.alphaR = 0.20;
@@ -115,13 +131,13 @@ export function deriveConfigFromScenario(
   }
 
   // Religion / faith cues
-  if (KW(scenario, ['religious', 'faith', 'church', 'mosque', 'temple', 'congregat', 'spiritual'])) {
+  if (KW(scenario, ['religious', 'faith', 'church*', 'mosque', 'temple', 'congregat*', 'spiritual*'])) {
     base.initReligion = Math.min(1, base.initReligion + 0.2);
     base.pReligion = Math.min(1, base.pReligion + 0.10);
   }
 
   // Family / kinship cues
-  if (KW(scenario, ['family', 'kinship', 'extended family', 'household', 'multigenerational'])) {
+  if (KW(scenario, ['family', 'families', 'kinship', 'extended family', 'household', 'multigenerational'])) {
     base.initFamily = Math.min(1, base.initFamily + 0.15);
     base.pFamily = Math.min(1, base.pFamily + 0.10);
   }
@@ -131,7 +147,7 @@ export function deriveConfigFromScenario(
     base.pProduction = Math.max(0.1, base.pProduction - 0.10);
     base.pLeisure = Math.min(1, base.pLeisure + 0.05);
   }
-  if (KW(scenario, ['youth', 'young', 'student'])) {
+  if (KW(scenario, ['youth', 'young*', 'student'])) {
     base.pProduction = Math.min(1, base.pProduction + 0.05);
   }
 
@@ -173,18 +189,10 @@ export function applyIntervention(
   return next;
 }
 
-function dominantDriver(result: WmtrSingleResult): 'M' | 'T' | 'R' {
-  // Look at end-of-horizon mean component values to flag which one
-  // dominates the wealth term. Not normalized: this is just an
-  // observation the council can react to.
-  const i = result.meanM.length - 1;
-  const m = result.meanM[i] ?? 0;
-  const t = result.meanT[i] ?? 0;
-  const r = result.meanR[i] ?? 0;
-  if (m >= t && m >= r) return 'M';
-  if (t >= m && t >= r) return 'T';
-  return 'R';
-}
+// Attribution lives in the engine (`shared/wmtr.ts`) so the number the
+// council is told, the driver on the forecast header, and the contribution
+// chart in the canvas cannot drift from one another — this file used to
+// carry its own copy, which is how they diverged in the first place.
 
 export function buildEvidenceBlock(
   config: WmtrSingleParams,
@@ -197,8 +205,10 @@ export function buildEvidenceBlock(
   const finalSurv = result.meanSurv[last] ?? 0;
   const dom = result.dominant;
   const driver = dominantDriver(result);
+  const contrib = driverContributions(result);
   const buckets = result.outcomeFractions;
   const pct = (x: number) => `${(x * 100).toFixed(0)}%`;
+  const signed = (x: number) => `${x >= 0 ? '+' : ''}${x.toFixed(3)}`;
 
   return `## Simulator Evidence (W(M,T,R) Nanoeconomics)
 
@@ -213,7 +223,10 @@ Outcome distribution across paths:
 Dominant path outcome: ${dom.toUpperCase()}.
 Mean wealth W at year ${config.horizon}: ${finalMeanW.toFixed(3)} (W/W0 = ${ratio.toFixed(2)}).
 Mean survival probability S(t=${config.horizon}): ${pct(finalSurv)}.
-Dominant component at horizon: ${driver} (out of M / T / R).
+Component that moved W most over the horizon: ${driver} (out of M / T / R), by
+elasticity-weighted contribution to the CHANGE in ln W (these three sum exactly to
+the mean log change, ${signed(contrib.net)}): M ${signed(contrib.M)}, T ${signed(contrib.T)}, R ${signed(contrib.R)}.
+A near-zero contribution means that component barely moved, not that it is small.
 
 Active parameters: alphaM=${config.alphaM.toFixed(2)}, alphaT=${config.alphaT.toFixed(2)}, alphaR=${config.alphaR.toFixed(2)};
 relational weights wF=${config.wF.toFixed(2)}, wRel=${config.wRel.toFixed(2)}, wS=${config.wS.toFixed(2)};
