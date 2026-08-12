@@ -168,7 +168,22 @@ class LLMRouter {
       ollamaModels: this.ollamaAvailable,
       ollamaSelected: this.ollamaSelected,
       prefs: this.prefs,
+      // What each tier will ACTUALLY use, resolved through the same
+      // selectProvider the run takes. The header used to hardcode the ollama
+      // model, so a run served by a cloud key still read "ollama: <model>"
+      // and — worse — a session whose key the server had forgotten looked
+      // identical to one that never had a key. One source of truth.
+      effective: {
+        council: this.effectiveFor('council'),
+        society: this.effectiveFor('society'),
+        chat: this.effectiveFor('chat'),
+      },
     };
+  }
+
+  private effectiveFor(tier: Tier): { provider: Provider; model: string } | null {
+    const provider = this.selectProvider(tier);
+    return provider ? { provider, model: this.modelFor(provider) } : null;
   }
 
   modelFor(provider: Provider): string {
@@ -192,13 +207,26 @@ class LLMRouter {
       if (pref === 'ollama') return this.ollamaSelected ? 'ollama' : null;
       return this.keys[pref] ? pref : null;
     }
-    // Local-first (Scelo default): under 'auto', prefer a loaded local Ollama
-    // model for every tier — council, chat, and society — falling back to the
-    // first cloud provider that has a key. Keeps runs local, free, and private
-    // whenever a local model is present; picking an explicit provider above
-    // still forces cloud. (Previously council/chat preferred cloud, which routed
-    // to a stray/misconfigured cloud key even with a local model loaded.)
-    return this.ollamaSelected ? 'ollama' : this.firstCloud();
+    // 'auto' routes by tier COST, because the tiers differ by ~50x in call
+    // volume and a single policy can't serve both:
+    //
+    //   council (12–192 calls/run) and chat (1 call/message) → a configured
+    //     cloud key when there is one. Deliberating agents and chat are where
+    //     answer quality is felt, and the volume is small enough to pay for.
+    //
+    //   society (1000 agents/run by default, one call each) → stays local
+    //     whenever a model is loaded. Sending it to a metered API turns one
+    //     ordinary run into ~1000 billed calls, which is not what anyone
+    //     means by "auto".
+    //
+    // Either tier still falls back to whatever else exists, and an explicit
+    // provider above overrides all of this. (History: 'auto' was once
+    // cloud-first for every tier, which routed to a stray misconfigured key
+    // even with a local model loaded; the fix made everything local-first,
+    // which then made a deliberately connected cloud key look ignored. This
+    // splits the difference along the axis that actually matters — spend.)
+    if (tier === 'society') return this.ollamaSelected ? 'ollama' : this.firstCloud();
+    return this.firstCloud() ?? (this.ollamaSelected ? 'ollama' : null);
   }
 
   async route(messages: Message[], tier: Tier, opts: RouteOpts = {}): Promise<string> {
