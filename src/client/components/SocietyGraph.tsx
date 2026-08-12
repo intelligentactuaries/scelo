@@ -45,7 +45,7 @@ export function SocietyGraph({
   const colors = useMemo(() => colorsForTheme(resolved), [resolved]);
   const SENTIMENT_COLOR = useMemo(() => sentimentColors(colors), [colors]);
   // Measured canvas size drives the labelled-region (cluster) grid layout.
-  const [size, setSize] = useState({ w: 0, h: 0 });
+  const [size, setSize] = useState({ w: 0, h: 0, padTop: 0 });
 
   // Live cross-highlight callback + state held in refs so the
   // chart.on(...) listeners (registered once on mount) keep seeing the
@@ -111,7 +111,24 @@ export function SocietyGraph({
     const applySize = () => {
       const w = el.clientWidth;
       const h = el.clientHeight;
-      if (w > 0 && h > 0) setSize((s) => (s.w === w && s.h === h ? s : { w, h }));
+      // The legends float over the canvas as absolutely positioned siblings
+      // with a higher z-index, so clusters laid out beneath them are hidden
+      // AND unhoverable. Measure how far down they reach and keep the layout
+      // clear of that band.
+      const parent = el.parentElement;
+      let pad = 0;
+      if (parent) {
+        const base = el.getBoundingClientRect().top;
+        for (const box of parent.querySelectorAll('.graph-legend, .sentiment-key')) {
+          const r = (box as HTMLElement).getBoundingClientRect();
+          if (r.height > 0) pad = Math.max(pad, r.bottom - base);
+        }
+      }
+      // + room for the hull's own label, which is drawn ABOVE the disc:
+      // clearing only the disc left the label tucked under the legend.
+      const padTop = Math.round(pad > 0 ? pad + 28 : 0);
+      if (w > 0 && h > 0)
+        setSize((s) => (s.w === w && s.h === h && s.padTop === padTop ? s : { w, h, padTop }));
     };
     let sizeTimer: ReturnType<typeof setTimeout> | undefined;
     const onResize = () => {
@@ -379,7 +396,7 @@ export function SocietyGraph({
 function buildOption(
   run: Run,
   colors: ThemeColors,
-  size: { w: number; h: number },
+  size: { w: number; h: number; padTop?: number },
   dark: boolean,
 ): {
   option: echarts.EChartsCoreOption;
@@ -420,12 +437,26 @@ function buildOption(
   // so each hull shows a cluster's sentiment mix at a glance.
   const groups: Group[] = clusters.map((c, i) => ({
     key: String(c),
-    label: categories[i].name,
+    // Just the identifier on the hull. The full descriptor ("c0 age≈33 ·
+    // lower-mid · secondary · pe…") is ~40 characters drawn centred above a
+    // disc a fraction of that wide, so neighbouring clusters overprinted each
+    // other and the outermost ones ran off the canvas. The legend beside the
+    // graph lists the same descriptor in full, and hovering a hull gives its
+    // whole breakdown, so nothing is lost by keeping the on-canvas mark short.
+    label: `c${c}`,
     color: clusterColor(i, dark),
   }));
   const W = size.w > 0 ? size.w : 900;
   const H = size.h > 0 ? size.h : 600;
-  const cells = layoutCells(groups, W, H);
+  // EDGE_PAD keeps a node's label off the canvas edge — the axes span the full
+  // panel, so a cluster flush against it had its label cut ("ge≈33 · lower-mid…").
+  const EDGE_PAD = 26;
+  const cells = layoutCells(groups, W, H, {
+    top: Math.max(size.padTop ?? 0, EDGE_PAD),
+    left: EDGE_PAD,
+    right: EDGE_PAD,
+    bottom: EDGE_PAD,
+  });
   // A small force sim clusters each cluster's members organically around its
   // cell centre (peer-similarity edges pull neighbours together), then a soft
   // hull wraps each settled cluster — force-graph look, plus the grouping.

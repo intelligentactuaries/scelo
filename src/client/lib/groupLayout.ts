@@ -31,7 +31,47 @@ const PAD = 16;
 /** Arrange `groups` into a grid of cells filling a `width`×`height` canvas,
  *  choosing a column count that roughly matches the canvas aspect ratio and
  *  centring any short final row. */
-export function layoutCells(groups: Group[], width: number, height: number): Cell[] {
+/**
+ * Region of the canvas the cells may occupy.
+ *
+ * The graph's axes span the full canvas, so anything laid out at the very edge
+ * draws its label past the plot and gets clipped, and anything under a
+ * floating legend is both hidden and unclickable — the legend is an absolutely
+ * positioned sibling with a higher z-index, so it swallows the pointer.
+ * Insetting the layout keeps the axes 1:1 with pixels while steering the cells
+ * clear of both.
+ */
+export interface LayoutInsets {
+  top?: number;
+  right?: number;
+  bottom?: number;
+  left?: number;
+}
+
+export function layoutCells(
+  groups: Group[],
+  width: number,
+  height: number,
+  insets: LayoutInsets = {},
+): Cell[] {
+  const { top = 0, right = 0, bottom = 0, left = 0 } = insets;
+  // Never inset so far that nothing is left to lay out in — a legend taller
+  // than the panel would otherwise collapse the graph to zero.
+  const usableW = Math.max(width - left - right, width * 0.35);
+  const usableH = Math.max(height - top - bottom, height * 0.35);
+  const cells = layoutCellsIn(groups, usableW, usableH);
+  return cells.map((c) => ({
+    ...c,
+    x0: c.x0 + left,
+    x1: c.x1 + left,
+    y0: c.y0 + top,
+    y1: c.y1 + top,
+    cx: c.cx + left,
+    cy: c.cy + top,
+  }));
+}
+
+function layoutCellsIn(groups: Group[], width: number, height: number): Cell[] {
   const n = groups.length;
   if (n === 0 || width <= 0 || height <= 0) return [];
   const aspect = width / Math.max(height, 1);
