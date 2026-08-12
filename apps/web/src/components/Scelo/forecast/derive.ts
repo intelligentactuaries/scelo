@@ -17,9 +17,39 @@ const SCENARIO_HASH = (s: string): number => {
   return h >>> 0;
 };
 
+// Cue matching is WORD-BOUNDED, not substring.
+//
+// `lo.includes(w)` meant a cue fired on any accidental letter sequence:
+// "software", "warranty", "award" and "forward" all contained `war` and so
+// forced shock="severe", while "rates are normalising" contained `normal`
+// and forced shock="mild". The forecast was therefore configured by spelling
+// coincidences rather than by what the result and scenario actually say.
+//
+// A plain cue matches a whole word (plus an optional plural "s"); a cue
+// ending in "*" is a stem and matches any continuation, which is how
+// "catastroph*" still covers catastrophe/catastrophic and "reserv*" covers
+// reserve/reserves/reserving.
+const CUE_RE = new Map<string, RegExp>();
+
+function cueMatcher(cue: string): RegExp {
+  let re = CUE_RE.get(cue);
+  if (!re) {
+    const stem = cue.endsWith("*");
+    const body = (stem ? cue.slice(0, -1) : cue).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    re = new RegExp(stem ? `\\b${body}` : `\\b${body}s?\\b`, "i");
+    CUE_RE.set(cue, re);
+  }
+  return re;
+}
+
 const KW = (s: string, words: string[]): boolean => {
-  const lo = s.toLowerCase();
-  return words.some((w) => lo.includes(w));
+  // Underscores are word characters to a regex, so `\binsurance\b` does NOT
+  // match inside `group_insurance_data` — and `forecastConfigFor` below builds
+  // its scenario out of a result's headline label and the surrounding context,
+  // which quote dataset filenames verbatim, where snake_case is the norm.
+  // Treat `_` as a separator so an identifier reads as the words it is made of.
+  const normalised = s.replace(/_/g, " ");
+  return words.some((w) => cueMatcher(w).test(normalised));
 };
 
 export function deriveConfigFromScenario(
@@ -32,13 +62,15 @@ export function deriveConfigFromScenario(
   let shock: ShockEnvironment = "moderate";
   if (
     KW(scenario, [
-      "catastroph",
+      "catastroph*",
       "war",
+      "warfare",
       "pandemic",
       "famine",
-      "collapse",
+      "collapse*",
       "severe",
       "crisis",
+      "crises",
       "depression",
       "shock",
       "downgrade",
@@ -64,7 +96,7 @@ export function deriveConfigFromScenario(
     base.alphaM = 0.50;
     base.alphaT = 0.20;
     base.alphaR = 0.30;
-  } else if (KW(scenario, ["reserve", "ibnr", "triangle", "chain ladder", "bornhuetter"])) {
+  } else if (KW(scenario, ["reserv*", "ibnr", "triangle", "chain ladder", "bornhuetter"])) {
     base.alphaM = 0.55;
     base.alphaT = 0.30;
     base.alphaR = 0.15;
@@ -76,7 +108,7 @@ export function deriveConfigFromScenario(
     base.wRel = 0.30;
     base.wS = 0.20;
     base.sqftPerResident = 800;
-  } else if (KW(scenario, ["urban", "city", "metropol", "downtown"])) {
+  } else if (KW(scenario, ["urban", "city", "cities", "metropol*", "downtown"])) {
     base.alphaM = 0.50;
     base.alphaT = 0.30;
     base.alphaR = 0.20;
