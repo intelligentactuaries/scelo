@@ -12,6 +12,14 @@ type Props = {
    *  scenario chip. Hovering the pill reveals the full distribution. */
   summary?: RunSummary | null;
   tab: TabId;
+  /** Reveal the refine bar prefilled with this run's scenario. Omitted on
+   *  surfaces where there is nothing to edit. */
+  onEditScenario?: () => void;
+  /** Clear the run and return to the empty composer. */
+  onNewScenario?: () => void;
+  /** Both actions are suppressed mid-run — a run in flight is about to
+   *  replace whatever they would edit. */
+  busy?: boolean;
 };
 
 const GREETING = 'Welcome — what community shall we forecast?';
@@ -20,7 +28,15 @@ const GREETING = 'Welcome — what community shall we forecast?';
 // Run state: charcoal tagline in a pill-bordered chip, smaller — reads as
 //   "metadata about this view" rather than a screaming headline.
 // Canon: always "IAAI Canon" in the accent colour.
-export function CenterHeading({ scenario, scenarioSummary, summary, tab }: Props) {
+export function CenterHeading({
+  scenario,
+  scenarioSummary,
+  summary,
+  tab,
+  onEditScenario,
+  onNewScenario,
+  busy,
+}: Props) {
   if (tab === 'canon') {
     return (
       <div className="center-heading-wrap">
@@ -51,6 +67,35 @@ export function CenterHeading({ scenario, scenarioSummary, summary, tab }: Props
           {text}
         </div>
         {summary && <StanceDominantPill summary={summary} />}
+        {/* The scenario is otherwise read-only once a run exists: the composer
+            that created it is only rendered in the empty state, so there was
+            no way back to the text without reloading the page. */}
+        {(onEditScenario || onNewScenario) && (
+          <div className="scenario-heading-actions">
+            {onEditScenario && (
+              <button
+                type="button"
+                className="ghost-btn"
+                onClick={onEditScenario}
+                disabled={busy}
+                title="edit this scenario and re-forecast"
+              >
+                edit scenario
+              </button>
+            )}
+            {onNewScenario && (
+              <button
+                type="button"
+                className="ghost-btn"
+                onClick={onNewScenario}
+                disabled={busy}
+                title="clear this run and start from a blank scenario"
+              >
+                new scenario
+              </button>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

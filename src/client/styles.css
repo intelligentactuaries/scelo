@@ -2632,6 +2632,29 @@ body.is-resizing * {
   justify-content: center;
 }
 
+/* Edit / new scenario, beside the chip they act on. */
+.scenario-heading-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* The refine bar, centred under the heading. min-width: 0 on the card lets
+   its textarea shrink rather than pushing the cancel button off the row. */
+.scenario-edit-bar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 0 18px 10px;
+}
+
+.scenario-edit-bar .scenario-card {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 760px;
+}
+
 .stance-dominant-pill {
   position: relative;
   display: inline-flex;
@@ -3196,6 +3219,10 @@ body.is-resizing * {
   font-size: 14px;
   padding: 8px 10px;
   min-height: 34px;
+  /* The row auto-grows to fit a scenario opened for editing, then scrolls
+     rather than pushing the re-forecast button out of reach. */
+  max-height: 132px;
+  overflow-y: auto;
   resize: none;
   border-radius: 0;
 }
