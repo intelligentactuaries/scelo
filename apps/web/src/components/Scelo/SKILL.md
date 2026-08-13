@@ -150,9 +150,14 @@ boolean, missing, outlier, row-level):
 | `fix-encoding` | safe | cell — mojibake (UTF-8 ↔ Latin-1 misdecode) + strip BOM / NBSP / zero-width / soft hyphen |
 | `missing-tokens` | safe | cell — N/A / ? / - / "" / TBD / etc → null |
 | `parse-numeric` | safe | column — ≥80% numeric strings, cast (strips $, commas, %, parens, currency codes) |
+| `coerce-numeric` | safe | column — number-typed column with string residue ("6+"): keep the numeric prefix, null the rest |
 | `parse-dates` | safe | column — ≥80% date-shaped strings, canonicalise to ISO 8601 |
-| `standardise-booleans` | safe | column — yes/no/Y/N/on/off → true/false |
+| `standardise-booleans` | safe | column — yes/no/Y/N/on/off → true/false (skipped when already canonical) |
 | `replace-numeric-sentinels` | safe | column — repeated -999 / 9999 etc that sit > 5·IQR outside the column range |
+| `recode-value` | destructive | column — the keenest near-duplicate label pair, rarer spelling → commoner (one per plan) |
+| `null-future-years` | destructive | column — year-named integer columns with values past the current year |
+| `impute-missing` | destructive | column — fill nulls with the median (numeric) or mode (category), + a `was_missing_<col>` flag |
+| `cap-outliers` | destructive | column — clamp values outside the Tukey fences (Q1−1.5·IQR, Q3+1.5·IQR) to the fence |
 | `drop-duplicates` | destructive | row — exact match across all columns |
 | `drop-empty-cols` | destructive | column — >95% missing |
 | `drop-constant-cols` | destructive | column — exactly one distinct value |
@@ -163,10 +168,23 @@ boolean, missing, outlier, row-level):
 ops in a fused single per-row pass for performance: `fix-encoding →
 trim → collapse-whitespace → missing-tokens → standardise-booleans →
 parse-dates → parse-numeric → lowercase-categoricals`, then row dedupe,
-column drops, then header rename last so all prior ops still see the
-original names. Sentinel detection and large-dataset duplicate
-detection are sampled (stride over a 100k-row budget) above 200k rows
-so the analyser stays sub-second; apply always runs at full fidelity.
+column drops, header rename (so all prior ops still see the original
+names), and finally the two learned ops — `cap-outliers` then
+`impute-missing` — which need every rule-based fix already in place.
+Sentinel detection and large-dataset duplicate detection are sampled
+(stride over a 100k-row budget) above 200k rows so the analyser stays
+sub-second; apply always runs at full fidelity.
+
+`impute-missing` and `cap-outliers` are the only ops that FIT anything
+to the data (a median, a mode, a pair of fences). They are destructive,
+so they never fire from the banner's pre-selected set, and their
+`describeOp` detail carries the re-fit-on-train caveat. Both decline
+columns they can't defend — identifiers and free text have no mode,
+a degenerate IQR can't be clamped without flattening the column, a
+year isn't a distribution — via `imputeDecision` / `capDecision`, which
+return the reason so the chat can quote it back rather than silently
+skipping. Both are idempotent, which is what lets them sit inside the
+`autoCleanDataset` fixed-point loop.
 
 The Soft-Data stage chatbot (`SOFT_STAGE_FRAME`) and the per-column
 chatbot (`buildColumnStageContext` in `columnChatHints.ts`) both embed
