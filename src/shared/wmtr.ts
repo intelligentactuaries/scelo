@@ -614,13 +614,24 @@ export interface DriverContributions {
  * Decomposing the mean series instead leaves a Jensen gap, because the mean
  * of a product is not the product of the means.
  */
-export function driverContributions(r: WmtrSingleResult): DriverContributions {
+export function driverContributions(
+  r: WmtrSingleResult,
+  /**
+   * Year index to decompose up to. Defaults to the final year, which is the
+   * whole-run answer every existing caller wants. Passing an earlier index
+   * gives the decomposition AS OF that year — the same exact identity, just
+   * with a nearer right-hand endpoint — which is what lets the forecast
+   * dashboard scrub the driver bridge through time without a second copy of
+   * this formula drifting away from it.
+   */
+  upTo?: number,
+): DriverContributions {
   const p = r.config;
   const aSum = p.alphaM + p.alphaT + p.alphaR || 1;
   const aM = p.alphaM / aSum;
   const aT = p.alphaT / aSum;
   const aR = p.alphaR / aSum;
-  const last = r.years.length - 1;
+  const last = clamp(Math.floor(upTo ?? r.years.length - 1), 0, r.years.length - 1);
   const ln = (x: number | undefined) => Math.log(Math.max(x ?? 0, 1e-9));
 
   let M = 0,

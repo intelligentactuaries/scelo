@@ -7,7 +7,7 @@
 // which consensus intervention would shift the trajectory. The
 // council / society / synthesis tabs become drill-downs from here.
 
-import { useMemo } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Run, InterventionCluster, RunWmtr } from '../../shared/types';
 import { OUTCOME_COLOR, type Outcome } from '../../shared/wmtr';
 import { colorsForTheme } from '../../shared/constants';
@@ -15,12 +15,17 @@ import { useTheme } from '../lib/theme';
 import { voiceFor } from '../lib/forecastVoice';
 import {
   InterventionRow,
+  MIX_ORDER,
   WmtrChart,
   OUTCOME_BY_LABEL,
   componentsOption,
   driverBridgeOption,
+  driverContributions,
   outcomeGaugeOption,
+  outcomeMixByYear,
   outcomeMixMatchesBars,
+  outcomeLabel,
+  type OutcomeAspect,
   outcomeMixOption,
 } from './WmtrStrip';
 import {
@@ -137,6 +142,22 @@ export function ForecastCanvas({
   const wmtr = run.wmtr;
   const { resolved } = useTheme();
   const colors = colorsForTheme(resolved);
+  // Declared above the early return — a hook cannot sit behind a condition.
+  // `null` is the resting state: the whole run, exactly as before playback
+  // existed. A number is a year cursor the panels render as of.
+  const [cursor, setCursor] = useState<number | null>(null);
+  // Lifted out of <Playback> because the verdict language keys off it: a run
+  // in flight is "Growing", the same run paused is "Grew".
+  const [playing, setPlaying] = useState(false);
+  const aspect: OutcomeAspect = playing ? 'progressive' : 'settled';
+  const asOf = { aspect, ...(cursor === null ? {} : { upTo: cursor }) };
+  // O(years × paths); the header re-reads it on every playback tick, so it is
+  // derived once per run rather than once per frame. Computed above the early
+  // return because a hook cannot sit behind a condition.
+  const mixByYear = useMemo(
+    () => (run.wmtr ? outcomeMixByYear(run.wmtr.result) : null),
+    [run.wmtr],
+  );
 
   if (!wmtr) {
     return (
@@ -152,12 +173,47 @@ export function ForecastCanvas({
   const cfg = wmtr.config;
   const res = wmtr.result;
   const dom = wmtr.dominantOutcome;
-  const buckets = res.outcomeFractions;
   const last = res.years.length - 1;
-  const finalW = res.meanW[last] ?? 0;
-  const finalSurv = res.meanSurv[last] ?? 0;
-  const ratio = res.w0 > 0 ? finalW / res.w0 : 0;
   const clusters = run.summary?.interventionClusters ?? [];
+
+  // ── The verdict, as of the cursor ────────────────────────────────────────
+  //
+  // A forecast is a conclusion about a horizon, so it has to be read against
+  // the horizon actually on screen. With the panels scrubbing and the headline
+  // frozen on year 30, pausing at year 8 put "STABILIZED · 56% of 200 paths"
+  // above four charts showing something else — the one number a reader trusts
+  // most, describing a year they are not looking at.
+  //
+  // Uncursored (the resting state) everything below falls back to the run's
+  // own stored fields, so the default render is byte-for-byte what it was.
+  const atYear = cursor ?? last;
+  const scrubbing = cursor !== null;
+
+  const buckets: Record<Outcome, number> =
+    scrubbing && mixByYear
+      ? (Object.fromEntries(
+          MIX_ORDER.map((o) => [o, mixByYear[o][atYear] ?? 0]),
+        ) as Record<Outcome, number>)
+      : res.outcomeFractions;
+
+  // Ties keep MIX_ORDER's canonical best→worst precedence rather than
+  // flickering between two equal buckets on consecutive frames.
+  const domAt: Outcome = scrubbing
+    ? MIX_ORDER.reduce((best, o) => (buckets[o] > buckets[best] ? o : best), MIX_ORDER[0])
+    : dom;
+
+  const wAt = res.meanW[atYear] ?? 0;
+  const survAt = res.meanSurv[atYear] ?? 0;
+  const ratio = res.w0 > 0 ? wAt / res.w0 : 0;
+
+  const driverAt = scrubbing
+    ? (() => {
+        const c = driverContributions(res, atYear);
+        return (['M', 'T', 'R'] as const).reduce((b, k) =>
+          Math.abs(c[k]) > Math.abs(c[b]) ? k : b,
+        );
+      })()
+    : wmtr.driver;
 
   return (
     <div className="forecast-canvas">
@@ -167,27 +223,31 @@ export function ForecastCanvas({
           <span className="forecast-eyebrow-dot" /> W(M, T, R) · nanoeconomics forecast
         </div>
         <div className="forecast-headline">
-          <span className="forecast-headline-lead">Most likely outcome:</span>
+          <span className="forecast-headline-lead">
+            {scrubbing ? `Through year ${atYear}:` : 'Most likely outcome:'}
+          </span>
           <span
             className="forecast-headline-verdict"
-            style={{ color: OUTCOME_COLOR[dom], borderColor: OUTCOME_COLOR[dom] }}
+            style={{ color: OUTCOME_COLOR[domAt], borderColor: OUTCOME_COLOR[domAt] }}
             data-tooltip={explainOutcome(run)}
             // Focusable so the explanation is reachable by keyboard, not just
             // by hovering a mouse over it.
             tabIndex={0}
             role="note"
-            aria-label={`${dom} — ${explainOutcome(run).replace(/\n+/g, ' ')}`}
+            aria-label={`${outcomeLabel(domAt, aspect)} — ${explainOutcome(run).replace(/\n+/g, ' ')}`}
           >
-            {dom.toUpperCase()}
+            {outcomeLabel(domAt, aspect).toUpperCase()}
           </span>
           <span className="forecast-headline-share">
-            {pct(buckets[dom])} of {cfg.nPaths} paths
+            {pct(buckets[domAt])} of {cfg.nPaths} paths
           </span>
         </div>
         <div className="forecast-headline-meta">
-          horizon {cfg.horizon} y · shock {cfg.shock} · driver {wmtr.driver} ·
-          final W/W₀ {ratio >= 1 ? '+' : ''}{((ratio - 1) * 100).toFixed(0)}% ·
-          final survival {pct(finalSurv)}
+          horizon {cfg.horizon} y · shock {cfg.shock} · driver {driverAt} ·
+          {scrubbing ? ` W/W₀ at yr ${atYear} ` : ' final W/W₀ '}
+          {ratio >= 1 ? '+' : ''}{((ratio - 1) * 100).toFixed(0)}% ·
+          {scrubbing ? ' survival ' : ' final survival '}
+          {pct(survAt)}
         </div>
       </header>
 
@@ -199,13 +259,22 @@ export function ForecastCanvas({
           got there — is the supporting row. DOM order is the layout order, so
           the primaries also come first when the grid collapses to one column
           on narrow screens. */}
+      <Playback
+        years={res.years.length}
+        cursor={cursor}
+        onCursor={setCursor}
+        playing={playing}
+        onPlaying={setPlaying}
+        autoKey={run.id}
+      />
+
       <div className="forecast-grid">
         <ForecastPanel
           title="What moved W · money, time and relationships"
           className="forecast-panel--primary"
           insight={explainDriverBridge(wmtr, run.scenario)}
         >
-          <WmtrChart options={driverBridgeOption(wmtr, colors)} height={300} />
+          <WmtrChart options={driverBridgeOption(wmtr, colors, asOf)} height={300} />
         </ForecastPanel>
         <ForecastPanel
           title="W(M,T,R) components · mean across paths"
@@ -213,7 +282,7 @@ export function ForecastCanvas({
           insight={explainComponents(wmtr, run.scenario)}
         >
           <WmtrChart
-            options={componentsOption(wmtr, colors, { compact: false })}
+            options={componentsOption(wmtr, colors, { compact: false, ...asOf })}
             height={300}
           />
         </ForecastPanel>
@@ -228,7 +297,7 @@ export function ForecastCanvas({
               one filters the council to agents whose vote diverges from that
               bucket. */}
           <WmtrChart
-            options={outcomeGaugeOption(wmtr, colors)}
+            options={outcomeGaugeOption(wmtr, colors, asOf)}
             height={280}
             onSelect={(name) => {
               const o = OUTCOME_BY_LABEL[name];
@@ -248,7 +317,7 @@ export function ForecastCanvas({
         >
           {/* Matches the gauge beside it so the row has no dead strip under
               the shorter panel. */}
-          <WmtrChart options={outcomeMixOption(wmtr, colors)} height={280} />
+          <WmtrChart options={outcomeMixOption(wmtr, colors, asOf)} height={280} />
         </ForecastPanel>
       </div>
 
@@ -410,6 +479,149 @@ function CouncilReadback({
   );
 }
 
+/**
+ * Year scrubber for the four forecast panels.
+ *
+ * Every panel here is a view of a 60-year Monte Carlo that only ever showed
+ * its final frame — the bridge decomposed the whole run, the gauge carried the
+ * terminal verdict, the two time charts drew every year at once. The shapes
+ * are the interesting part: WHEN the green band overtakes the blue, when the
+ * first path collapses, when relationships overtake money as the driver. A
+ * cursor makes that visible without changing what any panel means, because
+ * each one already computes from a horizon — it was simply always handed the
+ * last index.
+ *
+ * `null` cursor is the resting state (the whole run), so a viewer who never
+ * touches the control sees exactly what they saw before.
+ */
+function Playback({
+  years,
+  cursor,
+  onCursor,
+  playing,
+  onPlaying,
+  autoKey,
+}: {
+  years: number;
+  cursor: number | null;
+  onCursor: (c: number | null) => void;
+  /** Owned by the canvas — the verdict's tense reads from the same flag. */
+  playing: boolean;
+  onPlaying: (p: boolean) => void;
+  /** Changes when a different forecast loads, which re-arms the autoplay. */
+  autoKey: string;
+}) {
+  const last = Math.max(0, years - 1);
+  const setPlaying = onPlaying;
+  // Held in a ref so the interval effect can depend on `playing` alone; taking
+  // `cursor` as a dependency would tear down and rebuild the timer on every
+  // tick, which drifts the cadence.
+  const cursorRef = useRef(cursor);
+  cursorRef.current = cursor;
+
+  useEffect(() => {
+    if (!playing || last <= 0) return;
+    const id = setInterval(() => {
+      const at = cursorRef.current ?? 0;
+      if (at >= last) {
+        // Finish by RELEASING the cursor rather than parking it on the last
+        // index. The two look identical on three panels, but the gauge reads
+        // the run's stored `outcomeFractions` when uncursored and re-derives
+        // the mix when cursored — and for runs predating the `classify` fix
+        // those legitimately disagree. Releasing guarantees the state you are
+        // left looking at is the same one the panel shows when nobody has
+        // touched the control. No loop: the end state is the forecast, and a
+        // silent restart reads as a glitch.
+        setPlaying(false);
+        onCursor(null);
+        return;
+      }
+      onCursor(at + 1);
+    }, 140);
+    return () => clearInterval(id);
+  }, [playing, last, onCursor]);
+
+  // Autoplay once per forecast. A ref rather than state so it cannot re-fire
+  // on an unrelated re-render, and keyed on the run so loading a different
+  // forecast plays that one too.
+  //
+  // Skipped under prefers-reduced-motion: someone who has asked their OS not
+  // to animate things has not asked any less for the forecast — the panels
+  // simply open on the complete run, and the control is still there to play
+  // it deliberately.
+  const startedFor = useRef<string | null>(null);
+  useEffect(() => {
+    if (startedFor.current === autoKey) return;
+    startedFor.current = autoKey;
+    if (last <= 0) return;
+    if (
+      typeof window !== 'undefined' &&
+      window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+    ) {
+      return;
+    }
+    onCursor(0);
+    setPlaying(true);
+  }, [autoKey, last, onCursor]);
+
+  if (last <= 0) return null;
+
+  const at = cursor ?? last;
+  const play = () => {
+    // Replay from the top when we are sitting on the end — whether that is
+    // the resting state or a finished run.
+    if (cursor === null || cursor >= last) onCursor(0);
+    setPlaying(true);
+  };
+
+  return (
+    <div className="forecast-playback">
+      <div className="forecast-playback-btns">
+        <button
+          type="button"
+          className="forecast-playback-btn"
+          onClick={playing ? () => setPlaying(false) : play}
+          title={playing ? 'pause' : 'play the run year by year'}
+          aria-label={playing ? 'pause' : 'play'}
+        >
+          {playing ? '❚❚' : '▶'}
+        </button>
+        <button
+          type="button"
+          className="forecast-playback-btn"
+          onClick={() => {
+            setPlaying(false);
+            onCursor(null);
+          }}
+          disabled={!playing && cursor === null}
+          // Stop returns to the COMPLETE run rather than to year 0. The whole
+          // forecast is this dashboard's resting state; rewinding to an empty
+          // first frame would leave the panels showing nothing at all.
+          title="stop and show the complete run"
+          aria-label="stop"
+        >
+          ■
+        </button>
+      </div>
+      <input
+        type="range"
+        className="forecast-playback-range"
+        min={0}
+        max={last}
+        value={at}
+        onChange={(e) => {
+          setPlaying(false);
+          onCursor(Number(e.target.value));
+        }}
+        aria-label="year"
+      />
+      <span className="forecast-playback-year num">
+        {cursor === null ? `all ${last} years` : `year ${at} / ${last}`}
+      </span>
+    </div>
+  );
+}
+
 function ReadbackStat({
   big,
   label,
@@ -424,6 +636,10 @@ function ReadbackStat({
   onClick?: () => void;
 }) {
   const interactive = !!onClick;
+  // Value and label share a line so each figure reads as the phrase it is —
+  // "0% trust the forecast" — rather than as a number stacked above a caption
+  // in a box. The three are peers in a sentence about one run, not three
+  // independent metrics that happened to be laid out side by side.
   return (
     <button
       type="button"
@@ -431,8 +647,10 @@ function ReadbackStat({
       onClick={onClick}
       disabled={!interactive}
     >
-      <span className="forecast-readback-big">{big}</span>
-      <span className="forecast-readback-label">{label}</span>
+      <span className="forecast-readback-head">
+        <span className="forecast-readback-big">{big}</span>
+        <span className="forecast-readback-label">{label}</span>
+      </span>
       <span className="forecast-readback-sub">{sub}</span>
     </button>
   );

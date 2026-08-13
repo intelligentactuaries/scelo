@@ -21,7 +21,8 @@
 // Esc hides without touching the run. Animations respect
 // prefers-reduced-motion (see .delib-* in styles.css).
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
+import { PersonaBloom } from './PersonaBloom';
 
 /** Stable per-profession hues, so a profession keeps its colour across
  *  rounds. Agent ids look like `c-actuary-intj-f`. */
@@ -67,7 +68,7 @@ export function DeliberationOverlay({
   title,
   subtitle,
   note,
-  seats,
+  total,
   litSeats,
   seatIds,
   ticks,
@@ -89,9 +90,9 @@ export function DeliberationOverlay({
   subtitle: string;
   /** Optional warning line (e.g. stream lost). */
   note?: string;
-  /** Seats drawn around the ring. */
-  seats: number;
-  /** How many are lit. */
+  /** Roster size — the bloom lays out for the full crowd, then reveals it. */
+  total: number;
+  /** Agents that have answered. */
   litSeats: number;
   /** index → agent id, for per-seat colour. */
   seatIds?: Map<number, string>;
@@ -119,28 +120,6 @@ export function DeliberationOverlay({
     return () => document.removeEventListener('keydown', onKey, true);
   }, [onHide]);
 
-  // Cap drawn seats so a 192-agent council stays legible; fills proportionally.
-  const drawn = Math.min(Math.max(seats, 1), 48);
-  const lit = seats > 0 ? Math.round((litSeats / seats) * drawn) : 0;
-  const R = 118;
-  const OUTER_R = 148;
-  const outerCirc = 2 * Math.PI * OUTER_R;
-
-  const seatDots = useMemo(
-    () =>
-      Array.from({ length: drawn }, (_, i) => {
-        const angle = (i / drawn) * Math.PI * 2 - Math.PI / 2;
-        const id = seatIds?.get(i);
-        return {
-          x: 170 + R * Math.cos(angle),
-          y: 170 + R * Math.sin(angle),
-          lit: i < lit,
-          color: id ? seatColorFor(id) : 'var(--accent)',
-        };
-      }),
-    [drawn, lit, seatIds],
-  );
-
   return (
     <div className="delib-overlay" role="status" aria-live="polite">
       <div className="delib-top">
@@ -148,85 +127,27 @@ export function DeliberationOverlay({
         <span className="delib-elapsed">{elapsed}</span>
       </div>
 
-      <div className="delib-ring">
-        <svg width="340" height="340" viewBox="0 0 340 340" role="img" aria-label={title}>
-          {outerFrac != null && (
-            <>
-              <circle
-                cx="170"
-                cy="170"
-                r={OUTER_R}
-                fill="none"
-                stroke="var(--border)"
-                strokeWidth="3"
-                opacity="0.5"
-              />
-              {outerFrac > 0 && (
-                <circle
-                  cx="170"
-                  cy="170"
-                  r={OUTER_R}
-                  fill="none"
-                  stroke="var(--link)"
-                  strokeWidth="3"
-                  strokeLinecap="round"
-                  strokeDasharray={`${outerFrac * outerCirc} ${outerCirc}`}
-                  transform="rotate(-90 170 170)"
-                  style={{ transition: 'stroke-dasharray 600ms ease' }}
-                />
-              )}
-            </>
-          )}
+      {/* Progress as a bloom of personas rather than a ring of identical
+          dots: which professions have reported, not just how many agents
+          have. The phase pips and the society arc move out of the ring's
+          centre into their own strips below. */}
+      <PersonaBloom total={total} litSeats={litSeats} seatIds={seatIds} />
 
-          {seatDots.map((s, i) => (
-            <circle
-              key={`${i}-${s.lit}`}
-              cx={s.x}
-              cy={s.y}
-              r={s.lit ? 5 : 3.5}
-              fill={s.lit ? s.color : 'transparent'}
-              stroke={s.lit ? s.color : 'var(--muted)'}
-              strokeWidth="1.4"
-              opacity={s.lit ? 0.95 : 0.45}
-              style={{ transition: 'all 300ms ease' }}
-            />
-          ))}
-
-          <circle
-            className="delib-breathe"
-            cx="170"
-            cy="170"
-            r="52"
-            fill="color-mix(in srgb, var(--accent) 12%, transparent)"
-            stroke="color-mix(in srgb, var(--accent) 60%, transparent)"
-            strokeWidth="1.5"
-          />
-
+      <div className="delib-strips">
+        <div className="delib-pips" aria-hidden>
           {Array.from({ length: ticks }, (_, i) => i + 1).map((r) => (
-            <circle
+            <span
               key={r}
-              cx={170 - ((ticks - 1) * 16) / 2 + (r - 1) * 16}
-              cy="170"
-              r="4.5"
-              fill={
-                r < tickCurrent
-                  ? 'var(--accent)'
-                  : r === tickCurrent
-                    ? 'color-mix(in srgb, var(--accent) 50%, transparent)'
-                    : 'transparent'
-              }
-              stroke="var(--accent)"
-              strokeWidth="1.2"
-              opacity={r === tickCurrent ? 1 : 0.7}
+              className={`delib-pip ${r < tickCurrent ? 'is-done' : r === tickCurrent ? 'is-now' : ''}`}
             />
           ))}
-        </svg>
-
-        {indeterminate && (
-          <div className="delib-comet" aria-hidden>
-            <div className="delib-comet-dot" style={{ top: `${170 - R - 4}px` }} />
+        </div>
+        {outerFrac != null && (
+          <div className="delib-outer" title="society pulse">
+            <div className="delib-outer-fill" style={{ width: `${Math.round(outerFrac * 100)}%` }} />
           </div>
         )}
+        {indeterminate && <span className="delib-working">working…</span>}
       </div>
 
       <div className="delib-phase">

@@ -593,8 +593,20 @@ export function App() {
       );
     } else if (e.type === 'society_start') {
       setSociety({ done: 0, total: e.total, finished: false });
+      // Seats are indexed per phase. Carrying the council's map into the
+      // society phase coloured 200 personas with 32 council agents' hues.
+      setSeatIds(new Map());
     } else if (e.type === 'society_progress') {
       setSociety((s) => (s ? { ...s, done: e.done, total: e.total } : { done: e.done, total: e.total, finished: false }));
+      if (e.agentId) {
+        const idx = e.done - 1;
+        setSeatIds((m) => {
+          const next = new Map(m);
+          next.set(idx, e.agentId as string);
+          return next;
+        });
+        setRecentVoices((v) => [{ seq: voiceSeqRef.current++, id: e.agentId as string }, ...v].slice(0, 4));
+      }
     } else if (e.type === 'society_done') {
       setSociety((s) => ({ done: e.total, total: e.total, finished: true, elapsedMs: e.elapsedMs, ...(s ?? {}) }));
       api.getRun(id).then(setRun).catch(() => {});
@@ -1614,14 +1626,22 @@ function CouncilRunOverlay({
         ? `${society?.done ?? 0} / ${society?.total ?? 0} personas reacted`
         : `${cur?.done ?? 0} / ${cur?.total ?? 0} agents responded`;
 
+  // The bloom counts whichever crowd is currently answering. The society
+  // phase has its OWN progress: feeding it the council's total froze it at
+  // full the moment the phase flipped — one jump, then nothing, while the
+  // subtitle beside it went on counting to 200.
+  const bloomTotal = phase === 'society' ? (society?.total ?? 0) : (cur?.total ?? 24);
+  const bloomDone =
+    phase === 'council' ? (cur?.done ?? 0) : phase === 'society' ? (society?.done ?? 0) : 0;
+
   return (
     <DeliberationOverlay
       eyebrow={`council${society ? ' + society' : ''}`}
       elapsed={elapsed}
       title={title}
       subtitle={subtitle}
-      seats={cur?.total ?? 24}
-      litSeats={phase === 'council' ? (cur?.done ?? 0) : phase === 'society' ? (cur?.total ?? 0) : 0}
+      total={bloomTotal}
+      litSeats={bloomDone}
       seatIds={seatIds}
       ticks={3}
       tickCurrent={phase === 'council' ? (cur?.round ?? 1) : phase === 'society' ? 3 : 1}

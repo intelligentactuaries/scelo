@@ -9,7 +9,7 @@ const SENTIMENTS: Sentiment[] = ['enthusiastic', 'supportive', 'neutral', 'skept
 
 export type SocietyProgress =
   | { type: 'society_start'; total: number }
-  | { type: 'society_progress'; done: number; total: number }
+  | { type: 'society_progress'; done: number; total: number; agentId?: string }
   | { type: 'society_done'; total: number; elapsedMs: number }
   | { type: 'society_error'; agentId: string; message: string };
 
@@ -179,7 +179,11 @@ export async function runSociety(
   onProgress({ type: 'society_start', total: agents.length });
   const t0 = performance.now();
   let done = 0;
-  const reportEvery = Math.max(20, Math.floor(agents.length / 25));
+  // One event per persona until a run is big enough to need thinning, capped
+  // at ~200 events. The previous `max(20, n/25)` floor meant a 200-persona
+  // cohort reported exactly TEN times across the whole phase — the progress
+  // crowd and the voice ticker were both starved of updates.
+  const reportEvery = Math.max(1, Math.floor(agents.length / 200));
 
   const results = await Promise.all(
     agents.map(async (agent) => {
@@ -195,8 +199,19 @@ export async function runSociety(
         });
         const parsed = parseSocietyResponse(text);
         done++;
+        // Every persona, thinned only on a run large enough to need it. The
+        // old `reportEvery` throttle meant the overlay's crowd and its voice
+        // ticker both sat frozen between beats — the ticker in particular
+        // stopped moving entirely, because there was nothing to move it.
+        // `agentId` rides along so each persona can carry its own hue and
+        // name rather than the whole cohort sharing one.
         if (done % reportEvery === 0 || done === agents.length) {
-          onProgress({ type: 'society_progress', done, total: agents.length });
+          onProgress({
+            type: 'society_progress',
+            done,
+            total: agents.length,
+            agentId: agent.id,
+          });
         }
         return {
           agent,
