@@ -46,6 +46,7 @@ import { SimulateScenarioModal } from "./SimulateScenarioModal";
 import { SmartColumnDashboard } from "./SmartColumnDashboard";
 import { type ChatAction, StageChatPanel } from "./StageChatPanel";
 import { UploadIndicator, type UploadState, nextPaint, useMinVisible } from "./UploadIndicator";
+import { auditRequest, formatAutoCleanReport } from "./autoCleanReport";
 import {
   AUTO_CLEAN_MAX_PASSES,
   type AutoCleanResult,
@@ -1759,65 +1760,6 @@ function ImportFileModal({
   );
 }
 
-// Chat write-up for an autonomous clean. Reports pass by pass, because the
-// whole point of the multi-pass loop is that later passes fix things the
-// earlier ones exposed — collapsing it to one flat list would hide that. Row
-// and column drops are called out separately: they're the destructive part,
-// and the user needs to see them without reading the step list.
-function formatAutoCleanReport(result: AutoCleanResult): string {
-  const lines: string[] = [];
-  const stepCount = result.passes.reduce((n, p) => n + p.opLabels.length, 0);
-
-  lines.push(
-    `Went through the entire dataset and cleaned it — ${stepCount} step${
-      stepCount === 1 ? "" : "s"
-    } over ${result.passes.length} pass${result.passes.length === 1 ? "" : "es"}.`,
-  );
-  lines.push("");
-  for (const pass of result.passes) {
-    lines.push(`**Pass ${pass.pass}**`);
-    for (const label of pass.opLabels) lines.push(`- ${label}`);
-    lines.push("");
-  }
-
-  const rowsDropped = result.rowsBefore - result.rowsAfter;
-  const shape: string[] = [];
-  if (rowsDropped > 0) {
-    shape.push(
-      `${rowsDropped.toLocaleString()} row${rowsDropped === 1 ? "" : "s"} removed (duplicates), ${result.rowsAfter.toLocaleString()} remain`,
-    );
-  }
-  if (result.droppedColumns.length > 0) {
-    shape.push(
-      `${result.droppedColumns.length} column${
-        result.droppedColumns.length === 1 ? "" : "s"
-      } dropped as empty or single-valued (${result.droppedColumns.map((c) => `\`${c}\``).join(", ")})`,
-    );
-  }
-  if (shape.length > 0) lines.push(`Shape: ${shape.join("; ")}.`, "");
-
-  switch (result.outcome) {
-    case "clean":
-      lines.push(
-        "I re-scanned after the last pass and found nothing further — the dataset is clean.",
-      );
-      break;
-    case "stalled":
-      lines.push(
-        `I stopped early: the last pass detected the same issues again without resolving them, so repeating it wouldn't help. Still outstanding: ${result.remaining.join(", ")}. These need a decision rather than a rule — tell me how you'd like them handled.`,
-      );
-      break;
-    case "exhausted":
-      lines.push(
-        `I hit the ${AUTO_CLEAN_MAX_PASSES}-pass ceiling with work still outstanding: ${result.remaining.join(", ")}. Press it again to keep going.`,
-      );
-      break;
-    default:
-      break;
-  }
-  return lines.join("\n");
-}
-
 // ── top-level workstation ────────────────────────────────────────────────────
 
 export function SoftDataWorkstation() {
@@ -2067,37 +2009,53 @@ export function SoftDataWorkstation() {
   // `cleaningPlan`, which is a single pass computed from the CURRENT dataset
   // and would still be the pass-1 plan for every later iteration (React has
   // not re-rendered mid-loop). The loop re-derives its own plan each pass.
-  const runAutoClean = useCallback((): string => {
-    if (!dataset) return "Load a dataset first, then I can clean it end to end.";
+  // `request` is the user's message when this came from chat, so the report
+  // can be audited against what they actually asked for. The chip passes
+  // nothing — it has no request beyond "clean it".
+  const runAutoClean = useCallback(
+    (request?: string): string => {
+      if (!dataset) return "Load a dataset first, then I can clean it end to end.";
 
-    const result: AutoCleanResult = autoCleanDataset(dataset, getColumnMetas);
+      const result: AutoCleanResult = autoCleanDataset(dataset, getColumnMetas);
 
-    if (result.outcome === "empty") {
-      return "There's nothing to clean yet — the dataset has no rows.";
-    }
-    if (result.passes.length === 0) {
-      // Reached the fixed point without applying anything: already clean.
-      return "I went through the whole dataset and found nothing to fix — no whitespace, missing markers, mistyped columns, duplicate rows, or dead columns. It's already clean.";
-    }
+      if (result.outcome === "empty") {
+        return "There's nothing to clean yet — the dataset has no rows.";
+      }
+      if (result.passes.length === 0) {
+        // Reached the fixed point without applying anything. "Already clean"
+        // is still only true in the engine's terms, so the same audit runs —
+        // a dataset the rules have no work on can easily be one the user's
+        // request is entirely unmet on.
+        const audit = request ? auditRequest(request, [], getColumnMetas(dataset)) : null;
+        const base =
+          "I went through the whole dataset and found nothing my cleaning rules would change — no whitespace, missing markers, mistyped columns, duplicate rows, dead columns, fillable gaps or out-of-fence values.";
+        return audit && audit.lines.length > 0
+          ? `${base}\n\n${audit.lines.join("\n")}`
+          : `${base} It's already clean.`;
+      }
 
-    commitDataset(`auto-clean (${result.passes.length} passes)`, result.dataset);
-    setFilters([]);
-    logEvent({
-      stage: "soft",
-      kind: "cleaning.auto",
-      payload: {
-        passes: result.passes.length,
-        outcome: result.outcome,
-        opLabels: result.passes.flatMap((p) => p.opLabels),
-        rowsBefore: result.rowsBefore,
-        rowsAfter: result.rowsAfter,
-        columnsBefore: result.columnsBefore,
-        columnsAfter: result.columnsAfter,
-        droppedColumns: result.droppedColumns,
-      },
-    });
-    return formatAutoCleanReport(result);
-  }, [dataset, setFilters, logEvent, commitDataset]);
+      commitDataset(`auto-clean (${result.passes.length} passes)`, result.dataset);
+      setFilters([]);
+      logEvent({
+        stage: "soft",
+        kind: "cleaning.auto",
+        payload: {
+          passes: result.passes.length,
+          outcome: result.outcome,
+          opLabels: result.passes.flatMap((p) => p.opLabels),
+          rowsBefore: result.rowsBefore,
+          rowsAfter: result.rowsAfter,
+          columnsBefore: result.columnsBefore,
+          columnsAfter: result.columnsAfter,
+          droppedColumns: result.droppedColumns,
+        },
+      });
+      // Profile the RESULT, not `dataset` — the audit's whole job is to say
+      // what is still outstanding after the loop finished.
+      return formatAutoCleanReport(result, request, getColumnMetas(result.dataset));
+    },
+    [dataset, setFilters, logEvent, commitDataset],
+  );
 
   // One-press affordances in the chat. Kept to the single action that is
   // genuinely tedious to phrase and has exactly one sensible execution.
@@ -2118,7 +2076,7 @@ export function SoftDataWorkstation() {
         label: "Auto-clean dataset",
         prompt: "Go through the entire dataset and clean it until it's fully clean.",
         hint: dataset
-          ? `Repeatedly scan and fix the whole dataset until nothing is left to fix (up to ${AUTO_CLEAN_MAX_PASSES} passes). Applies every fix it finds, including removing duplicate rows and dropping empty or single-valued columns. This rewrites the dataset and can't be undone.`
+          ? `Repeatedly scan and fix the whole dataset until nothing is left to fix (up to ${AUTO_CLEAN_MAX_PASSES} passes). Applies every fix it finds, including removing duplicate rows, dropping empty or single-valued columns, filling missing values from each column's median or mode, and clamping outliers to the Tukey fences. This rewrites the dataset and can't be undone.`
           : undefined,
         disabledReason: dataset ? null : "Load a dataset first.",
         run: runAutoClean,
@@ -2652,7 +2610,10 @@ export function SoftDataWorkstation() {
         /\b(repeat|keep|carry on|again and again)\b.*\bclean/.test(t);
       if (wantsAutonomous) {
         if (!dataset) return "Load a dataset first, then I can clean it end to end.";
-        return runAutoClean();
+        // Hand the whole message through: matching on "clean the entire
+        // dataset" is what routes here, but the rest of the sentence is what
+        // the answer has to be honest about.
+        return runAutoClean(text);
       }
 
       if (!dataset) return "Load a dataset first, then ask me to clean it.";

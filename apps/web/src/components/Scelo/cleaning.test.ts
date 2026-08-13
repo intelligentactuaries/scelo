@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import type { Dataset } from "@scelo/core";
-import type { ColumnMeta } from "@scelo/core";
+import { type ColumnMeta, summariseDataset } from "@scelo/core";
 import {
   AUTO_CLEAN_MAX_PASSES,
   type CleaningPlan,
@@ -10,6 +10,7 @@ import {
   augmentDataset,
   autoCleanDataset,
   canonicaliseDateCell,
+  capDecision,
   cleanColumnCells,
   cleaningOpsTouchedColumns,
   clearNonDateCells,
@@ -18,6 +19,7 @@ import {
   detectDateColumns,
   findNearDuplicateLabel,
   formatDateStyled,
+  imputeDecision,
   reformatDateColumns,
 } from "./cleaning";
 
@@ -884,5 +886,317 @@ describe("cleaningOpsTouchedColumns (undo scoping)", () => {
 
   test("empty op set is table scope, defensively", () => {
     expect(cleaningOpsTouchedColumns([])).toBeNull();
+  });
+});
+
+// ─── Learned ops: imputation + outlier capping ────────────────────────────
+//
+// These two are the only ops that fit something to the data, so they get the
+// real profiler rather than the minimal stand-in above: a median, Tukey
+// fences and a mode are exactly the parts a hand-rolled `profile()` would
+// approximate, and approximating them is how a test ends up proving something
+// the shipped code doesn't do.
+
+describe("imputeDecision", () => {
+  function metaOf(d: Dataset, column: string): ColumnMeta {
+    const meta = summariseDataset(d).find((m) => m.name === column);
+    if (!meta) throw new Error(`no such column: ${column}`);
+    return meta;
+  }
+
+  test("a numeric column fills from its median, not its mean", () => {
+    // Mean of the five present values is 1,820 — dragged there by one large
+    // claim. The median is 30, and that is what a fill has to use.
+    const d = ds(
+      [10, 20, 30, 40, 9000, null].map((v) => ({ premium: v })),
+      ["premium"],
+    );
+    const decision = imputeDecision(metaOf(d, "premium"));
+    expect(decision).toEqual({ kind: "fill", strategy: "median", value: 30 });
+  });
+
+  test("a category column fills from its mode", () => {
+    const d = ds(
+      [
+        ...Array.from({ length: 8 }, () => ({ sentiment: "positive" })),
+        { sentiment: "negative" },
+        { sentiment: "negative" },
+        { sentiment: null },
+      ],
+      ["sentiment"],
+    );
+    expect(imputeDecision(metaOf(d, "sentiment"))).toEqual({
+      kind: "fill",
+      strategy: "mode",
+      value: "positive",
+    });
+  });
+
+  test("an identifier column is declined, with the reason the code used", () => {
+    // Every value distinct: a "most common value" here is an accident of the
+    // data, and filling with it would mint a duplicate identity.
+    const d = ds(
+      [...Array.from({ length: 40 }, (_, i) => ({ member_id: `P${i}` })), { member_id: null }],
+      ["member_id"],
+    );
+    const decision = imputeDecision(metaOf(d, "member_id"));
+    expect(decision.kind).toBe("skip");
+    if (decision.kind === "skip") expect(decision.reason).toMatch(/identifier or free text/);
+  });
+
+  test("a mostly-empty column is declined rather than invented", () => {
+    // Four present values clears the "too few to learn from" gate, so this
+    // lands on the 95%-missing gate specifically.
+    const d = ds(
+      [
+        ...Array.from({ length: 4 }, () => ({ notes: "seen" })),
+        ...Array.from({ length: 100 }, () => ({ notes: null })),
+      ],
+      ["notes"],
+    );
+    const decision = imputeDecision(metaOf(d, "notes"));
+    expect(decision.kind).toBe("skip");
+    if (decision.kind === "skip") expect(decision.reason).toMatch(/95% missing/);
+  });
+
+  test("a column with nothing missing is left alone", () => {
+    const d = ds([{ a: 1 }, { a: 2 }, { a: 3 }, { a: 4 }], ["a"]);
+    expect(imputeDecision(metaOf(d, "a")).kind).toBe("skip");
+  });
+});
+
+describe("capDecision", () => {
+  function metaOf(d: Dataset, column: string): ColumnMeta {
+    const meta = summariseDataset(d).find((m) => m.name === column);
+    if (!meta) throw new Error(`no such column: ${column}`);
+    return meta;
+  }
+
+  test("a fat right tail is cappable at the Tukey fences", () => {
+    const d = ds(
+      [...Array.from({ length: 40 }, (_, i) => ({ claim: i + 1 })), { claim: 100_000 }],
+      ["claim"],
+    );
+    const decision = capDecision(metaOf(d, "claim"));
+    expect(decision.kind).toBe("cap");
+    if (decision.kind === "cap") {
+      expect(decision.count).toBeGreaterThan(0);
+      expect(decision.hiFence).toBeGreaterThan(decision.loFence);
+      expect(decision.hiFence).toBeLessThan(100_000);
+    }
+  });
+
+  test("a degenerate IQR is refused — clamping there flattens the column", () => {
+    // Q1 === Q3 === 5, so both fences land on 5 and min(max(x,5),5) would
+    // rewrite every value to 5.
+    const d = ds([...Array.from({ length: 40 }, () => ({ n: 5 })), { n: 900 }], ["n"]);
+    const decision = capDecision(metaOf(d, "n"));
+    expect(decision.kind).toBe("skip");
+  });
+
+  test("year columns are calendar facts, not distributions", () => {
+    const d = ds(
+      [...Array.from({ length: 40 }, () => ({ policy_year: 2024 })), { policy_year: 1804 }],
+      ["policy_year"],
+    );
+    expect(capDecision(metaOf(d, "policy_year")).kind).toBe("skip");
+  });
+
+  test("a clean column has nothing to cap", () => {
+    const d = ds(
+      Array.from({ length: 40 }, (_, i) => ({ n: i })),
+      ["n"],
+    );
+    expect(capDecision(metaOf(d, "n")).kind).toBe("skip");
+  });
+});
+
+describe("impute-missing / cap-outliers through analyse + apply", () => {
+  // A miniature of the frame that exposed this: an id column that must not be
+  // touched, a category with holes, and a money column with a fat tail.
+  function frame(): Dataset {
+    const rows = Array.from({ length: 60 }, (_, i) => ({
+      member_id: `P${String(i).padStart(4, "0")}`,
+      sentiment: i % 7 === 0 ? null : i % 3 === 0 ? "negative" : "positive",
+      monthly_income_zar: i === 59 ? 4_000_000 : 1000 + i * 10,
+    }));
+    return ds(rows, ["member_id", "sentiment", "monthly_income_zar"]);
+  }
+
+  test("the analyser proposes both, and both are unsafe by default", () => {
+    const d = frame();
+    const plan = analyseCleaning(d, summariseDataset(d));
+    const impute = plan.ops.find((o) => o.key === "impute-missing");
+    const cap = plan.ops.find((o) => o.key === "cap-outliers");
+    expect(impute).toBeDefined();
+    expect(cap).toBeDefined();
+    // The banner's recommended set must not fire either of them silently.
+    const safe = defaultEnabled(plan);
+    expect(safe.has("impute-missing")).toBe(false);
+    expect(safe.has("cap-outliers")).toBe(false);
+  });
+
+  test("the identifier column is never proposed for a fill", () => {
+    const d = frame();
+    const plan = analyseCleaning(d, summariseDataset(d));
+    const impute = plan.ops.find((o) => o.key === "impute-missing");
+    if (impute?.key !== "impute-missing") throw new Error("expected an impute op");
+    expect(impute.columns.map((c) => c.name)).not.toContain("member_id");
+  });
+
+  test("filling writes the mode and flags every row it touched", () => {
+    const d = frame();
+    const plan = analyseCleaning(d, summariseDataset(d));
+    const out = applyCleaning(d, plan, new Set(["impute-missing"]));
+
+    expect(out.rows.every((r) => r.sentiment !== null)).toBe(true);
+    // The flag sits immediately after the column it qualifies.
+    expect(out.columns).toEqual([
+      "member_id",
+      "sentiment",
+      "was_missing_sentiment",
+      "monthly_income_zar",
+    ]);
+    // Written for every row — a flag present only on filled rows would itself
+    // read as missing data.
+    expect(out.rows.every((r) => r.was_missing_sentiment !== null)).toBe(true);
+    const flagged = out.rows.filter((r) => r.was_missing_sentiment === "true");
+    expect(flagged.length).toBe(d.rows.filter((r) => r.sentiment === null).length);
+    expect(flagged.every((r) => r.sentiment === "positive")).toBe(true);
+    expect(out.rows.length).toBe(d.rows.length);
+  });
+
+  test("capping clamps to the fence and loses no rows", () => {
+    const d = frame();
+    const plan = analyseCleaning(d, summariseDataset(d));
+    const cap = plan.ops.find((o) => o.key === "cap-outliers");
+    if (cap?.key !== "cap-outliers") throw new Error("expected a cap op");
+    const fence = cap.columns.find((c) => c.name === "monthly_income_zar");
+    if (!fence) throw new Error("expected the income column to be capped");
+
+    const out = applyCleaning(d, plan, new Set(["cap-outliers"]));
+    expect(out.rows.length).toBe(d.rows.length);
+    const capped = out.rows.map((r) => r.monthly_income_zar as number);
+    expect(Math.max(...capped)).toBe(fence.hiFence);
+    // Everything inside the fences is untouched.
+    expect(capped.slice(0, 59)).toEqual(
+      d.rows.slice(0, 59).map((r) => r.monthly_income_zar as number),
+    );
+  });
+
+  test("an existing was_missing_ column is never overwritten", () => {
+    const base = frame();
+    const d = ds(
+      base.rows.map((r) => ({ ...r, was_missing_sentiment: "keep me" })),
+      [...base.columns, "was_missing_sentiment"],
+    );
+    const plan = analyseCleaning(d, summariseDataset(d));
+    const out = applyCleaning(d, plan, new Set(["impute-missing"]));
+    expect(out.rows.every((r) => r.was_missing_sentiment === "keep me")).toBe(true);
+    // The fill still happens — only the flag is withheld.
+    expect(out.rows.every((r) => r.sentiment !== null)).toBe(true);
+  });
+
+  test("both are idempotent, so the auto-clean loop still converges", () => {
+    const d = frame();
+    const result = autoCleanDataset(d, summariseDataset);
+    expect(result.outcome).toBe("clean");
+    // The real proof: re-analysing the finished dataset proposes nothing. A
+    // cap that moved the quartiles, or a fill that left a hole, would show up
+    // here as an op that never stops being suggested.
+    expect(analyseCleaning(result.dataset, summariseDataset(result.dataset)).ops).toHaveLength(0);
+    expect(result.rowsAfter).toBe(result.rowsBefore);
+  });
+
+  test("a fill waits for the sentinels to be nulled first", () => {
+    // -999 is a legacy missing marker. Imputing while it is still a live
+    // value would bake it into the median; the analyser must hold the fill
+    // back until the pass that nulls it has run. The real values stay in a
+    // tight band so -999 clears the sentinel detector's 5×IQR guard.
+    const rows = Array.from({ length: 40 }, (_, i) => ({
+      claim_amount: i < 6 ? -999 : i * 5,
+      note: i === 3 ? null : "x",
+    }));
+    const d = ds(rows, ["claim_amount", "note"]);
+
+    const firstPlan = analyseCleaning(d, summariseDataset(d));
+    expect(firstPlan.ops.some((o) => o.key === "replace-numeric-sentinels")).toBe(true);
+    const firstImpute = firstPlan.ops.find((o) => o.key === "impute-missing");
+    const claimInFirstPass =
+      firstImpute?.key === "impute-missing" &&
+      firstImpute.columns.some((c) => c.name === "claim_amount");
+    expect(claimInFirstPass).toBe(false);
+
+    const result = autoCleanDataset(d, summariseDataset);
+    const fills = result.passes
+      .flatMap((p) => p.ops)
+      .filter((o) => o.key === "impute-missing")
+      .flatMap((o) => (o.key === "impute-missing" ? o.columns : []))
+      .filter((c) => c.name === "claim_amount");
+    expect(fills).toHaveLength(1);
+    // Median of the surviving 34 real values (600…3900), with no -999 in it.
+    expect(fills[0].value).toBeGreaterThan(0);
+  });
+});
+
+describe("standardise-booleans stops re-proposing itself", () => {
+  function profile(d: Dataset): ColumnMeta[] {
+    return summariseDataset(d);
+  }
+
+  test("a column already spelled true/false proposes nothing", () => {
+    const d = ds(
+      Array.from({ length: 20 }, (_, i) => ({ flag: i % 2 === 0 ? "true" : "false" })),
+      ["flag"],
+    );
+    const plan = analyseCleaning(d, profile(d));
+    expect(plan.ops.some((o) => o.key === "standardise-booleans")).toBe(false);
+  });
+
+  test("yes/no still gets standardised, then goes quiet", () => {
+    const d = ds(
+      Array.from({ length: 20 }, (_, i) => ({ flag: i % 2 === 0 ? "Yes" : "no" })),
+      ["flag"],
+    );
+    expect(analyseCleaning(d, profile(d)).ops.some((o) => o.key === "standardise-booleans")).toBe(
+      true,
+    );
+    const result = autoCleanDataset(d, profile);
+    expect(result.outcome).toBe("clean");
+    expect(new Set(result.dataset.rows.map((r) => r.flag))).toEqual(new Set(["true", "false"]));
+  });
+});
+
+describe("cleaningOpsTouchedColumns covers the learned ops", () => {
+  test("an imputation scopes to the column AND the flag it introduces", () => {
+    const touched = cleaningOpsTouchedColumns([
+      {
+        key: "impute-missing",
+        columns: [
+          {
+            name: "sentiment",
+            strategy: "mode",
+            value: "positive",
+            cells: 9,
+            indicator: "was_missing_sentiment",
+          },
+        ],
+        cells: 9,
+        safe: false,
+      },
+    ]);
+    expect(touched?.slice().sort()).toEqual(["sentiment", "was_missing_sentiment"]);
+  });
+
+  test("a cap scopes to the columns it clamps", () => {
+    const touched = cleaningOpsTouchedColumns([
+      {
+        key: "cap-outliers",
+        columns: [{ name: "premium", loFence: 0, hiFence: 100, count: 3 }],
+        cells: 3,
+        safe: false,
+      },
+    ]);
+    expect(touched).toEqual(["premium"]);
   });
 });
