@@ -4,6 +4,7 @@ import { colorsForTheme } from '../../shared/constants';
 import { useTheme } from '../lib/theme';
 import { SENTIMENT_ORDER, sentimentColors } from '../lib/societyPalette';
 import type { SocietyPin } from './SocietyGraph';
+import { HalfDonut } from './HalfDonut';
 
 const REACTION_WORDS = 12;
 
@@ -78,7 +79,7 @@ function ClusterInspector({
       )}
       <div className="inspector-body">
         <div className="panel-label">sentiment mix</div>
-        {summary && <SentimentBar mix={summary.sentimentMix} total={summary.size} />}
+        {summary && <SentimentBar mix={summary.sentimentMix} />}
         {members.length > 0 && (
           <>
             <div className="panel-label">sample members</div>
@@ -205,39 +206,17 @@ function SentimentInspector({
   );
 }
 
-function SentimentBar({
-  mix,
-  total,
-}: {
-  mix: Record<Sentiment, number>;
-  total: number;
-}) {
+function SentimentBar({ mix }: { mix: Record<Sentiment, number> }) {
   const SENTIMENT_COLORS = sentimentColors(colorsForTheme(useTheme().resolved));
   return (
-    <div>
-      <div className="stack-bar">
-        {SENTIMENT_ORDER.map((s) => {
-          const v = mix[s] ?? 0;
-          const pct = total > 0 ? (v / total) * 100 : 0;
-          if (pct === 0) return null;
-          return (
-            <div
-              key={s}
-              className="stack-seg"
-              style={{ width: `${pct}%`, background: SENTIMENT_COLORS[s] }}
-              title={`${s}: ${v}`}
-            />
-          );
-        })}
-      </div>
-      <div className="syn-legend muted small" style={{ marginTop: 6 }}>
-        {SENTIMENT_ORDER.filter((s) => (mix[s] ?? 0) > 0).map((s) => (
-          <span key={s}>
-            <i style={{ background: SENTIMENT_COLORS[s] }} /> {s} {mix[s]}
-          </span>
-        ))}
-      </div>
-    </div>
+    <HalfDonut
+      name="sentiment"
+      data={SENTIMENT_ORDER.map((s) => ({
+        name: s,
+        value: mix[s] ?? 0,
+        color: SENTIMENT_COLORS[s],
+      }))}
+    />
   );
 }
 

@@ -5,22 +5,10 @@ import type {
   RunSummary,
   Stance,
 } from '../../shared/types';
-import { riskKey } from '../../shared/risks';
+import { clusterRisks } from '../../shared/risks';
 
-function topRisks(results: CouncilAgentResult[], k: number): RunSummary['topRisks'] {
-  const counts = new Map<string, { display: string; count: number }>();
-  for (const r of results) {
-    const key = riskKey(r.keyRisk);
-    if (!key) continue;
-    const cur = counts.get(key);
-    if (cur) cur.count++;
-    else counts.set(key, { display: r.keyRisk, count: 1 });
-  }
-  return Array.from(counts.values())
-    .sort((a, b) => b.count - a.count)
-    .slice(0, k)
-    .map((x) => ({ risk: x.display, count: x.count }));
-}
+/** How many clusters the readback lists before deferring to the council tab. */
+const TOP_RISK_LIMIT = 8;
 
 export function synthesize(results: CouncilAgentResult[]): RunSummary {
   const total = results.length;
@@ -45,12 +33,24 @@ export function synthesize(results: CouncilAgentResult[]): RunSummary {
     .sort((a, b) => b.finalConfidence - a.finalConfidence)
     .map((r) => r.agent.id);
 
+  // Cluster once, then slice — the totals have to describe the whole set,
+  // not the part that fits on screen.
+  const allRisks = clusterRisks(results.map((r) => r.keyRisk));
+  const topRisks = allRisks.slice(0, TOP_RISK_LIMIT);
+  let riskAgentsTotal = 0;
+  for (const c of allRisks) riskAgentsTotal += c.count;
+  let riskAgentsShown = 0;
+  for (const c of topRisks) riskAgentsShown += c.count;
+
   return {
     consensusScore,
     supportPct: total === 0 ? 0 : Math.round((support / total) * 100),
     opposePct: total === 0 ? 0 : Math.round((oppose / total) * 100),
     abstainPct: total === 0 ? 0 : Math.round((abstain / total) * 100),
-    topRisks: topRisks(results, 8),
+    topRisks,
+    riskClusterCount: allRisks.length,
+    riskAgentsShown,
+    riskAgentsTotal,
     dissentingAgentIds: dissenting,
     interventionClusters: clusterInterventions(results),
   };

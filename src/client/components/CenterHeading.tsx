@@ -1,5 +1,5 @@
 import type { CouncilAgentResult, RunSummary, Stance } from '../../shared/types';
-import { riskKey } from '../../shared/risks';
+import { clusterRisks } from '../../shared/risks';
 import { colorsForTheme } from '../../shared/constants';
 import { useTheme } from '../lib/theme';
 import type { TabId } from './ViewTabs';
@@ -147,15 +147,9 @@ function explainStance(
 
   // Same clustering the server used for summary.topRisks, but over this
   // stance only — the question is why THESE agents voted this way.
-  const byRisk = new Map<string, { risk: string; count: number }>();
-  for (const r of group) {
-    const key = riskKey(r.keyRisk);
-    if (!key) continue;
-    const cur = byRisk.get(key);
-    if (cur) cur.count++;
-    else byRisk.set(key, { risk: clipRisk(r.keyRisk), count: 1 });
-  }
-  const risks = [...byRisk.values()].sort((a, b) => b.count - a.count).slice(0, 2);
+  const risks = clusterRisks(group.map((r) => r.keyRisk))
+    .slice(0, 2)
+    .map((c) => ({ risk: clipRisk(c.risk), count: c.count }));
 
   // Professions carrying the stance, but only when they actually concentrate
   // it — naming two seats out of twenty would imply a pattern that isn't there.

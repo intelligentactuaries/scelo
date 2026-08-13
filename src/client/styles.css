@@ -1528,21 +1528,6 @@ code {
   gap: 10px;
 }
 
-.stack-bar {
-  display: flex;
-  /* 2px surface gap between segments — zero-share segments are skipped by
-     the components (a 0-width flex child would still contribute a gap). */
-  gap: 2px;
-  height: 14px;
-  border-radius: var(--radius);
-  overflow: hidden;
-  border: 1px solid var(--border);
-}
-
-.stack-seg {
-  height: 100%;
-}
-
 .syn-legend {
   display: flex;
   gap: 18px;
@@ -4579,27 +4564,8 @@ body.is-resizing * {
   gap: 8px;
 }
 
-.simulation-macro-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 10px;
-}
 
-.simulation-macro-tile {
-  background: var(--bg-2);
-  border: 1px solid var(--grid);
-  padding: 10px 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
 
-.simulation-macro-value {
-  font-size: 22px;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-  line-height: 1.05;
-}
 
 .simulation-breakdown {
   display: grid;
@@ -5100,4 +5066,92 @@ body.is-resizing * {
   border-color: var(--accent);
   color: var(--fg);
   background: transparent;
+}
+
+
+
+
+
+
+
+/* The percentage is the number people came for — push it to the far edge so
+   a column of tiles reads as one right-aligned scale. */
+
+
+
+
+
+
+/* Separator between figures only — never a dangling rule after the last. */
+
+
+
+
+
+
+/* ── Macro impact ledger ────────────────────────────────────────────────────
+   A statement, not a dashboard: three subject columns, figures right-aligned
+   in a tabular column so magnitudes compare down the column, hairline under
+   each heading, and no card chrome. `max-content` on the value column sizes
+   it to the widest figure in that group, which is what puts the digits on a
+   shared right edge without hard-coding a width. */
+.macro-ledger {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 18px 34px;
+}
+
+.macro-group {
+  display: flex;
+  flex-direction: column;
+}
+
+.macro-group-title {
+  padding-bottom: 6px;
+  margin-bottom: 6px;
+  border-bottom: 1px solid var(--grid);
+}
+
+.macro-row {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  align-items: baseline;
+  column-gap: 12px;
+  padding: 4px 0;
+}
+
+.macro-row-value {
+  text-align: right;
+  font-size: 1.2rem;
+  letter-spacing: -0.01em;
+  /* Digits share a width, so the column stays a column even as the numbers
+     change between runs. */
+  font-variant-numeric: tabular-nums;
+}
+
+.macro-row-text {
+  color: var(--fg);
+  min-width: 0;
+}
+
+/* The unit rides with the label rather than sitting on its own line — it is
+   a footnote to the label, not a third field. */
+.macro-row-sub {
+  white-space: normal;
+}
+
+/* ── Categorical breakdown — half-doughnut ──────────────────────────────────
+   Sized generously on purpose. The half-doughnut only uses the upper half of
+   its box, and ECharts scales the arch off min(width, height) — so in a wide
+   panel it is the HEIGHT that decides how big the arch reads, and a short box
+   yields a thin ribbon no matter how much width it is given. */
+.donut-chart {
+  width: 100%;
+  height: clamp(260px, 32vh, 360px);
+}
+
+.donut-empty {
+  display: grid;
+  place-items: center;
+  min-height: 120px;
 }

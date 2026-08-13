@@ -1,6 +1,7 @@
 import type { Run } from '../../shared/types';
 import { colorsForTheme, PROFESSIONS, type Profession } from '../../shared/constants';
 import { useTheme } from '../lib/theme';
+import { HalfDonut } from './HalfDonut';
 
 type Props = {
   run: Run;
@@ -32,6 +33,11 @@ export function SynthesisView({ run, onSelectAgent }: Props) {
     else c.abs++;
   }
 
+  // Older runs were summarised before these counts existed; fall back to the
+  // shown slice so a rehydrated run reports no phantom hidden clusters.
+  const clusterCount = s.riskClusterCount ?? s.topRisks.length;
+  const hiddenRiskClusters = Math.max(0, clusterCount - s.topRisks.length);
+
   const dissenters = s.dissentingAgentIds
     .map((id) => run.councilResults.find((r) => r.agent.id === id))
     .filter((x): x is NonNullable<typeof x> => !!x)
@@ -46,12 +52,14 @@ export function SynthesisView({ run, onSelectAgent }: Props) {
 
       <section className="syn-section">
         <div className="panel-label">trust in the forecast</div>
-        <StackBar support={s.supportPct} oppose={s.opposePct} abstain={s.abstainPct} colors={colors} />
-        <div className="syn-legend muted small">
-          <span><i style={{ background: colors.consensus }} /> trust {s.supportPct}%</span>
-          <span><i style={{ background: colors.adversarial }} /> distrust {s.opposePct}%</span>
-          <span><i style={{ background: colors.muted }} /> uncertain {s.abstainPct}%</span>
-        </div>
+        <HalfDonut
+          name="trust in the forecast"
+          data={[
+            { name: 'trust', value: s.supportPct, color: colors.consensus },
+            { name: 'distrust', value: s.opposePct, color: colors.adversarial },
+            { name: 'uncertain', value: s.abstainPct, color: colors.muted },
+          ]}
+        />
         <div className="syn-metric">
           <div>
             <div className="panel-label">consensus</div>
@@ -105,6 +113,17 @@ export function SynthesisView({ run, onSelectAgent }: Props) {
               <span>{r.risk}</span>
             </div>
           ))}
+          {/* The list is a top-N slice. Saying so is the difference between
+              "these are the council's concerns" and "these are the eight
+              most-cited of nineteen" — the dissenters list below has always
+              had this affordance and the risks list never did. */}
+          {hiddenRiskClusters > 0 && (
+            <div className="muted small" style={{ padding: '4px 2px' }}>
+              … {hiddenRiskClusters} more cluster{hiddenRiskClusters === 1 ? '' : 's'} — the{' '}
+              {s.topRisks.length} shown account for {s.riskAgentsShown} of {s.riskAgentsTotal}{' '}
+              agents who stated a risk. Drill in via the council tab.
+            </div>
+          )}
         </div>
       </section>
 
@@ -132,21 +151,6 @@ export function SynthesisView({ run, onSelectAgent }: Props) {
           </div>
         )}
       </section>
-    </div>
-  );
-}
-
-function StackBar({ support, oppose, abstain, colors }: { support: number; oppose: number; abstain: number; colors: ReturnType<typeof colorsForTheme> }) {
-  const segs = [
-    { key: 'trust', v: support, bg: colors.consensus },
-    { key: 'distrust', v: oppose, bg: colors.adversarial },
-    { key: 'uncertain', v: abstain, bg: colors.muted },
-  ].filter((s) => s.v > 0);
-  return (
-    <div className="stack-bar">
-      {segs.map((s) => (
-        <div key={s.key} className="stack-seg" style={{ flex: s.v, background: s.bg }} />
-      ))}
     </div>
   );
 }

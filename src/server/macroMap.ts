@@ -60,7 +60,13 @@ function dailyWageFor(agent: SocietyAgent): number {
 
 export interface MacroSummary {
   population: number;
+  /** Agents that produced a usable outcome — the basis of every figure here. */
   sampleSize: number;
+  /** Agents whose call failed (provider down, unreadable envelope). Excluded
+   *  from every total: their placeholder outcome is all zeros, so counting
+   *  them would silently deflate the whole macro picture in proportion to the
+   *  failure rate, with nothing on screen to say so. */
+  failedCount: number;
   scaleFactor: number; // pop / sampleSize
   // headline
   /** Aggregate workdays lost across the modelled population. */
@@ -104,9 +110,14 @@ function ageBandLabel(age: number): string {
 }
 
 export function aggregateMacro(
-  results: SimulationAgentResult[],
+  allResults: SimulationAgentResult[],
   args: { population?: number } = {},
 ): MacroSummary {
+  // A failed agent carries a neutral all-zero placeholder, not an
+  // observation. Scaling by the full request size would treat each failure as
+  // a real person who lost no workdays and spent nothing.
+  const results = allResults.filter((r) => !r.failure);
+  const failedCount = allResults.length - results.length;
   const sampleSize = results.length;
   const population = args.population ?? SA_POPULATION;
   const scale = sampleSize > 0 ? population / sampleSize : 0;
@@ -174,6 +185,7 @@ export function aggregateMacro(
   return {
     population,
     sampleSize,
+    failedCount,
     scaleFactor: scale,
     workdaysLostTotal: Math.round(workdaysLost * scale),
     gdpDragZar: Math.round(gdpDrag * scale),
@@ -205,7 +217,9 @@ export const SA_MACRO_PROVENANCE: string[] = [
   'Daily wage informal R280 — StatsSA QLFS 2024.',
   'Avg admission cost R18,500 — blended public+private; CMS 2023 + Treasury health spend (proxy).',
   'Mortality, severe/critical, admissions & severe-illness cost are expected values: per-agent conditional outcome × infectionProbability, summed, then scaled.',
+  'Health fields are coupled to reported severity: admission requires moderate+, death requires severe+ (fatalities are modelled as passing through severe/critical illness). This keeps deaths ≤ severe/critical ≤ admissions. Deaths from unhospitalised moderate cases are real but rare, and are not modelled.',
+  'Agents whose call failed are excluded and reported separately as failedCount — figures scale off the agents that answered, never off the requested sample size.',
   'Workdays, GDP drag, claims & out-of-pocket are behavioural/unconditional per-agent reports, summed then scaled.',
-  'Under-15s cannot be employed (BCEA s43): their workdaysLost is forced to 0. Caregiver absenteeism for sick children is NOT modelled (proxy gap).',
+  'Workdays lost accrue only to the employed, self-employed and informally employed — under-15s (BCEA s43) and the non-economically-active are forced to 0, matching the R0/day they are valued at. Caregiver absenteeism for sick children is NOT modelled (proxy gap).',
   "Under-12s are answered by a parent/guardian (Children's Act s129 consent age); their costs are household costs.",
 ];
