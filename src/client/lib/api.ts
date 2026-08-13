@@ -254,7 +254,7 @@ export type StreamEvent =
   | { type: 'agent_done'; round: 1 | 2 | 3; agentId: string; done: number; total: number }
   | { type: 'round_done'; round: 1 | 2 | 3; total: number; elapsedMs: number }
   | { type: 'society_start'; total: number }
-  | { type: 'society_progress'; done: number; total: number }
+  | { type: 'society_progress'; done: number; total: number; agentId?: string }
   | { type: 'society_done'; total: number; elapsedMs: number }
   | { type: 'society_error'; agentId: string; message: string }
   | { type: 'justify_start'; total: number }

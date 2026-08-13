@@ -10,6 +10,7 @@ import type {
   SimulationAgentResult,
   SocietyAgent,
 } from '../shared/types';
+import { AGE_BANDS, ageBandLabel } from '../shared/bands';
 
 // ─── SA assumptions (replace per country) ────────────────────────────────
 
@@ -96,17 +97,6 @@ export interface MacroSummary {
   uptake: { accepted: number; declined: number; unsure: number };
   /** Spending shift breakdown. */
   spending: { reduced: number; unchanged: number; increased: number };
-}
-
-function ageBandLabel(age: number): string {
-  if (age < 15) return '0-14';
-  if (age < 25) return '15-24';
-  if (age < 35) return '25-34';
-  if (age < 45) return '35-44';
-  if (age < 55) return '45-54';
-  if (age < 65) return '55-64';
-  if (age < 75) return '65-74';
-  return '75+';
 }
 
 export function aggregateMacro(
@@ -196,9 +186,14 @@ export function aggregateMacro(
     hospitalAdmissions: Math.round(admissions * scale),
     hospitalCostZar: Math.round(admissions * scale * SA_ADMISSION_COST_AVG_ZAR),
     severeIllnessCostZar: Math.round(severeIllnessCost * scale),
-    workdaysByAge: Array.from(workdaysByAge.entries())
-      .map(([band, lost]) => ({ band, lost: Math.round(lost * scale) }))
-      .sort((a, b) => a.band.localeCompare(b.band)),
+    // Every band, in age order — including the empty ones. Reporting only
+    // the populated bands made an absent 65-74 indistinguishable from a
+    // 65-74 that worked through the shock, and left the row order at the
+    // mercy of a lexicographic sort over labels.
+    workdaysByAge: AGE_BANDS.map((band) => ({
+      band,
+      lost: Math.round((workdaysByAge.get(band) ?? 0) * scale),
+    })),
     mortalityByComorbidity: Array.from(mortalityByCom.entries())
       .map(([status, deaths]) => ({ status, deaths: Math.round(deaths * scale) }))
       .sort((a, b) => b.deaths - a.deaths),

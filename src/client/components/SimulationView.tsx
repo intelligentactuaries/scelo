@@ -12,12 +12,14 @@
 //   • per-agent rows — Scelo-ready table with download / send-to-Scelo
 //   • narrative provenance — every macro multiplier with its source
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { colorsForTheme } from '../../shared/constants';
+import { AGE_BANDS, ageBandLabel } from '../../shared/bands';
 import { useTheme } from '../lib/theme';
 import { EditableNumber, magnitudeEdit } from './EditableNumber';
 import { DeliberationOverlay, useElapsed } from './DeliberationOverlay';
 import { HalfDonut } from './HalfDonut';
+import { BarChart } from './BarChart';
 
 type SimRow = Record<string, string | number | boolean>;
 
@@ -467,17 +469,29 @@ function SimulationOverlay({
   const phaseIdx = Math.max(0, SIM_PHASES.findIndex((p) => p.key === (progress?.phase ?? 'refs')));
   const inSim = progress?.phase === 'sim' && progress.total > 0;
   const ph = SIM_PHASES[phaseIdx];
+  // Reference resolution and the macro roll-up report no counts of their own,
+  // so the bar tracks phase position there and the real agent count during the
+  // simulation itself — never a fabricated crawl.
+  const simFrac = inSim
+    ? progress.total > 0
+      ? progress.done / progress.total
+      : 0
+    : phaseIdx / Math.max(1, SIM_PHASES.length - 1);
+
   return (
     <DeliberationOverlay
       eyebrow={`simulation · ${sampleSize} agents`}
       elapsed={elapsed}
       title={ph.label}
       subtitle={inSim ? `${progress.done} / ${progress.total} agents simulated` : ph.hint}
-      seats={inSim ? progress.total : sampleSize}
+      total={inSim ? progress.total : sampleSize}
       litSeats={inSim ? progress.done : progress?.phase === 'macro' ? sampleSize : 0}
       ticks={SIM_PHASES.length}
       tickCurrent={phaseIdx + 1}
-      outerFrac={null}
+      // The council overlay has always had a bar; this one passed null and so
+      // rendered none, leaving the reference and macro phases with nothing but
+      // three pips to say how far along they were.
+      outerFrac={simFrac}
       indeterminate={!inSim}
       onHide={onHide}
     />
@@ -537,33 +551,10 @@ function SimulationProgress({ progress }: { progress: SimProgress | null }) {
   );
 }
 
-// The dataset carries ~10 demographic columns before the sim_* outputs, so a
-// naive first-N slice used to preview demographics only — the one thing the
-// panel exists to show (the simulated outcomes) never made it on screen.
-const PREVIEW_COLUMNS = [
-  'id',
-  'age',
-  'sex',
-  'region',
-  'employment',
-  'sim_status',
-  'sim_treatment_uptake',
-  'sim_severity_if_infected',
-  'sim_workdays_lost',
-  'sim_oop_zar',
-  'sim_rationale',
-];
-
-function previewColumns(all: string[]): string[] {
-  const curated = PREVIEW_COLUMNS.filter((c) => all.includes(c));
-  return curated.length > 0 ? curated : all.slice(0, 8);
-}
-
 function SimulationResults({
   result,
   onPinSeed,
 }: { result: SimResponse; onPinSeed: (seed: string) => void }) {
-  const cols = previewColumns(result.columns);
   return (
     <div className="simulation-results">
       <section className="simulation-section">
@@ -602,31 +593,8 @@ function SimulationResults({
       </section>
 
       <section className="simulation-section">
-        <div className="panel-label">distributional · workdays lost by age</div>
-        <table className="syn-table">
-          <thead>
-            <tr><th>age band</th><th className="num">workdays lost (scaled)</th></tr>
-          </thead>
-          <tbody>
-            {result.macro.workdaysByAge.map((r) => (
-              <tr key={r.band}><td>{r.band}</td><td className="num">{fmt(r.lost)}</td></tr>
-            ))}
-          </tbody>
-        </table>
-      </section>
-
-      <section className="simulation-section">
-        <div className="panel-label">distributional · excess mortality by comorbidity status</div>
-        <table className="syn-table">
-          <thead>
-            <tr><th>status</th><th className="num">deaths (scaled)</th></tr>
-          </thead>
-          <tbody>
-            {result.macro.mortalityByComorbidity.map((r) => (
-              <tr key={r.status}><td>{r.status}</td><td className="num">{fmt(r.deaths)}</td></tr>
-            ))}
-          </tbody>
-        </table>
+        <div className="panel-label">distributional · workdays lost by age (scaled)</div>
+        <Distributional macro={result.macro} />
       </section>
 
       {result.refs.drugs.length > 0 && (
@@ -698,29 +666,8 @@ function SimulationResults({
           Same shape Scelo's Soft Data expects — load directly into the <code>/dashboards/scelo/soft</code> workstation
           for cleaning, modelling, or further analytics.
         </p>
-        <div className="simulation-table-wrap">
-          <table className="simulation-rows-table">
-            <thead>
-              <tr>
-                {cols.map((c) => <th key={c}>{c}</th>)}
-              </tr>
-            </thead>
-            <tbody>
-              {result.rows.slice(0, 20).map((r, i) => (
-                <tr key={String(r.id ?? i)}>
-                  {cols.map((c) => (
-                    <td key={c}>{String(r[c] ?? '')}</td>
-                  ))}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          {result.rows.length > 20 && (
-            <div className="muted small" style={{ padding: '6px 10px' }}>
-              … {result.rows.length - 20} more rows in the CSV.
-            </div>
-          )}
-        </div>
+
+        <DatasetDashboard rows={result.rows} />
       </section>
 
       <footer className="muted small simulation-footer">
@@ -742,6 +689,188 @@ function SimulationResults({
       </footer>
     </div>
   );
+}
+
+// ── Per-agent dashboard ────────────────────────────────────────────────────
+//
+// The CSV is the deliverable — 120 rows × 29 columns, exactly the shape
+// Scelo's Soft Data expects. This is how you read it without downloading it:
+// nobody learns the shape of a cohort from the first 20 of its rows, which is
+// all the preview table ever showed before it was removed.
+//
+// Everything here is computed from the rows themselves rather than handed
+// down from the macro layer, so it describes the table you are about to
+// download rather than a parallel summary of it. Failed agents are excluded
+// on the same rule the macro layer uses: their placeholder outcome is all
+// zeros and would read as a cohort of people who shrugged.
+
+const SEVERITY_ORDER = ['asymptomatic', 'mild', 'moderate', 'severe', 'critical'];
+
+function tally<T extends string>(rows: SimRow[], key: string, keys: readonly T[]): Record<T, number> {
+  const out = Object.fromEntries(keys.map((k) => [k, 0])) as Record<T, number>;
+  for (const r of rows) {
+    const v = String(r[key] ?? '') as T;
+    if (v in out) out[v] += 1;
+  }
+  return out;
+}
+
+/** Distinct values of a column, most common first — the axis order for a
+ *  categorical the server never declared a canonical order for. */
+function categoriesOf(rows: SimRow[], key: string): string[] {
+  const counts = new Map<string, number>();
+  for (const r of rows) {
+    const v = String(r[key] ?? '').trim();
+    if (v) counts.set(v, (counts.get(v) ?? 0) + 1);
+  }
+  return [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([k]) => k);
+}
+
+function median(xs: number[]): number {
+  if (xs.length === 0) return 0;
+  const s = [...xs].sort((a, b) => a - b);
+  const m = Math.floor(s.length / 2);
+  return s.length % 2 === 1 ? s[m] : (s[m - 1] + s[m]) / 2;
+}
+
+function DatasetDashboard({ rows }: { rows: SimRow[] }) {
+  const { resolved } = useTheme();
+  const c = colorsForTheme(resolved);
+  const usable = useMemo(() => rows.filter((r) => String(r.sim_status ?? 'ok') === 'ok'), [rows]);
+
+  const charts = useMemo(() => {
+    const bands = [...AGE_BANDS];
+    const bandOf = (r: SimRow) => ageBandLabel(Number(r.age) || 0);
+
+    // Cohort by age × sex — who was actually simulated, before any outcome.
+    const bySexBand = (sex: string) =>
+      bands.map((b) => usable.filter((r) => bandOf(r) === b && String(r.sex) === sex).length);
+
+    // Uptake by age band: the cross-cut a single uptake share cannot show —
+    // whether refusal concentrates anywhere in particular.
+    const uptakeIn = (band: string, uptake: string) =>
+      usable.filter((r) => bandOf(r) === band && String(r.sim_treatment_uptake) === uptake).length;
+
+    const severity = tally(usable, 'sim_severity_if_infected', SEVERITY_ORDER);
+
+    // Out-of-pocket by income band — median, not mean: a single R5,800 course
+    // in a band of six drags a mean into describing nobody.
+    const incomeBands = categoriesOf(usable, 'income_band');
+    const oopByIncome = incomeBands.map((b) =>
+      median(usable.filter((r) => String(r.income_band) === b).map((r) => Number(r.sim_oop_zar) || 0)),
+    );
+
+    return { bands, bySexBand, uptakeIn, severity, incomeBands, oopByIncome };
+  }, [usable]);
+
+  if (usable.length === 0) return null;
+
+  return (
+    <div className="sim-chart-grid">
+      <div className="sim-chart">
+        <div className="muted small sim-chart-title">cohort · age × sex</div>
+        {/* The palette's categorical trio, not the status ramp: sex has no
+            valence, and consensus-green against adversarial-red would encode
+            one sex as the good outcome. Olive and steel also sidestep the
+            pink/blue convention. (`accent` is byte-identical to `consensus`,
+            so the two series here used to render as one colour.) */}
+        <BarChart
+          stacked
+          categories={charts.bands}
+          series={[
+            { name: 'female', color: c.chartT, data: charts.bySexBand('F') },
+            { name: 'male', color: c.chartM, data: charts.bySexBand('M') },
+          ]}
+        />
+      </div>
+
+      <div className="sim-chart">
+        <div className="muted small sim-chart-title">treatment uptake · by age band</div>
+        <BarChart
+          stacked
+          categories={charts.bands}
+          series={[
+            { name: 'accepted', color: c.consensus, data: charts.bands.map((b) => charts.uptakeIn(b, 'accepted')) },
+            { name: 'declined', color: c.adversarial, data: charts.bands.map((b) => charts.uptakeIn(b, 'declined')) },
+            { name: 'unsure', color: c.muted, data: charts.bands.map((b) => charts.uptakeIn(b, 'unsure')) },
+          ]}
+        />
+      </div>
+
+      <div className="sim-chart">
+        <div className="muted small sim-chart-title">severity if infected · agents</div>
+        <BarChart
+          categories={SEVERITY_ORDER}
+          series={[
+            {
+              name: 'agents',
+              color: c.dissent,
+              data: SEVERITY_ORDER.map((k) => charts.severity[k as keyof typeof charts.severity]),
+            },
+          ]}
+        />
+      </div>
+
+      <div className="sim-chart">
+        <div className="muted small sim-chart-title">out-of-pocket · median per agent by income band</div>
+        <BarChart
+          horizontal
+          categories={charts.incomeBands}
+          series={[{ name: 'median ZAR', color: c.chartR, data: charts.oopByIncome }]}
+          format={(v) => (v >= 1000 ? `R${(v / 1000).toFixed(1)}k` : `R${Math.round(v)}`)}
+        />
+      </div>
+    </div>
+  );
+}
+
+// ── Distributional charts ──────────────────────────────────────────────────
+//
+// Both of these were tables. `age band | workdays lost` over eight rows asks
+// the reader to compare eight formatted numbers by eye — which is the one
+// thing a bar chart does for free, and the only reason anyone reads a
+// distribution. The figures are still exact on hover.
+
+function Distributional({ macro }: { macro: MacroSummary }) {
+  const { resolved } = useTheme();
+  const c = colorsForTheme(resolved);
+  return (
+    <div className="sim-chart-grid">
+      <div className="sim-chart">
+        <BarChart
+          categories={macro.workdaysByAge.map((r) => r.band)}
+          series={[{ name: 'workdays lost', color: c.dissent, data: macro.workdaysByAge.map((r) => r.lost) }]}
+          format={compact}
+        />
+      </div>
+      <div className="sim-chart">
+        <div className="muted small sim-chart-title">excess mortality by comorbidity status</div>
+        <BarChart
+          horizontal
+          height={150}
+          categories={macro.mortalityByComorbidity.map((r) => r.status)}
+          series={[
+            {
+              name: 'deaths',
+              color: c.adversarial,
+              data: macro.mortalityByComorbidity.map((r) => r.deaths),
+            },
+          ]}
+          format={compact}
+        />
+      </div>
+    </div>
+  );
+}
+
+/** Axis-friendly magnitudes — 12,558,655 on every tick is a wall of digits. */
+function compact(n: number): string {
+  if (!Number.isFinite(n)) return '—';
+  const abs = Math.abs(n);
+  if (abs >= 1e9) return `${(n / 1e9).toFixed(1)}B`;
+  if (abs >= 1e6) return `${(n / 1e6).toFixed(1)}M`;
+  if (abs >= 1e3) return `${(n / 1e3).toFixed(0)}k`;
+  return String(Math.round(n));
 }
 
 // ── Macro impact ───────────────────────────────────────────────────────────

@@ -480,6 +480,8 @@ export async function runSimulation(
   const total = agents.length;
   opts.onProgress?.({ type: 'sim_start', total });
 
+  // One event per agent until a run is large enough to need thinning.
+  const PROGRESS_STEP = Math.max(1, Math.floor(total / 200));
   const results: SimulationAgentResult[] = new Array(total);
   let done = 0;
   let cursor = 0;
@@ -490,8 +492,15 @@ export async function runSimulation(
       const agent = agents[i];
       results[i] = await runOne(agent, opts.scenario, opts.referenceBlock, !!opts.fresh, opts.seed);
       done++;
-      // Throttle progress events — every 10 or at the boundaries.
-      if (done % 10 === 0 || done === total) {
+      // Report every agent on a normal run, and thin only when a run is big
+      // enough for that to matter — at most ~200 events either way.
+      //
+      // The flat "every 10th" this replaces was invisible on the server and
+      // very visible on the client: the progress crowd sat frozen for seconds
+      // and then jumped by ten, which reads as a stall followed by a lurch
+      // rather than as work being done. A default 120-agent run only ever
+      // produced twelve updates.
+      if (done % PROGRESS_STEP === 0 || done === total) {
         opts.onProgress?.({ type: 'sim_progress', done, total });
       }
     }

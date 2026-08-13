@@ -256,6 +256,33 @@ export function WmtrChart({
 
 // ─── ECharts option builders (port of /lab/wmtr equivalents) ─────────
 
+
+/**
+ * The year each chart should render as of.
+ *
+ * The dashboard's resting state is the whole run, so `upTo` is optional
+ * everywhere and defaults to the final year — every existing caller keeps its
+ * behaviour. Passing an earlier index rewinds the panel to what it looked
+ * like at that year, which is what the playback control scrubs.
+ */
+export interface AsOf {
+  upTo?: number;
+  /**
+   * Verb aspect for outcome names. Defaults to `settled`, so every existing
+   * caller — and the dashboard's own resting state — renders exactly as it
+   * did before playback existed.
+   */
+  aspect?: OutcomeAspect;
+}
+
+/** Clamp a cursor to a run's actual horizon. */
+function cursorOf(r: RunWmtr['result'], upTo?: number): number {
+  const last = r.years.length - 1;
+  if (last < 0) return 0;
+  if (upTo === undefined || !Number.isFinite(upTo)) return last;
+  return Math.max(0, Math.min(Math.floor(upTo), last));
+}
+
 export function trajectoryOption(w: RunWmtr, colors: ThemeColors): object {
   const r = w.result;
   const b = baseOption(colors);
@@ -382,10 +409,11 @@ export function componentsOption(
    * two-row gutter it reserves read as cramped — that surface passes
    * `compact: false`.
    */
-  opts: { compact?: boolean } = {},
+  opts: { compact?: boolean } & AsOf = {},
 ): object {
   const compact = opts.compact !== false;
   const r = w.result;
+  const cursor = cursorOf(r, opts.upTo);
   const b = baseOption(colors);
   // Fixed identity → color assignment (validated CVD-safe trio); the legend
   // and tooltip chips inherit these same series-level colors, so the three
@@ -403,7 +431,11 @@ export function componentsOption(
     // the compact legend wraps to two rows there, so the grid reserves room.
     // At canvas size the legend always fits one row, so the gutter shrinks.
     grid: { ...ECHART_GRID, top: compact ? 40 : 30 },
-    xAxis: { ...b.xAxis, boundaryGap: false },
+    // The x-axis keeps the FULL horizon even while the lines are truncated,
+    // so playback draws the curves across a fixed frame instead of an axis
+    // that rescales every tick — which reads as the whole chart lurching
+    // rather than the lines advancing.
+    xAxis: { ...b.xAxis, boundaryGap: false, min: 0, max: r.years[r.years.length - 1] ?? 0 },
     yAxis: { ...b.yAxis, min: 0 },
     legend: {
       ...b.legend,
@@ -422,7 +454,7 @@ export function componentsOption(
       name: d.name,
       type: 'line',
       color: d.color,
-      data: r.years.map((y, i) => [y, r[d.key][i]]),
+      data: r.years.slice(0, cursor + 1).map((y, i) => [y, r[d.key][i]]),
       showSymbol: false,
       lineStyle: { width: 2 },
     })),
@@ -516,14 +548,44 @@ export function outcomeOption(w: RunWmtr, colors: ThemeColors): object {
  * as a band climbing the screen, which reads as improvement at a glance even
  * though the legend says otherwise.
  */
-const MIX_ORDER: Outcome[] = ['grew', 'stabilized', 'declined', 'collapsed'];
+export const MIX_ORDER: Outcome[] = ['grew', 'stabilized', 'declined', 'collapsed'];
 
-const MIX_LABEL: Record<Outcome, string> = {
-  grew: 'Grew',
-  stabilized: 'Stabilized',
-  declined: 'Declined',
-  collapsed: 'Collapsed',
+/**
+ * Outcome names carry a tense, and the dashboard now has two of them.
+ *
+ * The data's own names are past tense — `grew`, `stabilized` — because the
+ * engine only ever reported a finished run. Playing the run back makes that
+ * wrong for as long as it is moving: a chart mid-flight that says "Grew 72%"
+ * asserts a conclusion about a horizon it has not reached yet. While the run
+ * is advancing the share is a state, not a verdict, so it reads "Growing";
+ * the moment it is paused or released the same share IS the verdict for the
+ * year it stopped on, and it settles back to "Grew".
+ */
+export type OutcomeAspect = 'progressive' | 'settled';
+
+const OUTCOME_LABEL: Record<OutcomeAspect, Record<Outcome, string>> = {
+  settled: {
+    grew: 'Grew',
+    stabilized: 'Stabilized',
+    declined: 'Declined',
+    collapsed: 'Collapsed',
+  },
+  progressive: {
+    grew: 'Growing',
+    // Not "Stabilizing": that describes a run still settling down, when the
+    // bucket actually means the opposite — these paths are the ones holding
+    // steady. The other three name a direction of travel; this one names the
+    // absence of one, so it takes an adjective rather than a participle.
+    stabilized: 'Stable',
+    declined: 'Declining',
+    collapsed: 'Collapsing',
+  },
 };
+
+export function outcomeLabel(o: Outcome, aspect: OutcomeAspect = 'settled'): string {
+  return OUTCOME_LABEL[aspect][o];
+}
+
 
 /**
  * Fraction of paths in each bucket at each year, using the engine's own
@@ -579,12 +641,18 @@ export function outcomeMixMatchesBars(r: RunWmtr['result']): boolean {
   return MIX_ORDER.every((o) => Math.abs(mix[o][last] - r.outcomeFractions[o]) < 5e-3);
 }
 
-export function outcomeMixOption(w: RunWmtr, colors: ThemeColors): object {
+export function outcomeMixOption(w: RunWmtr, colors: ThemeColors, opts: AsOf = {}): object {
   const r = w.result;
   const b = baseOption(colors);
-  const mix = outcomeMixByYear(r);
+  const full = outcomeMixByYear(r);
+  const last = cursorOf(r, opts.upTo);
+  // Truncate rather than mask: the area should GROW out of the left edge as
+  // playback runs, so the shape being drawn is the shape known so far.
+  const mix = Object.fromEntries(
+    MIX_ORDER.map((o) => [o, full[o].slice(0, last + 1)]),
+  ) as Record<Outcome, number[]>;
   const nPaths = r.paths.length;
-  const last = r.years.length - 1;
+  const label = (o: Outcome) => outcomeLabel(o, opts.aspect);
   // A collapsed share is often 1-3%, which is ~2px of a 166px plot however
   // it is drawn — faithful, but easy to miss next to the bars, which give
   // any non-zero bucket a full row. Marking the year the first path crosses
@@ -618,7 +686,7 @@ export function outcomeMixOption(w: RunWmtr, colors: ThemeColors): object {
       // colour-alone: legend + the endpoint labels below, which the palette
       // check makes mandatory (amber sits above the dark-mode lightness band
       // and under 3:1 on cream).
-      data: MIX_ORDER.map((o) => MIX_LABEL[o]),
+      data: MIX_ORDER.map((o) => label(o)),
       left: 8,
       right: 8,
       top: 0,
@@ -634,14 +702,14 @@ export function outcomeMixOption(w: RunWmtr, colors: ThemeColors): object {
         const i = params[0]?.dataIndex ?? 0;
         const rows = MIX_ORDER.map((o) => {
           const frac = mix[o][i];
-          return `${dot(OUTCOME_COLOR[o])}${MIX_LABEL[o]} ${(frac * 100).toFixed(0)}% · ${Math.round(frac * nPaths)} paths`;
+          return `${dot(OUTCOME_COLOR[o])}${label(o)} ${(frac * 100).toFixed(0)}% · ${Math.round(frac * nPaths)} paths`;
         });
         return [`year ${r.years[i]}`, ...rows].join('<br/>');
       },
     },
     series: ([] as any[]).concat(
       MIX_ORDER.map((o, idx) => ({
-      name: MIX_LABEL[o],
+      name: label(o),
       type: 'line',
       color: OUTCOME_COLOR[o],
       stack: 'mix',
@@ -676,7 +744,7 @@ export function outcomeMixOption(w: RunWmtr, colors: ThemeColors): object {
       // would collide with its neighbour's rather than inform.
       endLabel: {
         show: mix[o][last] >= 0.05,
-        formatter: () => `${MIX_LABEL[o]} ${(mix[o][last] * 100).toFixed(0)}%`,
+        formatter: () => `${label(o)} ${(mix[o][last] * 100).toFixed(0)}%`,
         color: colors.fgMute,
         fontFamily: MONO,
         fontSize: 10,
@@ -750,13 +818,36 @@ export function outcomeMixOption(w: RunWmtr, colors: ThemeColors): object {
 const GAUGE_ORDER: Outcome[] = ['grew', 'stabilized', 'declined', 'collapsed'];
 
 /** Display label → outcome, for turning a click on a ring back into a filter. */
+/**
+ * Label → outcome, for the gauge's drill-down click.
+ *
+ * Carries BOTH aspects: ECharts hands the click back the rendered `name`, so
+ * a ring clicked while the run is playing arrives as "Growing". Keyed on only
+ * the settled form, that lookup returns undefined and the drill-down silently
+ * does nothing — a dead click with no error.
+ */
 export const OUTCOME_BY_LABEL: Record<string, Outcome> = Object.fromEntries(
-  GAUGE_ORDER.map((o) => [MIX_LABEL[o], o]),
+  GAUGE_ORDER.flatMap((o) => [
+    [OUTCOME_LABEL.settled[o], o],
+    [OUTCOME_LABEL.progressive[o], o],
+  ]),
 ) as Record<string, Outcome>;
 
-export function outcomeGaugeOption(w: RunWmtr, colors: ThemeColors): object {
-  const f = w.result.outcomeFractions;
+export function outcomeGaugeOption(w: RunWmtr, colors: ThemeColors, opts: AsOf = {}): object {
+  // The stored `outcomeFractions` are the run's FINAL verdict. Scrubbing needs
+  // the verdict as it stood at `upTo`, which is what `outcomeMixByYear`
+  // already derives per year — and at the final year the two agree (that is
+  // exactly what `outcomeMixMatchesBars` asserts), so the default path is
+  // unchanged.
+  const cursor = cursorOf(w.result, opts.upTo);
+  const f =
+    opts.upTo === undefined
+      ? w.result.outcomeFractions
+      : (Object.fromEntries(
+          MIX_ORDER.map((o) => [o, outcomeMixByYear(w.result)[o][cursor] ?? 0]),
+        ) as Record<Outcome, number>);
   const nPaths = w.config.nPaths;
+  const label = (o: Outcome) => outcomeLabel(o, opts.aspect);
 
   // Rings run largest-outward: the dominant bucket always takes the outer
   // disc, the rest follow inward in descending order. A fixed order buried
@@ -841,7 +932,7 @@ export function outcomeGaugeOption(w: RunWmtr, colors: ThemeColors): object {
         // ring three rather than making the reader map between two orders.
         data: ordered.map((o, i) => ({
           value: +((f[o] ?? 0) * 100).toFixed(1),
-          name: MIX_LABEL[o],
+          name: label(o),
           itemStyle: { color: OUTCOME_COLOR[o] },
           title: { offsetCenter: ['-30%', `${rowY[i]}%`] },
           detail: { valueAnimation: true, offsetCenter: ['34%', `${rowY[i]}%`] },
@@ -890,15 +981,18 @@ export interface DriverContribution {
  * the header and the evidence block the council reads, so this chart cannot
  * contradict them.
  */
-export function driverContributions(r: RunWmtr['result']): DriverContribution {
-  const c = engineDriverContributions(r);
+export function driverContributions(
+  r: RunWmtr['result'],
+  upTo?: number,
+): DriverContribution {
+  const c = engineDriverContributions(r, upTo);
   return { M: c.M * 100, T: c.T * 100, R: c.R * 100, net: c.net * 100 };
 }
 
-export function driverBridgeOption(w: RunWmtr, colors: ThemeColors): object {
+export function driverBridgeOption(w: RunWmtr, colors: ThemeColors, opts: AsOf = {}): object {
   const r = w.result;
   const b = baseOption(colors);
-  const c = driverContributions(r);
+  const c = driverContributions(r, cursorOf(r, opts.upTo));
 
   const steps = [
     { key: 'M' as const, label: 'money', value: c.M, color: colors.chartM },
