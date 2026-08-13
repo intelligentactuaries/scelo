@@ -363,7 +363,7 @@ function createMainWindow(): BrowserWindow {
 // params so it offers exactly what's relevant: clipboard ops on editable
 // fields / selections (driven by editFlags so greyed-out items reflect what's
 // actually possible), spelling fixes on a misspelled word, link + image
-// actions, and Inspect Element in dev builds. Roles ('cut'/'copy'/'paste'/
+// actions. Roles ('cut'/'copy'/'paste'/
 // 'selectAll') let Chromium perform the action on the focused element, so it
 // works in Monaco, the terminal, inputs, and ordinary selectable text alike.
 function attachContextMenu(win: BrowserWindow): void {
@@ -416,14 +416,10 @@ function attachContextMenu(win: BrowserWindow): void {
       );
     }
 
-    // Dev-only inspector — handy while building, hidden in packaged builds.
-    if (!app.isPackaged) {
-      if (items.length) items.push({ type: "separator" });
-      items.push({
-        label: "Inspect element",
-        click: () => win.webContents.inspectElement(params.x, params.y),
-      });
-    }
+    // No Inspect Element, in dev builds either: the right-click menu is a
+    // product surface, and an inspector entry sitting under every cell reads
+    // as an unfinished app. DevTools remain on the View menu and the usual
+    // keyboard shortcut for when they're actually wanted.
 
     if (items.length === 0) return;
     Menu.buildFromTemplate(items).popup({ window: win });
