@@ -5,6 +5,7 @@
 
 import { router, type Message } from '../llm/router';
 import type {
+  ComorbidityCode,
   SimulationAgentResult,
   SimulationOutcome,
   SocietyAgent,
@@ -51,6 +52,103 @@ export type SimulationProgress =
   | { type: 'sim_progress'; done: number; total: number }
   | { type: 'sim_done'; total: number; elapsedMs: number };
 
+
+/**
+ * Comorbidities that materially raise the risk of a severe respiratory
+ * course. Drawn from the burden-of-disease set the SA sampler emits.
+ */
+const HIGH_RISK_COMORBIDITIES = new Set<ComorbidityCode>([
+  'copd',
+  'ckd',
+  'cancer-active',
+  'immunosuppressed',
+  'hiv-not-on-art',
+  'tb-active',
+  'diabetes-t2',
+  'cvd',
+]);
+
+/**
+ * A clinical risk band for the agent, stated to it explicitly.
+ *
+ * Personas were asked to self-assess `severityIfInfected` with their
+ * comorbidities merely listed in the profile, and a layperson roleplay
+ * answers that optimistically every time: on a scenario that spelled out
+ * "infection-fatality concentrated in the over-65s and the immunocompromised",
+ * all 24 agents came back asymptomatic or mild — including a 58-year-old with
+ * hypertension and type-2 diabetes. Nobody moderate, nobody severe, nobody
+ * hospitalised, nobody dead, on any scenario.
+ *
+ * Naming the band, and the factors behind it, gives the model something it
+ * cannot read past. It still decides — the band is an anchor, not a verdict.
+ */
+export function clinicalRiskFor(agent: SocietyAgent): { band: string; because: string } {
+  const h = agent.health;
+  const factors: string[] = [];
+  if (agent.age >= 75) factors.push('75+');
+  else if (agent.age >= 65) factors.push('65-74');
+  for (const c of h?.comorbidities ?? []) {
+    if (HIGH_RISK_COMORBIDITIES.has(c)) factors.push(c);
+  }
+  const soft = (h?.comorbidities ?? []).filter(
+    (c) => !HIGH_RISK_COMORBIDITIES.has(c),
+  );
+  const score = factors.length * 2 + soft.length + (agent.age >= 65 ? 1 : 0);
+  const band =
+    score >= 5 ? 'very high' : score >= 3 ? 'high' : score >= 1 ? 'moderate' : 'low';
+  const because = [...factors, ...soft].join(', ') || 'no recorded risk factors';
+  return { band, because };
+}
+
+export type Severity = SimulationOutcome['health']['severityIfInfected'];
+
+/** Ascending, so a floor is a simple index comparison. */
+const SEVERITY_ORDER: Severity[] = [
+  'asymptomatic',
+  'mild',
+  'moderate',
+  'severe',
+  'critical',
+];
+
+/**
+ * The least severe course a clinical band admits.
+ *
+ * Personas under-call their own prognosis — asked to self-assess, a
+ * 62-year-old who is diabetic, HIV-positive and immunosuppressed answered
+ * "mild" even with the band stated in its prompt. Since admissions, deaths
+ * and the severe count are all coupled to severity, that optimism zeroed the
+ * entire health block on every scenario. Anchoring the band in the prompt cut
+ * asymptomatic answers from 14/24 to 2/24 but never produced a severe case.
+ *
+ * So the floor is enforced rather than requested. It only ever raises: an
+ * agent who reports a WORSE course than its band keeps it, because the
+ * persona knows things the band does not (it read the scenario).
+ *
+ * It is applied BEFORE the severity couplings, which is what makes it
+ * meaningful rather than cosmetic — `hospitalised` and `mortalityProbability`
+ * are gated on severity, so raising the floor releases the model's OWN
+ * reported numbers for high-risk agents instead of discarding them. Nothing
+ * here invents a mortality rate.
+ */
+export function severityFloorFor(band: string): Severity {
+  switch (band) {
+    case 'very high':
+      return 'severe';
+    case 'high':
+      return 'moderate';
+    case 'moderate':
+      return 'mild';
+    default:
+      return 'asymptomatic';
+  }
+}
+
+/** The worse of two severities. */
+export function atLeastSeverity(reported: Severity, floor: Severity): Severity {
+  return SEVERITY_ORDER.indexOf(reported) >= SEVERITY_ORDER.indexOf(floor) ? reported : floor;
+}
+
 function buildAgentSystemPrompt(agent: SocietyAgent, scenario: string, ref: string): string {
   const h = agent.health;
   // Minors don't answer for themselves. Under 12 (below SA's medical-consent
@@ -80,6 +178,8 @@ function buildAgentSystemPrompt(agent: SocietyAgent, scenario: string, ref: stri
       `health_literacy=${h.healthLiteracy.toFixed(2)}`,
       `insurance_cov=${h.insuranceCoverage.toFixed(2)}`,
     );
+    const risk = clinicalRiskFor(agent);
+    profile.push(`clinical_risk_band=${risk.band} (${risk.because})`);
   }
   // Who is speaking, and how the rationale must read. The two used to
   // disagree: the caregiver framing said "speak as the parent" while the
@@ -189,6 +289,29 @@ function buildAgentSystemPrompt(agent: SocietyAgent, scenario: string, ref: stri
     `mechanisms, or adverse events. If the scenario doesn't apply (e.g. you're`,
     `outside the affected age band), reflect that with low infectionProbability`,
     `and 0 isolationDays.`,
+    ``,
+    `### severityIfInfected — a clinical judgement, not a hope`,
+    `Answer from the clinical_risk_band above and the lethality the scenario`,
+    `actually describes. Do NOT default to a mild course because it is the`,
+    `comfortable answer: for a serious illness, the plausible range is`,
+    `  low risk        → asymptomatic or mild`,
+    `  moderate risk   → mild or moderate`,
+    `  high risk       → moderate or severe`,
+    `  very high risk  → severe or critical`,
+    `If the scenario names a group as worst affected and ${youngChild ? 'the child' : 'you'} are in it,`,
+    `say so in this field. A scenario that describes hospitalisations and`,
+    `deaths cannot be one in which nobody is worse than mild.`,
+    `Immunosuppression, active cancer, COPD, untreated HIV or active TB put a`,
+    `person at moderate AT MINIMUM for a serious respiratory illness, and at`,
+    `severe once combined with age 60+ or a second condition. Answering "mild"`,
+    `for such a profile is a clinical error, not modesty.`,
+    ``,
+    `Costs must reconcile with that outcome. outOfPocketCostZar and`,
+    `insurerClaimZar cover what is actually spent: money paid for prevention or`,
+    `treatment you chose, plus care for the course above. An asymptomatic case`,
+    `that declined treatment and bought nothing costs nothing — do not enter a`,
+    `claim for care that never happened.`,
+    ``,
     `severityIfInfected, mortalityProbability, and hospitalised are all`,
     `CONDITIONAL on ${youngChild ? 'the child' : 'you'} actually being affected`,
     `(infectionProbability is the chance of that). "hospitalised" must be false`,
@@ -289,7 +412,10 @@ export function repairJson(text: string): string | null {
   return body.replace(/,(\s*[}\]])/g, '$1');
 }
 
-export function parseOutcome(text: string): { outcome: SimulationOutcome; failure?: string } {
+export function parseOutcome(
+  text: string,
+  opts: { severityFloor?: Severity } = {},
+): { outcome: SimulationOutcome; failure?: string } {
   const repaired = repairJson(text);
   if (repaired === null) return { outcome: neutralOutcome(), failure: 'no JSON in reply' };
   try {
@@ -306,7 +432,10 @@ export function parseOutcome(text: string): { outcome: SimulationOutcome; failur
     if (!rationale) {
       return { outcome: neutralOutcome(), failure: 'reply carried no rationale' };
     }
-    const severityIfInfected = normaliseSeverity(h.severityIfInfected);
+    const severityIfInfected = atLeastSeverity(
+      normaliseSeverity(h.severityIfInfected),
+      opts.severityFloor ?? 'asymptomatic',
+    );
     // Couple the health fields to the severity the model just reported.
     // Untethered, they contradicted the macro panel outright — 136,000
     // expected deaths beside a severe-or-critical count of zero, because
@@ -419,7 +548,8 @@ async function runOne(
 
   try {
     let raw = await ask('Respond with the JSON envelope only.', seed);
-    let parsed = parseOutcome(raw);
+    const severityFloor = severityFloorFor(clinicalRiskFor(agent).band);
+    let parsed = parseOutcome(raw, { severityFloor });
 
     // One retry on a bad envelope. A local model that rambles once will
     // usually comply when told exactly what went wrong, and losing a whole
@@ -431,7 +561,7 @@ async function runOne(
         'Your previous reply could not be read as JSON. Output ONLY the JSON object described above — no prose, no markdown fences, no commentary — and make sure every brace is closed.',
         (seed ?? 0) + 1_000_003,
       );
-      const retry = parseOutcome(retryRaw);
+      const retry = parseOutcome(retryRaw, { severityFloor });
       if (!retry.failure) {
         raw = retryRaw;
         parsed = retry;

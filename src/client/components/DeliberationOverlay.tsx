@@ -22,6 +22,7 @@
 // prefers-reduced-motion (see .delib-* in styles.css).
 
 import { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { PersonaBloom } from './PersonaBloom';
 
 /** Stable per-profession hues, so a profession keeps its colour across
@@ -120,7 +121,14 @@ export function DeliberationOverlay({
     return () => document.removeEventListener('keydown', onKey, true);
   }, [onHide]);
 
-  return (
+  // Portalled to <body>. `position: fixed` resolves against the nearest
+  // ancestor that establishes a containing block, and `.canvas-body` carries
+  // `container-type: inline-size` for its container queries — which implies
+  // layout containment, which makes it exactly that. Rendered in place, the
+  // overlay was pinned to the canvas: the rail, topbar and decision sidebar
+  // stayed sharp and uncovered beside a blurred middle. Out here `inset: 0`
+  // means the viewport, which is what a modal wait state has to own.
+  return createPortal(
     <div className="delib-overlay" role="status" aria-live="polite">
       <div className="delib-top">
         <span className="delib-eyebrow">{eyebrow}</span>
@@ -174,6 +182,7 @@ export function DeliberationOverlay({
           </button>
         )}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

@@ -194,8 +194,16 @@ function StanceDominantPill({
   };
   const dominant = entries.reduce((a, b) => (b.pct > a.pct ? b : a));
   const why = explainStance(councilResults ?? [], STANCE_OF[dominant.key]);
+  // Wording follows the stance being explained: `explainStance` is already
+  // scoped to one side of the vote, and "chief concern" is only true of the
+  // side that objects. A supporter's key_risk is what the forecast gets right.
+  const affirming = STANCE_OF[dominant.key] === 'support';
   const spoken = why
-    ? ` ${why.headline}${why.risks.length ? ` Chief concern: ${why.risks[0].risk}.` : ''}`
+    ? ` ${why.headline}${
+        why.risks.length
+          ? ` ${affirming ? 'Chiefly because it captures' : 'Chief concern'}: ${why.risks[0].risk}.`
+          : ''
+      }`
     : '';
   return (
     <div
@@ -236,7 +244,13 @@ function StanceDominantPill({
             {why.risks.length > 0 && (
               <>
                 <p className="stance-popup-line">
-                  {why.risks.length > 1 ? 'Risks they cite' : 'The risk they cite'}
+                  {affirming
+                    ? why.risks.length > 1
+                      ? 'What they say it captures'
+                      : 'What they say it captures'
+                    : why.risks.length > 1
+                      ? 'Risks they cite'
+                      : 'The risk they cite'}
                 </p>
                 {/* One per line: an agent's risk is a clause that often
                     contains its own semicolons, so joining two into a

@@ -162,3 +162,163 @@ describe('parseOutcome', () => {
     expect(outcome.behaviour.rationale).toContain('taxi ride');
   });
 });
+
+// ─── Clinical risk banding ────────────────────────────────────────────────
+//
+// Personas self-assessed `severityIfInfected` with their comorbidities merely
+// listed, and answered optimistically every time: on a scenario naming the
+// over-65s as worst affected, all 24 agents came back asymptomatic or mild.
+// Since admissions, mortality and the severe-count are all coupled to
+// severity, that made the entire health block structurally zero on every
+// scenario. The band is the anchor that stops it.
+
+import { clinicalRiskFor } from './simulation';
+
+function agentWith(age: number, comorbidities: string[]) {
+  return {
+    id: 's-0',
+    age,
+    incomeBand: 'mid',
+    education: 'secondary',
+    region: 'urban',
+    riskTolerance: 0.5,
+    employment: 'employed',
+    financialLiteracy: 0.5,
+    culture: 'sa',
+    health: {
+      sex: 'F',
+      comorbidities,
+      baselineMortality: 0.01,
+      vaccinationHistory: 'none',
+      trustInHealthSystem: 0.5,
+      healthLiteracy: 0.5,
+      insuranceCoverage: 0.5,
+    },
+  } as never;
+}
+
+describe('clinicalRiskFor', () => {
+  test('a healthy young adult is low risk', () => {
+    expect(clinicalRiskFor(agentWith(28, [])).band).toBe('low');
+  });
+
+  test('the case that came back asymptomatic: 58 with hypertension + diabetes', () => {
+    // Measured output before the band existed: "asymptomatic". Diabetes is a
+    // high-risk factor, so this must not read as low.
+    const r = clinicalRiskFor(agentWith(58, ['hypertension', 'diabetes-t2']));
+    expect(['high', 'very high']).toContain(r.band);
+    expect(r.because).toContain('diabetes-t2');
+  });
+
+  test('age alone escalates', () => {
+    expect(clinicalRiskFor(agentWith(40, [])).band).toBe('low');
+    expect(clinicalRiskFor(agentWith(70, [])).band).toBe('high');
+    expect(clinicalRiskFor(agentWith(80, [])).band).toBe('high');
+  });
+
+  test('an elderly agent with serious comorbidity reaches the top band', () => {
+    expect(clinicalRiskFor(agentWith(78, ['copd', 'ckd'])).band).toBe('very high');
+  });
+
+  test('the band never drops as risk is added', () => {
+    const order = ['low', 'moderate', 'high', 'very high'];
+    const steps = [
+      clinicalRiskFor(agentWith(30, [])),
+      clinicalRiskFor(agentWith(30, ['obesity'])),
+      clinicalRiskFor(agentWith(30, ['obesity', 'cvd'])),
+      clinicalRiskFor(agentWith(78, ['obesity', 'cvd', 'copd'])),
+    ];
+    for (let i = 1; i < steps.length; i++) {
+      expect(order.indexOf(steps[i].band)).toBeGreaterThanOrEqual(order.indexOf(steps[i - 1].band));
+    }
+  });
+
+  test('an agent with no health profile is not assumed sick', () => {
+    const bare = { id: 's-1', age: 30 } as never;
+    expect(clinicalRiskFor(bare).band).toBe('low');
+  });
+});
+
+// ─── Severity floor ───────────────────────────────────────────────────────
+
+import { atLeastSeverity, severityFloorFor } from './simulation';
+
+describe('severityFloorFor', () => {
+  test('each band admits a minimum course', () => {
+    expect(severityFloorFor('low')).toBe('asymptomatic');
+    expect(severityFloorFor('moderate')).toBe('mild');
+    expect(severityFloorFor('high')).toBe('moderate');
+    expect(severityFloorFor('very high')).toBe('severe');
+  });
+
+  test('an unknown band floors nothing', () => {
+    expect(severityFloorFor('')).toBe('asymptomatic');
+  });
+});
+
+describe('atLeastSeverity', () => {
+  test('raises an under-called course to the floor', () => {
+    // The measured failure: very-high-risk agent self-reporting "mild".
+    expect(atLeastSeverity('mild', 'severe')).toBe('severe');
+    expect(atLeastSeverity('asymptomatic', 'moderate')).toBe('moderate');
+  });
+
+  test('never lowers a worse self-report', () => {
+    // The persona read the scenario; the band did not. It may go higher.
+    expect(atLeastSeverity('critical', 'severe')).toBe('critical');
+    expect(atLeastSeverity('severe', 'mild')).toBe('severe');
+  });
+
+  test('leaves a matching report alone', () => {
+    expect(atLeastSeverity('moderate', 'moderate')).toBe('moderate');
+  });
+});
+
+describe('the floor releases the couplings rather than inventing numbers', () => {
+  test("a floored severe case keeps the model's OWN mortality", () => {
+    // Reported mild with a real mortality figure: the coupling zeroes
+    // mortality below severe, so without the floor this agent could never
+    // contribute a death however high-risk they were.
+    const reply = JSON.stringify({
+      ...FULL,
+      health: {
+        infectionProbability: 0.4,
+        severityIfInfected: 'mild',
+        mortalityProbability: 0.03,
+        hospitalised: true,
+      },
+    });
+    const without = parseOutcome(reply);
+    expect(without.outcome.health.severityIfInfected).toBe('mild');
+    expect(without.outcome.health.mortalityProbability).toBe(0);
+    expect(without.outcome.health.hospitalised).toBe(false);
+
+    const withFloor = parseOutcome(reply, { severityFloor: 'severe' });
+    expect(withFloor.outcome.health.severityIfInfected).toBe('severe');
+    // The model's own 0.03 — not a rate this code made up.
+    expect(withFloor.outcome.health.mortalityProbability).toBeCloseTo(0.03);
+    expect(withFloor.outcome.health.hospitalised).toBe(true);
+  });
+
+  test('a floor does not manufacture an admission the model refused', () => {
+    const reply = JSON.stringify({
+      ...FULL,
+      health: {
+        infectionProbability: 0.4,
+        severityIfInfected: 'mild',
+        mortalityProbability: 0,
+        hospitalised: false,
+      },
+    });
+    const { outcome } = parseOutcome(reply, { severityFloor: 'severe' });
+    expect(outcome.health.severityIfInfected).toBe('severe');
+    // Severity was raised; the admission still belongs to the model.
+    expect(outcome.health.hospitalised).toBe(false);
+    expect(outcome.health.mortalityProbability).toBe(0);
+  });
+
+  test('a low-risk agent is untouched', () => {
+    const { outcome } = parseOutcome(JSON.stringify(FULL), { severityFloor: 'asymptomatic' });
+    expect(outcome.health.severityIfInfected).toBe('moderate');
+  });
+});

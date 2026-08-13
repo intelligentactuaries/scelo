@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 168 168" width="512" height="512" role="img">
+ <title>Chick</title>
+ <g transform="translate(-66 -216)">
+  <circle cx="150" cy="300" r="56" fill="#FFC93D"/>
+  <circle cx="129" cy="296" r="9" fill="#3B3229"/>
+  <circle cx="171" cy="296" r="9" fill="#3B3229"/>
+  <path d="M134 310L166 310L150 326Z" fill="#F0932B"/>
+ </g>
+</svg>

@@ -33,7 +33,9 @@ describe('synthesize · risk totals', () => {
       'longevity trend extrapolated too far',
       'catastrophe cover exhausts at one event',
     ];
-    const s = synthesize(risks.map((r, i) => agent(i, 'support', r)));
+    // 'oppose', not 'support': `topRisks` is now drawn only from the agents
+    // who object, because a supporter's key_risk is an endorsement.
+    const s = synthesize(risks.map((r, i) => agent(i, 'oppose', r)));
     expect(s.topRisks).toHaveLength(8);
     expect(s.riskClusterCount).toBe(10);
     expect(s.riskAgentsTotal).toBe(10);
@@ -42,9 +44,9 @@ describe('synthesize · risk totals', () => {
 
   test('counts describe agents, not clusters, when phrasings collapse', () => {
     const s = synthesize([
-      agent(1, 'support', 'ignores ESG constraints'),
-      agent(2, 'support', 'ignores ESG resilience'),
-      agent(3, 'support', 'ignores ESG growth potential'),
+      agent(1, 'oppose', 'ignores ESG constraints'),
+      agent(2, 'oppose', 'ignores ESG resilience'),
+      agent(3, 'oppose', 'ignores ESG growth potential'),
       agent(4, 'oppose', 'ignores religion buffer'),
     ]);
     expect(s.riskClusterCount).toBe(2);
@@ -54,7 +56,7 @@ describe('synthesize · risk totals', () => {
 
   test('failed agents contribute no risk and no phantom cluster', () => {
     const s = synthesize([
-      agent(1, 'support', 'ignores religion buffer'),
+      agent(1, 'oppose', 'ignores religion buffer'),
       agent(2, 'abstain', '(error)'),
       agent(3, 'abstain', '(error)'),
     ]);
@@ -73,11 +75,55 @@ describe('synthesize · risk totals', () => {
     expect(s.dissentingAgentIds).toEqual(['a-4', 'a-3']);
   });
 
+  test('a supporter\'s endorsement never lands in the risk list', () => {
+    // The bug this exists to prevent: `keyRisk` means opposite things on
+    // either side of the vote, and both sides draw on the same vocabulary —
+    // so an unsplit clustering put "captures the tenure security" in the same
+    // cluster as "ignores secure tenure", and trusting and distrusting agents
+    // appeared to be reasoning identically.
+    const s = synthesize([
+      agent(1, 'support', 'captures the tenure security that steadies these households'),
+      agent(2, 'support', 'captures secure tenure'),
+      agent(3, 'oppose', 'ignores secure tenure and dependable harvests'),
+      agent(4, 'oppose', 'ignores secure tenure'),
+      agent(5, 'abstain', 'no data on how long tenure has held'),
+    ]);
+    const risks = s.topRisks.map((r) => r.risk).join(' | ');
+    expect(risks).not.toContain('captures');
+    const captures = (s.topCaptures ?? []).map((r) => r.risk).join(' | ');
+    expect(captures).not.toContain('ignores');
+    // Abstainers are stating a gap, so they belong with the objections.
+    expect(s.riskAgentsTotal).toBe(3);
+    expect(s.captureAgentsTotal).toBe(2);
+  });
+
+  test('the two sides are counted apart even when identically worded', () => {
+    const s = synthesize([
+      agent(1, 'support', 'secure tenure'),
+      agent(2, 'oppose', 'secure tenure'),
+    ]);
+    expect(s.riskAgentsTotal).toBe(1);
+    expect(s.captureAgentsTotal).toBe(1);
+    expect(s.riskClusterCount).toBe(1);
+    expect(s.captureClusterCount).toBe(1);
+  });
+
+  test('a unanimous council leaves the opposite list empty, not wrong', () => {
+    const s = synthesize([
+      agent(1, 'support', 'captures the harvest stability'),
+      agent(2, 'support', 'captures secure tenure'),
+    ]);
+    expect(s.topRisks).toHaveLength(0);
+    expect(s.riskAgentsTotal).toBe(0);
+    expect((s.topCaptures ?? []).length).toBe(2);
+  });
+
   test('an empty council yields zeroed totals rather than NaN', () => {
     const s = synthesize([]);
     expect(s.consensusScore).toBe(0);
     expect(s.riskClusterCount).toBe(0);
     expect(s.riskAgentsTotal).toBe(0);
     expect(s.riskAgentsShown).toBe(0);
+    expect(s.captureAgentsTotal).toBe(0);
   });
 });

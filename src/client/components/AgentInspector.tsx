@@ -27,6 +27,17 @@ export function AgentInspector({ agent, runId, legalJurisdiction, onClose }: Pro
   }
 
   const { agent: a, rounds, finalStance, finalConfidence, keyRisk } = agent;
+  // The field carries opposite meanings on either side of the vote, so it
+  // cannot wear one label. A supporter's panel headed "key risk" above a line
+  // saying the forecast gets something right — or, as often happened, above a
+  // criticism they then voted to trust — reads as the agent contradicting
+  // itself, which is exactly the incoherence this panel is meant to expose.
+  const riskLabel =
+    finalStance === 'support'
+      ? 'what it gets right'
+      : finalStance === 'abstain'
+        ? 'evidence still needed'
+        : 'key risk';
   return (
     <aside className="inspector">
       <div className="inspector-header">
@@ -56,7 +67,7 @@ export function AgentInspector({ agent, runId, legalJurisdiction, onClose }: Pro
           <div className="big-num num">{finalConfidence}</div>
         </div>
         <div>
-          <div className="panel-label">key risk</div>
+          <div className="panel-label">{riskLabel}</div>
           <div className="small">{keyRisk}</div>
         </div>
       </div>
@@ -83,7 +94,7 @@ export function AgentInspector({ agent, runId, legalJurisdiction, onClose }: Pro
               {intervention && <RecommendedIntervention interv={intervention} />}
               {isFinal && r.keyRisk && (
                 <div className="round-keyrisk">
-                  <span className="panel-label">key risk</span>
+                  <span className="panel-label">{riskLabel}</span>
                   <span className="small">{r.keyRisk}</span>
                 </div>
               )}

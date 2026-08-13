@@ -37,6 +37,10 @@ export function SynthesisView({ run, onSelectAgent }: Props) {
   // shown slice so a rehydrated run reports no phantom hidden clusters.
   const clusterCount = s.riskClusterCount ?? s.topRisks.length;
   const hiddenRiskClusters = Math.max(0, clusterCount - s.topRisks.length);
+  const captureHidden = Math.max(
+    0,
+    (s.captureClusterCount ?? (s.topCaptures ?? []).length) - (s.topCaptures ?? []).length,
+  );
 
   const dissenters = s.dissentingAgentIds
     .map((id) => run.councilResults.find((r) => r.agent.id === id))
@@ -104,9 +108,16 @@ export function SynthesisView({ run, onSelectAgent }: Props) {
       </section>
 
       <section className="syn-section">
-        <div className="panel-label">what the forecast misses (or captures) · clustered key risks</div>
+        {/* Two lists, never one. `keyRisk` means opposite things on either
+            side of the vote — what the forecast MISSES if you distrust it,
+            what it GETS RIGHT if you trust it — and the old single list
+            headed "misses (or captures)" merged both. Since the two groups
+            draw on the same vocabulary, a supporter's endorsement clustered
+            straight into an opposer's objection, which is what made trusting
+            and distrusting agents look like they reasoned identically. */}
+        <div className="panel-label">what the forecast misses · from the agents who distrust it</div>
         <div className="syn-risks">
-          {s.topRisks.length === 0 && <div className="muted small">no risks reported</div>}
+          {s.topRisks.length === 0 && <div className="muted small">no objections reported</div>}
           {s.topRisks.map((r, i) => (
             <div key={i} className="syn-risk">
               <span className="num count-pill">{r.count}</span>
@@ -122,6 +133,32 @@ export function SynthesisView({ run, onSelectAgent }: Props) {
               … {hiddenRiskClusters} more cluster{hiddenRiskClusters === 1 ? '' : 's'} — the{' '}
               {s.topRisks.length} shown account for {s.riskAgentsShown} of {s.riskAgentsTotal}{' '}
               agents who stated a risk. Drill in via the council tab.
+            </div>
+          )}
+        </div>
+      </section>
+
+      <section className="syn-section">
+        <div className="panel-label">what it gets right · from the agents who trust it</div>
+        <div className="syn-risks">
+          {(s.topCaptures ?? []).length === 0 && (
+            <div className="muted small">
+              {s.supportPct > 0
+                ? 'the supporting agents stated objections rather than endorsements — see the note below'
+                : 'no agent trusted the forecast'}
+            </div>
+          )}
+          {(s.topCaptures ?? []).map((r, i) => (
+            <div key={i} className="syn-risk">
+              <span className="num count-pill">{r.count}</span>
+              <span>{r.risk}</span>
+            </div>
+          ))}
+          {captureHidden > 0 && (
+            <div className="muted small" style={{ padding: '4px 2px' }}>
+              … {captureHidden} more cluster{captureHidden === 1 ? '' : 's'} — the{' '}
+              {(s.topCaptures ?? []).length} shown account for {s.captureAgentsShown ?? 0} of{' '}
+              {s.captureAgentsTotal ?? 0} supporting agents.
             </div>
           )}
         </div>
