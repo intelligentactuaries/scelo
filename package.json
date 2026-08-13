@@ -10,7 +10,9 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "start": "bun src/server/index.ts",
-    "typecheck": "tsc -b --noEmit"
+    "typecheck": "tsc -b --noEmit",
+    "test": "bun test",
+    "smoke:council": "bun src/server/agents/smokeCouncil.ts"
   },
   "dependencies": {
     "echarts": "^5.5.1",

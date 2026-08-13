@@ -116,7 +116,10 @@ export interface SimulationOutcome {
     treatmentUptake: 'accepted' | 'declined' | 'unsure';
     isolationDays: number; // self-imposed
     spendingShift: 'reduced' | 'unchanged' | 'increased';
-    rationale: string; // <=140 chars
+    /** How the person (or, for an under-12, their caregiver) explains the
+     *  decision, in their own words. Empty when the call failed — a
+     *  diagnostic never goes in here. */
+    rationale: string; // <=400 chars
   };
   // health
   health: {
@@ -138,6 +141,19 @@ export interface SimulationAgentResult {
   outcome: SimulationOutcome;
   /** Raw LLM text for chat-context drilling. */
   raw: string;
+  /**
+   * Set when this agent produced no usable answer — the provider was
+   * unreachable, or the reply could not be read as the outcome envelope.
+   *
+   * `outcome` is then a NEUTRAL PLACEHOLDER, not an observation: it must be
+   * excluded from every aggregate. Without this flag the placeholder was
+   * indistinguishable from a real "declined, no isolation, no cost" agent,
+   * so a total provider outage still produced a full, confident-looking
+   * table of zeros — and the diagnostic string was written into the
+   * `rationale` field, where it surfaced in the dataset as if the person
+   * had said it.
+   */
+  failure?: { kind: 'parse_failed' | 'router_error'; message: string };
 }
 
 export interface CouncilRound {
@@ -190,7 +206,15 @@ export interface RunSummary {
   supportPct: number;
   opposePct: number;
   abstainPct: number;
+  /** The most-cited risk clusters — a TOP-N slice, not the whole set. */
   topRisks: { risk: string; count: number }[];
+  /** Total clusters found, and how many agents the shown slice accounts for.
+   *  Without these the readback rendered 8 clusters covering 10 of 32 agents
+   *  with nothing to say the other 22 existed, so a truncated list read as
+   *  the council's complete set of concerns. */
+  riskClusterCount: number;
+  riskAgentsShown: number;
+  riskAgentsTotal: number;
   dissentingAgentIds: string[];
   /** Aggregated WMTR interventions from round-3 votes. Sorted by count desc. */
   interventionClusters?: InterventionCluster[];

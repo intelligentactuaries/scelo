@@ -13,8 +13,11 @@
 //   • narrative provenance — every macro multiplier with its source
 
 import { useCallback, useEffect, useState } from 'react';
+import { colorsForTheme } from '../../shared/constants';
+import { useTheme } from '../lib/theme';
 import { EditableNumber, magnitudeEdit } from './EditableNumber';
 import { DeliberationOverlay, useElapsed } from './DeliberationOverlay';
+import { HalfDonut } from './HalfDonut';
 
 type SimRow = Record<string, string | number | boolean>;
 
@@ -34,7 +37,11 @@ interface RefSummary {
 
 interface MacroSummary {
   population: number;
+  /** Agents that answered. Every macro figure scales off this, not off the
+   *  requested sample size. */
   sampleSize: number;
+  /** Agents whose call failed and were excluded. */
+  failedCount: number;
   scaleFactor: number;
   workdaysLostTotal: number;
   gdpDragZar: number;
@@ -539,6 +546,7 @@ const PREVIEW_COLUMNS = [
   'sex',
   'region',
   'employment',
+  'sim_status',
   'sim_treatment_uptake',
   'sim_severity_if_infected',
   'sim_workdays_lost',
@@ -560,16 +568,7 @@ function SimulationResults({
     <div className="simulation-results">
       <section className="simulation-section">
         <div className="panel-label">macro impact · scaled to {ZAR(result.population).replace('R', '')} population</div>
-        <div className="simulation-macro-grid">
-          <MacroTile label="workdays lost" value={fmt(result.macro.workdaysLostTotal)} sub="agent × day" accent="warn" />
-          <MacroTile label="GDP drag" value={ZAR(result.macro.gdpDragZar)} sub="lost wage value" accent="warn" />
-          <MacroTile label="excess mortality" value={fmt(result.macro.excessMortality)} sub="modelled deaths" accent="error" />
-          <MacroTile label="severe / critical" value={fmt(result.macro.severeOrCriticalCount)} sub="cases requiring care" accent="error" />
-          <MacroTile label="hospital admissions" value={fmt(result.macro.hospitalAdmissions)} sub="surge above baseline" accent="error" />
-          <MacroTile label="hospital cost" value={ZAR(result.macro.hospitalCostZar)} sub="admissions × R18.5k avg" accent="error" />
-          <MacroTile label="insurer claims" value={ZAR(result.macro.insurerClaimsZar)} sub="liability impact" accent="ok" />
-          <MacroTile label="out-of-pocket" value={ZAR(result.macro.oopCostsZar)} sub="household burden" accent="ok" />
-        </div>
+        <MacroLedger macro={result.macro} />
       </section>
 
       <section className="simulation-section">
@@ -577,11 +576,27 @@ function SimulationResults({
         <div className="simulation-breakdown">
           <div className="simulation-breakdown-col">
             <div className="muted small">treatment uptake</div>
-            <BreakdownBar values={result.macro.uptake} order={['accepted', 'declined', 'unsure']} colors={{ accepted: 'var(--consensus)', declined: 'var(--adversarial)', unsure: 'var(--muted)' }} />
+            <BreakdownBar
+              name="treatment uptake"
+              values={result.macro.uptake}
+              order={[
+                { key: 'accepted', tone: 'ok' },
+                { key: 'declined', tone: 'bad' },
+                { key: 'unsure', tone: 'neutral' },
+              ]}
+            />
           </div>
           <div className="simulation-breakdown-col">
             <div className="muted small">spending response</div>
-            <BreakdownBar values={result.macro.spending} order={['reduced', 'unchanged', 'increased']} colors={{ reduced: 'var(--adversarial)', unchanged: 'var(--muted)', increased: 'var(--consensus)' }} />
+            <BreakdownBar
+              name="spending response"
+              values={result.macro.spending}
+              order={[
+                { key: 'reduced', tone: 'bad' },
+                { key: 'unchanged', tone: 'neutral' },
+                { key: 'increased', tone: 'ok' },
+              ]}
+            />
           </div>
         </div>
       </section>
@@ -655,6 +670,18 @@ function SimulationResults({
         </ul>
       </section>
 
+      {result.macro.failedCount > 0 && (
+        <section className="simulation-section">
+          <div className="muted small" style={{ color: 'var(--status-err, #d66)' }}>
+            {result.macro.failedCount} of {result.macro.failedCount + result.macro.sampleSize} agents
+            returned nothing usable and were excluded — the macro figures above scale off the{' '}
+            {result.macro.sampleSize} that answered. Those rows are kept in the dataset with{' '}
+            <code>sim_status</code> set to the reason and an empty rationale; filter them out before
+            modelling.
+          </div>
+        </section>
+      )}
+
       <section className="simulation-section">
         <div className="panel-label">
           per-agent simulated dataset · {result.rows.length} rows × {result.columns.length} cols
@@ -717,57 +744,117 @@ function SimulationResults({
   );
 }
 
-function MacroTile({
-  label,
-  value,
-  sub,
-  accent,
-}: {
+// ── Macro impact ───────────────────────────────────────────────────────────
+//
+// Eight figures. As eight bordered cards they read as a template: a `0` got
+// the same box, border and colour block as R75B, the auto-fit grid wrapped to
+// a 7 + 1 orphan row, and nothing on screen said which numbers belonged
+// together.
+//
+// Rendered as a statement instead. Three columns by subject, values
+// right-aligned in a tabular column so magnitudes line up and can be compared
+// down the column — the thing a grid of cards actively prevents — with the
+// unit as a dim note after the label. Hairline under each heading, no card
+// chrome anywhere.
+
+type MacroStat = {
   label: string;
   value: string;
   sub: string;
   accent: 'ok' | 'warn' | 'error';
-}) {
-  const color = accent === 'ok' ? 'var(--consensus)' : accent === 'warn' ? 'var(--dissent)' : 'var(--adversarial)';
+};
+
+type MacroGroup = { title: string; stats: MacroStat[] };
+
+function macroGroups(macro: MacroSummary): MacroGroup[] {
+  return [
+    {
+      title: 'labour',
+      stats: [
+        { label: 'workdays lost', value: fmt(macro.workdaysLostTotal), sub: 'agent × day', accent: 'warn' },
+        { label: 'GDP drag', value: ZAR(macro.gdpDragZar), sub: 'lost wage value', accent: 'warn' },
+      ],
+    },
+    {
+      title: 'health',
+      stats: [
+        { label: 'excess mortality', value: fmt(macro.excessMortality), sub: 'modelled deaths', accent: 'error' },
+        { label: 'severe / critical', value: fmt(macro.severeOrCriticalCount), sub: 'cases requiring care', accent: 'error' },
+        { label: 'hospital admissions', value: fmt(macro.hospitalAdmissions), sub: 'surge above baseline', accent: 'error' },
+      ],
+    },
+    {
+      title: 'cost',
+      stats: [
+        { label: 'hospital cost', value: ZAR(macro.hospitalCostZar), sub: 'admissions × R18.5k avg', accent: 'error' },
+        { label: 'insurer claims', value: ZAR(macro.insurerClaimsZar), sub: 'liability impact', accent: 'ok' },
+        { label: 'out-of-pocket', value: ZAR(macro.oopCostsZar), sub: 'household burden', accent: 'ok' },
+      ],
+    },
+  ];
+}
+
+function accentColor(accent: MacroStat['accent']): string {
+  return accent === 'ok'
+    ? 'var(--consensus)'
+    : accent === 'warn'
+      ? 'var(--dissent)'
+      : 'var(--adversarial)';
+}
+
+function MacroLedger({ macro }: { macro: MacroSummary }) {
   return (
-    <div className="simulation-macro-tile">
-      <div className="panel-label">{label}</div>
-      <div className="simulation-macro-value" style={{ color }}>{value}</div>
-      <div className="muted small">{sub}</div>
+    <div className="macro-ledger">
+      {macroGroups(macro).map((g) => (
+        <div key={g.title} className="macro-group">
+          <div className="panel-label macro-group-title">{g.title}</div>
+          {g.stats.map((s) => (
+            <div key={s.label} className="macro-row">
+              <span className="macro-row-value num" style={{ color: accentColor(s.accent) }}>
+                {s.value}
+              </span>
+              <span className="macro-row-text">
+                {s.label}
+                <span className="macro-row-sub muted small"> · {s.sub}</span>
+              </span>
+            </div>
+          ))}
+        </div>
+      ))}
     </div>
   );
 }
 
+/** Semantic slice tone, resolved to a theme colour here rather than at the
+ *  call site: these used to be `var(--consensus)` CSS variables, which a
+ *  canvas renderer cannot resolve — ECharts would have drawn them as its
+ *  default palette. */
+type Tone = 'ok' | 'bad' | 'neutral';
+
 function BreakdownBar({
+  name,
   values,
   order,
-  colors,
 }: {
+  name: string;
   values: Record<string, number>;
-  order: string[];
-  colors: Record<string, string>;
+  order: Array<{ key: string; tone: Tone }>;
 }) {
-  const total = order.reduce((s, k) => s + (values[k] ?? 0), 0);
+  const { resolved } = useTheme();
+  const c = colorsForTheme(resolved);
+  const tone: Record<Tone, string> = {
+    ok: c.consensus,
+    bad: c.adversarial,
+    neutral: c.muted,
+  };
   return (
-    <div>
-      <div className="stack-bar">
-        {order
-          .filter((k) => (values[k] ?? 0) > 0)
-          .map((k) => (
-            <div
-              key={k}
-              className="stack-seg"
-              style={{ flex: values[k], background: colors[k] }}
-            />
-          ))}
-      </div>
-      <div className="syn-legend muted small" style={{ marginTop: 4 }}>
-        {order.map((k) => (
-          <span key={k}>
-            <i style={{ background: colors[k] }} /> {k} {total > 0 ? `${Math.round(((values[k] ?? 0) / total) * 100)}%` : '—'}
-          </span>
-        ))}
-      </div>
-    </div>
+    <HalfDonut
+      name={name}
+      data={order.map(({ key, tone: t }) => ({
+        name: key,
+        value: values[key] ?? 0,
+        color: tone[t],
+      }))}
+    />
   );
 }

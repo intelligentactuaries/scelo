@@ -344,9 +344,22 @@ function agentToRow(r: SimulationAgentResult): Record<string, unknown> {
     education: a.education,
     region: a.region,
     employment: a.employment,
+    culture: a.culture,
+    // These four shape every prompt but never reached the table, so nothing
+    // downstream could regress an outcome against the drivers that produced
+    // it — the dataset showed the answers without the inputs.
+    risk_tolerance: Number(a.riskTolerance.toFixed(3)),
+    financial_literacy: Number(a.financialLiteracy.toFixed(3)),
+    trust_health_system: h ? Number(h.trustInHealthSystem.toFixed(3)) : '',
+    health_literacy: h ? Number(h.healthLiteracy.toFixed(3)) : '',
+    baseline_mortality: h ? Number(h.baselineMortality.toFixed(5)) : '',
     comorbidities: h?.comorbidities.join(';') ?? '',
     vaccination: h?.vaccinationHistory ?? '',
     insurance_cov: h ? Number(h.insuranceCoverage.toFixed(3)) : 0,
+    // Whether this row is an observation at all. Without it a failed agent is
+    // indistinguishable from someone who genuinely shrugged.
+    sim_status: r.failure ? r.failure.kind : 'ok',
+    sim_error: r.failure?.message ?? '',
     sim_treatment_uptake: o.behaviour.treatmentUptake,
     sim_isolation_days: o.behaviour.isolationDays,
     sim_spending_shift: o.behaviour.spendingShift,
@@ -545,13 +558,19 @@ route('POST', '/api/simulate/augment', async ({ req }) => {
   // buckets without biasing any of them. Safe here precisely because the
   // augment path never aggregates across ages (no aggregateMacro).
   const agents = sampleSAPopulation({ size: sampleSize, seed, ageWeighting: 'age-balanced' });
-  const { results } = await runSimulation(agents, {
+  const { results: allResults } = await runSimulation(agents, {
     scenario: body.scenario.trim(),
     referenceBlock: refBlock,
     fresh: body.fresh,
     seed,
     onProgress,
   });
+  // Failed agents carry a neutral all-zero placeholder. Leaving them in the
+  // buckets below would drag every median toward zero and, in a sparse
+  // bucket, could BE the median — an input row would then be augmented from
+  // a value no agent ever reported.
+  const results = allResults.filter((r) => !r.failure);
+  const failedCount = allResults.length - results.length;
 
   // Index the reference cohort at several granularities.
   //
@@ -673,7 +692,11 @@ route('POST', '/api/simulate/augment', async ({ req }) => {
     scenario: body.scenario.trim(),
     drugs,
     refs,
-    sampleSize,
+    /** Reference agents that actually answered — the basis of every bucket. */
+    sampleSize: results.length,
+    /** Requested cohort size, and how many of it failed. */
+    requestedSampleSize: sampleSize,
+    failedCount,
     /** Echoed so an augmentation can be reproduced exactly. */
     seed,
     /** The reference cohort is deliberately age-balanced, not representative
