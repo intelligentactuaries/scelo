@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 168 168" width="512" height="512" role="img">
+ <title>Turtle</title>
+ <g transform="translate(-446 -218)">
+  <ellipse cx="530" cy="338" rx="60" ry="23" fill="#4C8A3E"/>
+  <circle cx="530" cy="300" r="56" fill="#74B95A"/>
+  <circle cx="509" cy="296" r="9" fill="#3B3229"/>
+  <circle cx="551" cy="296" r="9" fill="#3B3229"/>
+ </g>
+</svg>

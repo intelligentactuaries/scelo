@@ -28,15 +28,17 @@ import type { LegalJurisdiction, Profession } from '../shared/constants';
 import { ApiKeyVault } from './components/ApiKeyVault';
 import { ConversationPanel } from './components/ConversationPanel';
 import { MobileNav } from './components/MobileNav';
+import { Greeting } from './components/Greeting';
 import { ScenarioCard } from './components/ScenarioCard';
 import { useMediaQuery, MOBILE_QUERY } from './lib/useMediaQuery';
 import { useTheme } from './lib/theme';
 import { DecisionSankey } from './components/DecisionSankey';
-import { SocietySankey } from './components/SocietySankey';
+import { SocietySankey, absentSentiments } from './components/SocietySankey';
 import { SankeySegmentInspector } from './components/SankeySegmentInspector';
 import { CenterHeading } from './components/CenterHeading';
 import {
   PanelLeftIcon,
+  ToolsIcon,
   UsersIcon,
   SlidersIcon,
   GlobeIcon,
@@ -57,7 +59,9 @@ import {
 } from './components/SocietyParams';
 import { AccordionSection } from './components/AccordionSection';
 import { DeliberationOverlay, useElapsed } from './components/DeliberationOverlay';
-import { ViewTabs, type TabId } from './components/ViewTabs';
+import { type TabId } from './components/ViewTabs';
+import { PetRail } from './components/PetRail';
+import { SurfaceSummaries } from './components/SurfaceSummaries';
 import { CouncilGraph } from './components/CouncilGraph';
 import { SocietyGraph, type SocietyPin } from './components/SocietyGraph';
 import { AgentInspector } from './components/AgentInspector';
@@ -115,6 +119,37 @@ export function App() {
   const [helpOpen, setHelpOpen] = useState(false);
 
   const [tab, setTab] = useState<TabId>('forecast');
+  // The pet rail's three states. `selected === null` is the resting overview
+  // (one line per surface); selected-but-not-expanded shows that surface's
+  // summary; expanded hands the canvas to the original full view.
+  //
+  // `tab` still drives every existing consumer — the graphs, the sidebar, the
+  // cross-tab jumps — so nothing downstream had to learn about the rail.
+  const [selected, setSelected] = useState<TabId | null>(null);
+  const [expanded, setExpanded] = useState(false);
+  const chooseSurface = useCallback(
+    (id: TabId) => {
+      setSelected((cur) => {
+        if (cur !== id) {
+          setExpanded(false);
+          setTab(id);
+          return id;
+        }
+        // Second click on the same pet opens it; a third folds it back to the
+        // summary, so the rail is always a way out as well as a way in.
+        setExpanded((e) => !e);
+        return cur;
+      });
+    },
+    [],
+  );
+  // Cross-tab jumps (a readback figure sending you to the council) must land
+  // on the full view, not on a summary the user did not ask for.
+  const jumpTo = useCallback((id: TabId) => {
+    setTab(id);
+    setSelected(id);
+    setExpanded(true);
+  }, []);
   // Simulation-tab state lives at the App level so it survives tab switches
   // (the view can unmount freely without losing scenario / sliders / results).
   const simulation = useSimulationState();
@@ -272,19 +307,15 @@ export function App() {
   const [inspectorWidth, setInspectorWidth] = useState<number>(() =>
     loadPanelWidth('swarm-council:inspector-width', 380),
   );
-  const [conversationWidth, setConversationWidth] = useState<number>(() =>
-    loadPanelWidth('swarm-council:conversation-width', 360),
-  );
   // Sidebar-collapsed boolean. Persisted, defaults to open.
+  // Desktop no longer has a way to open the accordion sidebar — the rail's
+  // section list replaced it. Mobile keeps it, where a flyout beside a 44px
+  // rail has nowhere to go.
   const [sidebarOpen, setSidebarOpen] = useState<boolean>(() => {
-    try {
-      const v = localStorage.getItem('swarm-council:sidebar-open');
-      if (v === '0') return false;
-      if (v === '1') return true;
-    } catch {
-      /* ignore */
-    }
-    return true;
+    // Always shut on load, and a stored '1' is deliberately NOT honoured:
+    // the rail no longer offers a way to close this panel, so anyone who had
+    // it open before would come back to a sidebar they could not dismiss.
+    return false;
   });
   useEffect(() => {
     try {
@@ -388,9 +419,6 @@ export function App() {
   const resizeInspector = useCallback((delta: number) => {
     setInspectorWidth((w) => clamp(w + delta, 280, 640));
   }, []);
-  const resizeConversation = useCallback((delta: number) => {
-    setConversationWidth((w) => clamp(w + delta, 280, 640));
-  }, []);
   useEffect(() => {
     try {
       localStorage.setItem('swarm-council:sidebar-width', String(sidebarWidth));
@@ -405,13 +433,6 @@ export function App() {
       /* noop */
     }
   }, [inspectorWidth]);
-  useEffect(() => {
-    try {
-      localStorage.setItem('swarm-council:conversation-width', String(conversationWidth));
-    } catch {
-      /* noop */
-    }
-  }, [conversationWidth]);
 
   useEffect(() => {
     api
@@ -724,6 +745,11 @@ export function App() {
   // its icon sits. The other icons remain visible, and the layout doesn't
   // shift. Toggling the panel button still does its previous full-expand
   // behaviour (preserves whatever state the accordions are in).
+  // The eight setup controls fold behind one icon. They were a permanent
+  // 44px strip of unlabelled glyphs down the left edge — eight things to
+  // decode before reaching anything, on a shell whose whole point is that
+  // the surfaces are six animals.
+  const [toolsOpen, setToolsOpen] = useState(false);
   const [flyoutKey, setFlyoutKey] = useState<string | null>(null);
   const [flyoutTop, setFlyoutTop] = useState<number>(0);
 
@@ -732,11 +758,17 @@ export function App() {
       setFlyoutKey(null);
       return;
     }
-    // anchor the flyout vertically to the clicked icon's top edge
+    // Anchor the flyout to the clicked icon's top edge.
+    //
+    // Measured against `.pet-rail-tools`, which is the flyout's positioned
+    // ancestor — NOT `.pet-rail`, which is what it used to be when the tools
+    // had a column of their own. Measuring against one box and positioning
+    // inside another put every panel exactly as far down the screen as the
+    // tools block starts, which is why they were landing near the floor.
     const btn = e.currentTarget;
-    const railRect = btn.closest('.left-rail')?.getBoundingClientRect();
+    const hostRect = btn.closest('.pet-rail-tools')?.getBoundingClientRect();
     const r = btn.getBoundingClientRect();
-    const top = railRect ? r.top - railRect.top : r.top;
+    const top = hostRect ? r.top - hostRect.top : r.top;
     setFlyoutTop(top);
     setFlyoutKey(storageKey);
   };
@@ -746,7 +778,7 @@ export function App() {
     if (!flyoutKey) return;
     const onDown = (ev: MouseEvent) => {
       const target = ev.target as HTMLElement | null;
-      if (target?.closest('.rail-flyout') || target?.closest('.left-rail')) return;
+      if (target?.closest('.rail-flyout') || target?.closest('.pet-rail')) return;
       setFlyoutKey(null);
     };
     const onKey = (ev: KeyboardEvent) => {
@@ -840,11 +872,98 @@ export function App() {
     ? SIDEBAR_SECTIONS.find((s) => s.storageKey === flyoutKey)
     : null;
 
+  // No run, and on a surface that has nothing to show without one. Canon and
+  // Simulation are excluded because both work standalone.
+  const emptyStage = !run && tab !== 'canon' && tab !== 'simulation';
+
+  // Panel toggle + the setup group, rendered inside the one rail rather than
+  // in a 44px column of their own. Two rails down the left edge — six animals
+  // in one, eight glyphs in the other — was the same duplication the resting
+  // pet rail was removed for.
+  const railTools = (
+    <>
+      {/* One control with two faces: shut it is the panel glyph, open it is
+          Setup at the head of its own list. The big accordion sidebar it used
+          to swing out is retired — every one of its sections is a click away
+          in this list, so the panel was the same eight controls again in a
+          taller form. */}
+      {!toolsOpen ? (
+        <button
+          type="button"
+          className="sidebar-toggle rail-icon-btn"
+          onClick={() => setToolsOpen(true)}
+          title="setup controls"
+          aria-label="setup controls"
+          aria-expanded={false}
+        >
+          <PanelLeftIcon />
+          <span className="rail-icon-label">Setup</span>
+        </button>
+      ) : (
+        <>
+          <button
+            type="button"
+            className="rail-icon-btn rail-tools-toggle is-active"
+            onClick={() => {
+              setToolsOpen(false);
+              setFlyoutKey(null);
+            }}
+            aria-label="close setup controls"
+            aria-expanded
+            title="close setup controls"
+          >
+            <ToolsIcon />
+            <span className="rail-icon-label">Setup</span>
+          </button>
+          {SIDEBAR_SECTIONS.map((sec, i) => (
+            <button
+              key={sec.storageKey}
+              type="button"
+              className={`rail-icon-btn rail-tool ${flyoutKey === sec.storageKey ? 'is-active' : ''}`}
+              onClick={(e) => popSectionFromRail(sec.storageKey, e)}
+              aria-label={sec.label}
+              aria-pressed={flyoutKey === sec.storageKey}
+              style={{ animationDelay: `${i * 26}ms` }}
+            >
+              {sec.icon}
+              <span className="rail-icon-label">{sec.label}</span>
+            </button>
+          ))}
+        </>
+      )}
+          {flyoutSection && (
+            <div
+              className="rail-flyout"
+              style={{ top: flyoutTop }}
+              role="dialog"
+              aria-label={flyoutSection.label}
+            >
+              <div className="rail-flyout-head">
+                <span className="rail-flyout-title">
+                  <span className="accordion-icon">{flyoutSection.icon}</span>
+                  <span>{flyoutSection.label}</span>
+                </span>
+                <button
+                  className="ghost-btn small"
+                  onClick={() => setFlyoutKey(null)}
+                  aria-label="close"
+                  title="close"
+                >
+                  ×
+                </button>
+              </div>
+              <div className="rail-flyout-body">
+                {renderSectionContent(flyoutSection.storageKey)}
+              </div>
+            </div>
+          )}
+    </>
+  );
+
   return (
     <div className={`app-shell ${isMobile ? 'is-mobile' : ''}`}>
       <header className="topbar">
         <div className="wordmark">SWARM COUNCIL</div>
-        <ViewTabs active={tab} onChange={setTab} />
         <div className="status-cluster">
           <span className="muted">api</span>
           <span className={health === 'ok' ? 'status-ok' : 'status-warn'}>{health}</span>
@@ -893,68 +1012,16 @@ export function App() {
           gridTemplateColumns: (() => {
             const sidebar = sidebarOpen ? ` ${sidebarWidth}px 6px` : '';
             const decision = decisionOpen ? `6px ${inspectorWidth}px` : `32px`;
-            const conversation = conversationOpen
-              ? `6px ${conversationWidth}px`
-              : `32px`;
-            return `44px${sidebar} 1fr ${decision} ${conversation}`;
+            // The conversation moved out of the grid entirely: it is a
+            // bottom dock inside the canvas now, not a third right-hand
+            // column. Two chat surfaces — a refine-only composer at the
+            // bottom and a chat+refine panel on the right — were the same
+            // tool twice.
+            // No rail column: the rail lives inside the canvas now.
+            return `${sidebar.trim() ? sidebar.trim() : ''} 1fr ${decision}`.trim();
           })(),
         }}
       >
-        <aside className="left-rail">
-          <button
-            className="sidebar-toggle"
-            onClick={() => setSidebarOpen((v) => !v)}
-            title={sidebarOpen ? 'collapse panel' : 'expand panel'}
-            aria-label={sidebarOpen ? 'collapse panel' : 'expand panel'}
-            aria-pressed={sidebarOpen}
-          >
-            <PanelLeftIcon />
-          </button>
-          {!sidebarOpen && (
-            <>
-              <div className="left-rail-divider" aria-hidden="true" />
-              {SIDEBAR_SECTIONS.map((s) => (
-                <button
-                  key={s.storageKey}
-                  type="button"
-                  className={`rail-icon-btn ${flyoutKey === s.storageKey ? 'is-active' : ''}`}
-                  onClick={(e) => popSectionFromRail(s.storageKey, e)}
-                  aria-label={s.label}
-                  aria-pressed={flyoutKey === s.storageKey}
-                  data-tooltip={s.label}
-                >
-                  {s.icon}
-                </button>
-              ))}
-            </>
-          )}
-          {flyoutSection && (
-            <div
-              className="rail-flyout"
-              style={{ top: flyoutTop }}
-              role="dialog"
-              aria-label={flyoutSection.label}
-            >
-              <div className="rail-flyout-head">
-                <span className="rail-flyout-title">
-                  <span className="accordion-icon">{flyoutSection.icon}</span>
-                  <span>{flyoutSection.label}</span>
-                </span>
-                <button
-                  className="ghost-btn small"
-                  onClick={() => setFlyoutKey(null)}
-                  aria-label="close"
-                  title="close"
-                >
-                  ×
-                </button>
-              </div>
-              <div className="rail-flyout-body">
-                {renderSectionContent(flyoutSection.storageKey)}
-              </div>
-            </div>
-          )}
-        </aside>
 
         {(isMobile || sidebarOpen) && (
           <aside
@@ -1156,6 +1223,26 @@ export function App() {
         {!isMobile && sidebarOpen && <ResizeHandle side="right" onResize={resizeSidebar} />}
 
         <main className="canvas">
+          {/* The rail lives beside the content, not in the 44px topbar strip
+              — it is a vertical column, and putting it there blew the header
+              open and clipped the wordmark behind it.
+              
+              It is HIDDEN at rest. The resting summary list already names
+              every surface next to the same animal, so a rail beside it is
+              the same six items twice. The rail is what a surface returns to
+              once one is chosen — which is exactly what the flight animation
+              shows, the icon landing in a seat that appears as it arrives.
+              The empty stage keeps a quiet rail because it has no summary
+              list to navigate from. */}
+          <PetRail
+            selected={selected}
+            expanded={expanded}
+            onSelect={chooseSurface}
+            quiet={emptyStage}
+            showPets={emptyStage || selected !== null}
+            tools={railTools}
+          />
+          <div className="canvas-stack">
           {/* When a run exists (or we're on Canon), the heading lives at the
               top of the canvas. When empty, the heading is hoisted INTO the
               canvas-empty-stage below so it sits right above the scenario
@@ -1242,9 +1329,9 @@ export function App() {
             {/* No-run empty state: drop the scenario card into the centre per
                 slide 1, regardless of the active tab. Once a run lands, the
                 tab content (graph / synthesis / canon) takes over. */}
-            {!run && tab !== 'canon' && tab !== 'simulation' ? (
+            {emptyStage ? (
               <div className="canvas-empty-stage">
-                <CenterHeading scenario={null} tab={tab} />
+                <Greeting />
                 <ScenarioCard
                   ref={scenarioRef}
                   scenario={scenario}
@@ -1262,6 +1349,21 @@ export function App() {
                   </div>
                 )}
               </div>
+            ) : !expanded ? (
+              /* The minimal resting surface: the rail plus the summaries it
+                 opens. The full views below are unmounted here, which is also
+                 why the canvas stays quiet while a run is still landing. */
+              <SurfaceSummaries
+                selected={selected}
+                run={run}
+                extras={{
+                  canonWorks: canonState.draft.length,
+                  simRows: simulation.result?.rows.length,
+                  simDone: !!simulation.result,
+                }}
+                onOpen={() => setExpanded(true)}
+                onSelect={chooseSurface}
+              />
             ) : (
               <>
                 {tab === 'forecast' && run && (runError || (stalledSec != null && stalledSec >= STALL_SEC)) && (
@@ -1279,9 +1381,9 @@ export function App() {
                 {tab === 'forecast' && run && (
                   <ForecastCanvas
                     run={run}
-                    onShowCouncil={() => setTab('council')}
-                    onShowSociety={() => setTab('society')}
-                    onShowSynthesis={() => setTab('synthesis')}
+                    onShowCouncil={() => jumpTo('council')}
+                    onShowSociety={() => jumpTo('society')}
+                    onShowSynthesis={() => jumpTo('synthesis')}
                     onFilterByOutcome={() => {
                       // phase 2: actually filter the council inspector to
                       // agents whose vote diverges from this outcome
@@ -1375,6 +1477,13 @@ export function App() {
                       <div className="council-stack-sankey">
                         <div className="council-stack-sankey-label">
                           society reactions to the forecast · cluster → sentiment → intensity
+                          {run && absentSentiments(run).length > 0 && (
+                            <span className="muted">
+                              {' · no '}
+                              {absentSentiments(run).join(' or ')}
+                              {' reactions'}
+                            </span>
+                          )}
                         </div>
                         <SocietySankey
                           run={run}
@@ -1399,6 +1508,44 @@ export function App() {
                 the right-side ConversationPanel now, so the bottom dock
                 is gone and the graph + Sankey have the full canvas
                 height to themselves. */}
+          </div>
+
+          {/* One conversation, docked at the bottom. Shut, it is the composer
+              bar; open, it is the full panel rising out of it — chat AND
+              refine, which the right-hand panel already had and the composer
+              only half of. */}
+          {run && (
+            <div className={`chat-dock ${conversationOpen ? 'is-open' : ''}`}>
+              {conversationOpen ? (
+                <ConversationPanel
+                  className="is-docked"
+                  runId={runId}
+                  runReady={!!run && run.status === 'complete'}
+                  onCollapse={() => setConversationOpen(false)}
+                  scenario={scenario}
+                  onScenarioChange={setScenario}
+                  busy={runBusy}
+                  onRefine={(sc) => {
+                    setScenario(sc);
+                    setTimeout(() => startRun(), 0);
+                  }}
+                />
+              ) : (
+                <button
+                  type="button"
+                  className="chat-dock-trigger"
+                  onClick={() => setConversationOpen(true)}
+                  aria-expanded={false}
+                  title="ask the swarm, or refine the scenario"
+                >
+                  <span className="chat-dock-caret" aria-hidden>
+                    ↑
+                  </span>
+                  <span className="chat-dock-placeholder">ask the swarm</span>
+                </button>
+              )}
+            </div>
+          )}
           </div>
         </main>
 
@@ -1494,37 +1641,6 @@ export function App() {
           </button>
         )}
 
-        {(isMobile || conversationOpen) && (
-          <>
-            {!isMobile && <ResizeHandle side="left" onResize={resizeConversation} />}
-            <ConversationPanel
-              className={isMobile && conversationOpen ? 'is-open-mobile' : ''}
-              runId={runId}
-              runReady={!!run && run.status === 'complete'}
-              onCollapse={() =>
-                isMobile ? closeMobilePanels() : setConversationOpen(false)
-              }
-              scenario={scenario}
-              onScenarioChange={setScenario}
-              busy={runBusy}
-              onRefine={(s) => {
-                setScenario(s);
-                setTimeout(() => startRun(), 0);
-              }}
-            />
-          </>
-        )}
-        {!isMobile && !conversationOpen && (
-          <button
-            type="button"
-            className="decision-handle decision-handle-btn"
-            aria-label="expand conversation"
-            title="expand conversation"
-            onClick={() => setConversationOpen(true)}
-          >
-            <span className="decision-handle-label">conversation</span>
-          </button>
-        )}
       </div>
 
       {isMobile && mobileActivePanel && (

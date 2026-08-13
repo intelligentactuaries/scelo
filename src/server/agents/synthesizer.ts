@@ -33,14 +33,30 @@ export function synthesize(results: CouncilAgentResult[]): RunSummary {
     .sort((a, b) => b.finalConfidence - a.finalConfidence)
     .map((r) => r.agent.id);
 
-  // Cluster once, then slice — the totals have to describe the whole set,
-  // not the part that fits on screen.
-  const allRisks = clusterRisks(results.map((r) => r.keyRisk));
+  // `keyRisk` means opposite things depending on the vote: a supporter names
+  // what the forecast gets RIGHT, an opposer what it misses. Clustering all
+  // of them together merged those two into one list — and because both groups
+  // draw on the same vocabulary (on a measured run, 17 of 27 content words
+  // were shared), a supporter's "captures the tenure security" landed in the
+  // same cluster as an opposer's "ignores secure tenure". That is what made
+  // trusting and distrusting agents look like they were reasoning
+  // identically. They are counted apart now and never merged.
+  const critical = results.filter((r) => r.finalStance !== 'support');
+  const affirming = results.filter((r) => r.finalStance === 'support');
+
+  const allRisks = clusterRisks(critical.map((r) => r.keyRisk));
   const topRisks = allRisks.slice(0, TOP_RISK_LIMIT);
   let riskAgentsTotal = 0;
   for (const c of allRisks) riskAgentsTotal += c.count;
   let riskAgentsShown = 0;
   for (const c of topRisks) riskAgentsShown += c.count;
+
+  const allCaptures = clusterRisks(affirming.map((r) => r.keyRisk));
+  const topCaptures = allCaptures.slice(0, TOP_RISK_LIMIT);
+  let captureAgentsTotal = 0;
+  for (const c of allCaptures) captureAgentsTotal += c.count;
+  let captureAgentsShown = 0;
+  for (const c of topCaptures) captureAgentsShown += c.count;
 
   return {
     consensusScore,
@@ -51,6 +67,10 @@ export function synthesize(results: CouncilAgentResult[]): RunSummary {
     riskClusterCount: allRisks.length,
     riskAgentsShown,
     riskAgentsTotal,
+    topCaptures,
+    captureClusterCount: allCaptures.length,
+    captureAgentsShown,
+    captureAgentsTotal,
     dissentingAgentIds: dissenting,
     interventionClusters: clusterInterventions(results),
   };

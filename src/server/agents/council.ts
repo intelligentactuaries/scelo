@@ -90,14 +90,56 @@ End with a single final line in this exact format:
 CONFIDENCE: <0-100>`;
 }
 
+
+/**
+ * Words that make a key_risk read as an objection.
+ *
+ * Used to catch an agent that votes support and then states a criticism —
+ * "ignores secure tenure" under a trust vote is the agent arguing against
+ * itself, and it is what made trusting and distrusting agents look like they
+ * were reasoning identically in the readback.
+ */
+const OBJECTION_RE =
+  /\b(ignor\w*|miss\w*|missing|overlook\w*|underestimat\w*|underweigh\w*|overweigh\w*|overestimat\w*|overemphasi\w*|fails?|failing|neglect\w*|omits?|omitting|understat\w*|discount\w*)\b/i;
+
+/** True when this vote contradicts the reason given for it. */
+export function stanceContradictsRisk(stance: string, keyRisk: string): boolean {
+  if (stance !== 'support') return false;
+  return OBJECTION_RE.test(keyRisk ?? '');
+}
+
 function r3Prompt(scenario: string, yourR2: string, withIntervention: boolean): string {
   const baseShape = `{"stance":"support"|"oppose"|"abstain","confidence":0-100,"key_risk":"<<=120 chars>"}`;
   const interventionShape = `{"stance":"support"|"oppose"|"abstain","confidence":0-100,"key_risk":"<<=120 chars>","recommended_intervention":{"param":"alphaR","direction":"increase"|"decrease","magnitude":"small"|"large","rationale":"<<=120 chars>"}}`;
-  const frame = withIntervention
-    ? `\nReminder of the stance vocabulary in THIS run (forecast interrogation):
-  support = trust the forecast | oppose = distrust the forecast | abstain = insufficient evidence.
-key_risk: name what the forecast either correctly captures (support) or misses (oppose / abstain).`
-    : '';
+  // The stance vocabulary is NOT conditional on the intervention shape. It
+  // was, and on a run without WMTR evidence the agents got no definition of
+  // support/oppose at all and no guidance on what `key_risk` is for.
+  //
+  // `key_risk` carries opposite meanings depending on the vote — a supporter's
+  // is what the forecast gets RIGHT — and a field called "key risk" pulls hard
+  // the other way. One line of guidance was not enough: on a measured run all
+  // eleven supporters still answered with a criticism ("ignores secure
+  // tenure", "misses inherent stability"), which reads as an agent arguing
+  // against the forecast and then voting to trust it. Hence the worked
+  // examples and the explicit self-check below.
+  const frame = `
+Stance vocabulary in THIS run (you are interrogating a forecast):
+  support = you TRUST the forecast | oppose = you DISTRUST it | abstain = insufficient evidence.
+
+key_risk must MATCH your stance. Fill the shape from THIS scenario, in your
+own words — the angle brackets are slots, not text to reuse:
+  • support  → "captures <the specific thing that makes the forecast right here>"
+  • oppose   → "ignores <the specific thing the forecast leaves out>"
+  • abstain  → "no evidence on <what you would need in order to decide>"
+
+Do NOT copy the wording of these shapes; an answer that reads like the
+template rather than like this scenario is wrong.
+
+Self-check before answering: a key_risk that would justify the OTHER vote is
+the wrong one. If you voted support and wrote "ignores…", you have argued
+against your own stance — rewrite it as what the forecast gets right.
+`;
+
   return `Scenario:
 ${scenario}
 
@@ -350,7 +392,35 @@ export async function runCouncil(
     pool.map(async (agent, i) => {
       const prompt = r3Prompt(scenario, r2Texts[i], withIntervention);
       try {
-        const text = await runAgentRound(agent, sys.get(agent.id)!, prompt, 3, R3_MAX, fresh);
+        let text = await runAgentRound(agent, sys.get(agent.id)!, prompt, 3, R3_MAX, fresh);
+
+        // One correction pass when the vote and the reason disagree.
+        //
+        // The prompt says a supporter's key_risk is what the forecast gets
+        // RIGHT, and the models still answer with a criticism a good share of
+        // the time — measured at 11/11 supporters before the wording was
+        // strengthened. Wording alone cannot be relied on, so the
+        // contradiction is detected and handed back once, naming the specific
+        // fault. If it comes back contradictory again the vote is kept as
+        // given: the readback splits by stance, so a stray line is visible
+        // rather than silently merged, and rewriting an agent's stated reason
+        // would be inventing evidence.
+        const first = parseR3(text);
+        if (stanceContradictsRisk(first.stance, first.key_risk)) {
+          const retry = await runAgentRound(
+            agent,
+            sys.get(agent.id)!,
+            `${prompt}\n\nYour previous answer voted "support" but gave "${first.key_risk}" as key_risk — that is a reason to OPPOSE, not to support. Either state what the forecast gets RIGHT, or change your stance to "oppose". Respond with the JSON only.`,
+            3,
+            R3_MAX,
+            // Bypass the cache: the same prompt just produced the reply we
+            // are rejecting.
+            true,
+          );
+          const second = parseR3(retry);
+          if (!stanceContradictsRisk(second.stance, second.key_risk)) text = retry;
+        }
+
         r3Done++;
         onProgress({ type: 'agent_done', round: 3, agentId: agent.id, done: r3Done, total: pool.length });
         return text;

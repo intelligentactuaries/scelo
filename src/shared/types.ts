@@ -215,6 +215,18 @@ export interface RunSummary {
   riskClusterCount: number;
   riskAgentsShown: number;
   riskAgentsTotal: number;
+  /**
+   * What the SUPPORTING agents said the forecast gets right.
+   *
+   * `topRisks` above is drawn only from agents who did NOT support, because
+   * `keyRisk` carries opposite meanings on either side of the vote. Merging
+   * them put a supporter's endorsement and an opposer's objection in the same
+   * cluster. Optional so runs summarised before the split still deserialise.
+   */
+  topCaptures?: { risk: string; count: number }[];
+  captureClusterCount?: number;
+  captureAgentsShown?: number;
+  captureAgentsTotal?: number;
   dissentingAgentIds: string[];
   /** Aggregated WMTR interventions from round-3 votes. Sorted by count desc. */
   interventionClusters?: InterventionCluster[];

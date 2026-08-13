@@ -168,20 +168,27 @@ function buildOption(run: Run, colors: ThemeColors, dark: boolean): echarts.ECha
     new Set(run.societyResults.map((r) => r.cluster).filter((c): c is number => c !== undefined)),
   ).sort((a, b) => a - b);
 
+  // `depth` pins each node to its tier. ECharts otherwise infers depth from
+  // the link graph, and a node with NO links has nothing to infer from — it
+  // gets dropped into the last column, which is how `skeptical` and `hostile`
+  // ended up stacked on top of the intensity labels on the right-hand edge.
   const clusterNodes = clusterIds.map((c, i) => ({
     name: `clu:c${c}`,
+    depth: 0,
     label: { formatter: `c${c}`, color: colors.fg, fontSize: 11 },
     itemStyle: { color: clusterColor(i, dark) },
   }));
   const sentiments: Sentiment[] = SENTIMENT_ORDER;
   const sentimentNodes = sentiments.map((s) => ({
     name: `sent:${s}`,
+    depth: 1,
     label: { formatter: s, color: colors.fg, fontSize: 11, fontWeight: 500 as const },
     itemStyle: { color: SENTIMENT_COLOR[s] },
   }));
   const bands: IntBand[] = ['High ≥70', 'Mid 40–69', 'Low <40'];
   const bandNodes = bands.map((b) => ({
     name: `int:${b}`,
+    depth: 2,
     label: { formatter: b, color: colors.fg, fontSize: 11 },
     itemStyle: { color: INT_COLOR[b] },
   }));
@@ -197,13 +204,16 @@ function buildOption(run: Run, colors: ThemeColors, dark: boolean): echarts.ECha
     sentInt.set(k2, (sentInt.get(k2) ?? 0) + 1);
   }
   const links: { source: string; target: string; value: number }[] = [];
+  const linked = new Set<string>();
   for (const [k, v] of clusterSent) {
     const [c, s] = k.split('|');
     links.push({ source: `clu:${c}`, target: `sent:${s}`, value: v });
+    linked.add(`clu:${c}`).add(`sent:${s}`);
   }
   for (const [k, v] of sentInt) {
     const [s, b] = k.split('|');
     links.push({ source: `sent:${s}`, target: `int:${b}`, value: v });
+    linked.add(`sent:${s}`).add(`int:${b}`);
   }
 
   return {
@@ -251,7 +261,13 @@ function buildOption(run: Run, colors: ThemeColors, dark: boolean): echarts.ECha
         emphasis: { focus: 'adjacency' },
         lineStyle: { color: 'gradient', curveness: 0.5, opacity: 0.55 },
         label: { color: colors.fg, fontFamily: 'SN Pro, system-ui, sans-serif' },
-        data: [...clusterNodes, ...sentimentNodes, ...bandNodes],
+        // Only nodes that actually carry flow. A sentiment nobody expressed
+        // has no band to draw and no links to place it by; rendering it left
+        // a zero-height sliver with a floating label. Every run measured had
+        // at least one empty sentiment, so this is the normal case, not an
+        // edge case. The absence is reported in the caption instead, so it is
+        // stated rather than silently dropped.
+        data: [...clusterNodes, ...sentimentNodes, ...bandNodes].filter((n) => linked.has(n.name)),
         links,
       },
     ],
@@ -356,4 +372,17 @@ function applySankeyFocus(chart: echarts.ECharts, ids: Set<string> | null, run: 
     };
   });
   chart.setOption({ series: [{ data: nextData, links: nextLinks }] }, { lazyUpdate: true });
+}
+
+/**
+ * Sentiments nobody in this run expressed.
+ *
+ * The Sankey cannot draw them — a node with no flow has no band and nothing
+ * to place it by — so they are omitted from the diagram and named in the
+ * caption instead. Silently dropping a category would let "nobody was
+ * hostile" read the same as "hostility was not measured".
+ */
+export function absentSentiments(run: Run): Sentiment[] {
+  const present = new Set(run.societyResults.map((r) => r.sentiment));
+  return SENTIMENT_ORDER.filter((s) => !present.has(s));
 }

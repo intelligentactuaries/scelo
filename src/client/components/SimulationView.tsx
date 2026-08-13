@@ -323,7 +323,15 @@ export function SimulationView({ state }: { state: SimulationState }) {
             <button
               key={t.label}
               type="button"
-              className="scenario-preset-chip"
+              className={`scenario-preset-chip ${
+                t.scenario === scenario ? 'is-active' : ''
+              }`}
+              // Derived from the scenario text rather than held in its own
+              // state: the box below is editable, and a remembered index
+              // would keep a chip lit after the text it named had been
+              // rewritten — claiming the run came from a preset it no longer
+              // matches. Comparing to the text means editing clears it.
+              aria-pressed={t.scenario === scenario}
               onClick={() => onTemplate(i)}
               disabled={busy}
               title={t.scenario}
