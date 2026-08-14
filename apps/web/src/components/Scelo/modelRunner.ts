@@ -305,10 +305,22 @@ function buildCdf(factors: number[]): number[] {
 }
 
 // Mack age-to-age factors from a cumulative triangle (origins × devs).
+//
+// Returns, per development step k:
+//   factors[k]  volume-weighted f̂_k = Σ C_{i,k+1} / Σ C_{i,k}
+//   sigmas[k]   Mack's σ̂_k  — from σ̂_k² = 1/(n_k−1) · Σ C_{i,k}(F_{i,k} − f̂_k)²
+//               (NOTE: C-weighted, so σ_k carries √currency units — any use
+//               must keep it inside Mack's own mse formula, never treat it as
+//               a dimensionless ratio)
+//   dens[k]     S_k = Σ C_{i,k} over the origins that entered f̂_k — the
+//               1/S_k estimation-error term in Mack's mse
+//   counts[k]   n_k — how many origin pairs entered the estimate
 function ataFactors(tri: NonNullable<ReturnType<typeof buildTriangle>>) {
   const { origins, devs, cumByRow } = tri;
   const factors: number[] = [];
   const sigmas: number[] = [];
+  const dens: number[] = [];
+  const counts: number[] = [];
   for (let k = 0; k < devs.length - 1; k++) {
     let num = 0;
     let den = 0;
@@ -333,8 +345,22 @@ function ataFactors(tri: NonNullable<ReturnType<typeof buildTriangle>>) {
       count++;
     }
     sigmas.push(count > 1 ? Math.sqrt(s2 / (count - 1)) : 0);
+    dens.push(den);
+    counts.push(count);
   }
-  return { factors, sigmas };
+  // Mack's tail convention: the last σ has at most one observation (so the
+  // estimator above returns 0, understating the tail). Extrapolate
+  // σ²_{J-1} = min(σ⁴_{J-2}/σ²_{J-3}, min(σ²_{J-3}, σ²_{J-2})) when the
+  // neighbours exist and are positive.
+  const J = sigmas.length;
+  if (J >= 3 && counts[J - 1] < 2) {
+    const a = sigmas[J - 2] ** 2;
+    const b = sigmas[J - 3] ** 2;
+    if (a > 0 && b > 0) {
+      sigmas[J - 1] = Math.sqrt(Math.min((a * a) / b, Math.min(a, b)));
+    }
+  }
+  return { factors, sigmas, dens, counts };
 }
 
 // ── runners ──────────────────────────────────────────────────────────────────
@@ -414,23 +440,77 @@ function runMack({ dataset, upstream }: Args): RunResult {
   if (!tri) {
     return makeUnsupported("mack", "reserving", "Triangle not detected.");
   }
-  const { factors, sigmas } = ataFactors(tri);
+  const { factors, sigmas, dens } = ataFactors(tri);
   // Point estimate: a wired chain-ladder result wins (same triangle, same
   // maths — but the provenance is explicit and the numbers are guaranteed
   // consistent with the card the actuary is looking at); otherwise refit.
   const wiredCl = wired(upstream, "chain-ladder");
   const base = wiredCl ?? runChainLadder({ dataset });
   const ibnr = base.headline.value;
-  // Very rough Mack-style standard error: weight sigma_k^2 by the average
-  // cumulative paid at dev k. This is illustrative, not production-grade.
-  let varEst = 0;
-  for (let k = 0; k < sigmas.length; k++) {
-    const s = sigmas[k];
-    const fSafe = factors[k] || 1;
-    varEst += (s * s) / (fSafe * fSafe);
+  // Mack (1993) mean-squared error of the total reserve. Per origin i with
+  // diagonal at dev t_i and projected cumulatives Ĉ_{i,k}:
+  //
+  //   mse(R̂_i) = Ĉ_{i,J}² · Σ_{k=t_i}^{J-1} (σ̂_k²/f̂_k²) · (1/Ĉ_{i,k} + 1/S_k)
+  //
+  // and the total adds the covariance between origins that share f̂_k:
+  //
+  //   mse(R̂) = Σ_i { mse(R̂_i) + Ĉ_{i,J} (Σ_{j>i} Ĉ_{j,J}) Σ_{k=t_i}^{J-1} 2σ̂_k²/(f̂_k² S_k) }
+  //
+  // This replaced an ad-hoc "σ/f, times IBNR, times 0.15" formula whose
+  // units didn't close (Mack's σ_k is C-weighted, √currency — treating it
+  // as a ratio and re-scaling by IBNR produced SEs ~20× the reserve, a
+  // 2000% CV, and a forest plot squashed onto a ±60m axis).
+  const J = factors.length; // dev steps; cumulative index runs 0..J
+  type OriginProj = { lastK: number; proj: number[]; ult: number };
+  const projections: OriginProj[] = [];
+  for (const o of tri.origins) {
+    const row = tri.cumByRow.get(o) ?? [];
+    let lastK = -1;
+    let lastC = 0;
+    for (let k = 0; k < row.length; k++) {
+      if (Number.isFinite(row[k])) {
+        lastK = k;
+        lastC = row[k];
+      }
+    }
+    if (lastK < 0 || lastC <= 0) continue;
+    const proj = new Array<number>(J + 1).fill(Number.NaN);
+    proj[lastK] = lastC;
+    for (let k = lastK; k < J; k++) proj[k + 1] = proj[k] * (factors[k] || 1);
+    projections.push({ lastK, proj, ult: proj[J] });
   }
-  const se = Math.sqrt(varEst) * ibnr * 0.15; // damping so the synthetic data doesn't blow up
-  const cv = ibnr > 0 ? se / ibnr : 0;
+  let varTotal = 0;
+  for (let i = 0; i < projections.length; i++) {
+    const { lastK, proj, ult } = projections[i];
+    // Per-origin process + estimation error.
+    let inner = 0;
+    for (let k = lastK; k < J; k++) {
+      const f2 = (factors[k] || 1) ** 2;
+      const s2 = sigmas[k] ** 2;
+      if (s2 <= 0 || f2 <= 0) continue;
+      const cHat = proj[k];
+      const Sk = dens[k];
+      if (!Number.isFinite(cHat) || cHat <= 0) continue;
+      inner += (s2 / f2) * (1 / cHat + (Sk > 0 ? 1 / Sk : 0));
+    }
+    varTotal += ult * ult * inner;
+    // Covariance with the later origins (they share the estimated f̂_k).
+    let ultLater = 0;
+    for (let j = i + 1; j < projections.length; j++) ultLater += projections[j].ult;
+    if (ultLater > 0) {
+      let cross = 0;
+      for (let k = lastK; k < J; k++) {
+        const f2 = (factors[k] || 1) ** 2;
+        const s2 = sigmas[k] ** 2;
+        const Sk = dens[k];
+        if (s2 <= 0 || f2 <= 0 || Sk <= 0) continue;
+        cross += (2 * s2) / (f2 * Sk);
+      }
+      varTotal += ult * ultLater * cross;
+    }
+  }
+  const se = Number.isFinite(varTotal) && varTotal > 0 ? Math.sqrt(varTotal) : 0;
+  const cv = ibnr > 0 && se > 0 ? se / ibnr : 0;
   return {
     modelId: "mack",
     family: "reserving",
