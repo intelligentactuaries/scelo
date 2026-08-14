@@ -2067,9 +2067,12 @@ input[type='range']:focus::-moz-range-thumb {
    stacked-layout query above re-anchors everything right, unchanged. */
 @container canvas (width > 880px) {
   .council-stack-graph .graph-legend.graph-legend-vertical {
-    top: 10px;
+    /* Second row of the block, snug against the sentiment key's right edge
+       (the key is ~150px wide from a fixed label set) — chip above, key and
+       clusters side by side below, uniform ~10px gutters, no voids. */
+    top: 48px;
     right: auto;
-    left: 252px;
+    left: 172px;
   }
 }
 
