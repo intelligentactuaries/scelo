@@ -290,8 +290,14 @@ export function CouncilGraph({
     return installGroupHulls(chart, el, built.hulls, built.basePos, resolved === 'dark', {
       // Hovering a hull emits a group cross-highlight: the graph lights the
       // group's nodes + all attached edges, and the Sankey + legend react too.
-      onHover: (memberIds, key) =>
-        onCrossHighlightRef.current?.({ source: 'group', agentIds: memberIds, key: `group:${key}`, locked: false }),
+      // Skipped while a lock is active — the mouse crosses hull discs on its
+      // way to the decision sidebar, and an unguarded emit here replaced the
+      // clicked agent's locked focus with an ephemeral group hover whose
+      // leave then cleared everything.
+      onHover: (memberIds, key) => {
+        if (crossHighlightRef.current?.locked) return;
+        onCrossHighlightRef.current?.({ source: 'group', agentIds: memberIds, key: `group:${key}`, locked: false });
+      },
       onLeave: () => {
         const cur = crossHighlightRef.current;
         if (cur && cur.source === 'group' && !cur.locked) onCrossHighlightRef.current?.(null);
@@ -331,6 +337,7 @@ export function CouncilGraph({
   // click pins (opens the group inspector) with a locked highlight.
   const onLegendEnter = useCallback((p: Profession) => {
     if (pinnedRef.current) return; // pin takes precedence
+    if (crossHighlightRef.current?.locked) return; // a click-lock is sacred
     onCrossHighlightRef.current?.({ source: 'legend', agentIds: profAgentsRef.current.get(p) ?? [], key: `legend:${p}`, locked: false });
   }, []);
 
