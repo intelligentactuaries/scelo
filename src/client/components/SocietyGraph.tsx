@@ -264,8 +264,12 @@ export function SocietyGraph({
     const el = ref.current;
     if (!chart || !el) return;
     return installGroupHulls(chart, el, hulls, basePos, resolved === 'dark', {
-      onHover: (memberIds, key) =>
-        onCrossHighlightRef.current?.({ source: 'group', agentIds: memberIds, key: `group:${key}`, locked: false }),
+      // Skipped while a lock is active — an unguarded hull hover replaced a
+      // click-locked focus and its leave then cleared the lock entirely.
+      onHover: (memberIds, key) => {
+        if (crossHighlightRef.current?.locked) return;
+        onCrossHighlightRef.current?.({ source: 'group', agentIds: memberIds, key: `group:${key}`, locked: false });
+      },
       onLeave: () => {
         const cur = crossHighlightRef.current;
         if (cur && cur.source === 'group' && !cur.locked) onCrossHighlightRef.current?.(null);
@@ -293,6 +297,7 @@ export function SocietyGraph({
   // Sankey react, and the chips/pips glow via activeClusters / activeSentiments.
   const onLegendEnter = useCallback((name: string) => {
     if (pinnedRef.current) return;
+    if (crossHighlightRef.current?.locked) return; // a click-lock is sacred
     onCrossHighlightRef.current?.({ source: 'legend', agentIds: clusterAgentsRef.current.get(name) ?? [], key: `legend:cluster:${name}`, locked: false });
   }, []);
 
@@ -318,6 +323,7 @@ export function SocietyGraph({
 
   const onSentimentEnter = useCallback((s: Sentiment) => {
     if (pinnedRef.current) return;
+    if (crossHighlightRef.current?.locked) return; // a click-lock is sacred
     onCrossHighlightRef.current?.({ source: 'legend', agentIds: sentimentAgentsRef.current.get(s) ?? [], key: `legend:sentiment:${s}`, locked: false });
   }, []);
 

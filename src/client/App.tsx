@@ -690,6 +690,11 @@ export function App() {
             setVaultOpen(false);
             e.preventDefault();
           } else if (selectedAgentId) {
+            // Mirror the inspector's close button: Esc drops the agent's
+            // locked focus along with the panel.
+            setCrossHighlight((cur) =>
+              cur?.locked && cur.key === `node:${selectedAgentId}` ? null : cur,
+            );
             setSelectedAgentId(null);
             e.preventDefault();
           }
@@ -1633,7 +1638,17 @@ export function App() {
                           agent={inspector}
                           runId={runId}
                           legalJurisdiction={legalJurisdiction}
-                          onClose={() => setSelectedAgentId(null)}
+                          onClose={() => {
+                            // Dropping the panel also drops THIS agent's
+                            // click-locked focus — otherwise the graphs stay
+                            // dimmed to a selection that no longer exists
+                            // anywhere on screen. Other locks (e.g. a Sankey
+                            // segment) are left alone.
+                            setCrossHighlight((cur) =>
+                              cur?.locked && cur.key === `node:${selectedAgentId}` ? null : cur,
+                            );
+                            setSelectedAgentId(null);
+                          }}
                         />
                       );
                     }
@@ -1644,7 +1659,12 @@ export function App() {
                           runId={runId}
                           profession={pinnedProfession}
                           legalJurisdiction={legalJurisdiction}
-                          onClose={() => setPinnedProfession(null)}
+                          onClose={() => {
+                            setCrossHighlight((cur) =>
+                              cur?.locked && cur.key === `legend:${pinnedProfession}` ? null : cur,
+                            );
+                            setPinnedProfession(null);
+                          }}
                         />
                       );
                     }
@@ -1657,7 +1677,15 @@ export function App() {
                         <SocietyInspector
                           run={run}
                           pin={societyPin}
-                          onClose={() => setSocietyPin(null)}
+                          onClose={() => {
+                            setCrossHighlight((cur) =>
+                              cur?.locked &&
+                              cur.key === `legend:${societyPin.kind}:${societyPin.name}`
+                                ? null
+                                : cur,
+                            );
+                            setSocietyPin(null);
+                          }}
                         />
                       );
                     }
