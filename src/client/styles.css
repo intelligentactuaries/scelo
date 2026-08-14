@@ -2024,8 +2024,11 @@ input[type='range']:focus::-moz-range-thumb {
 }
 
 /* The bubble inherits .explained-title's ::after; left-anchor it to the chip
-   and let it grow wide enough to read comfortably. */
-.graph-title-chip[data-tooltip]::after {
+   and let it grow wide enough to read comfortably. Double-class selector:
+   the base rule caps ::after at 100% of the host, which for a shrink-wrapped
+   chip meant a skinny ten-line bubble — and the base rule sits later in the
+   file, so this needs the extra specificity, not just source order. */
+.graph-legend.graph-title-chip[data-tooltip]::after {
   max-width: min(460px, 74vw);
 }
 
@@ -2041,6 +2044,18 @@ input[type='range']:focus::-moz-range-thumb {
 .graph-title-chip:hover,
 .graph-title-chip:focus-visible {
   z-index: 40;
+}
+
+/* The stacked-layout container query re-anchors `.council-stack-graph
+   .graph-legend` to the RIGHT edge at (0,2,0) specificity — which dragged
+   the title chip along and, with the base `left: 14px` still applying,
+   over-constrained it into a full-width empty pill. Match the specificity
+   and shrink-wrap so the chip is always a compact left-anchored pill. */
+.council-stack-graph .graph-title-chip {
+  left: 14px;
+  right: auto;
+  width: max-content;
+  max-width: min(60%, 340px);
 }
 
 /* ─── Justification panel ─────────────────────────────────────── */
