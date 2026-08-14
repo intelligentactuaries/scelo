@@ -15,6 +15,8 @@ export interface SummaryExtras {
   canonWorks?: number;
   simRows?: number;
   simDone?: boolean;
+  /** True while a swarm run is streaming — flips the empty lines to live ones. */
+  busy?: boolean;
 }
 
 export function SurfaceSummaries({

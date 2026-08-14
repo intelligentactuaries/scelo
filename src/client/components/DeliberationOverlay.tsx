@@ -151,9 +151,15 @@ export function DeliberationOverlay({
           ))}
         </div>
         {outerFrac != null && (
-          <div className="delib-outer" title="society pulse">
-            <div className="delib-outer-fill" style={{ width: `${Math.round(outerFrac * 100)}%` }} />
-          </div>
+          <>
+            {/* Named, not just hoverable: the bar sits mid-screen after the
+                round pips, and an unlabelled fill "starting from the middle"
+                read as a glitch rather than as the society's own meter. */}
+            <span className="delib-outer-label">society</span>
+            <div className="delib-outer" title="society pulse">
+              <div className="delib-outer-fill" style={{ width: `${Math.round(outerFrac * 100)}%` }} />
+            </div>
+          </>
         )}
         {indeterminate && <span className="delib-working">working…</span>}
       </div>
