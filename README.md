@@ -28,6 +28,19 @@ The mark says what the system is: three nodes on one axis.
 The pipeline is one-way: soft never writes to hard directly, hard
 never reads from soft. The tools layer is the only path between them.
 
+## Download
+
+Grab an installer from the
+[**Releases tab**](https://github.com/intelligentactuaries/scelo/releases) —
+Windows (NSIS `.exe`) and Linux (`.AppImage` / `.deb`), with Python + R and
+the IA actuarial stack bundled so everything runs offline.
+
+Builds are not code-signed yet: Windows SmartScreen warns on first launch
+(**More info → Run anyway**); on Linux, `chmod +x` the AppImage. Installed
+copies auto-update from the same Releases feed. Prefer building from
+source? See [INSTALL-WINDOWS-MACOS.md](INSTALL-WINDOWS-MACOS.md) or the
+Quick start below.
+
 ## What's in this repository
 
 | Path | What |
