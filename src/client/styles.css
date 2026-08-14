@@ -1997,6 +1997,52 @@ input[type='range']:focus::-moz-range-thumb {
 }
 
 
+/* Graph title chip — the floating name of a full-bleed graph canvas, glass
+   like the legends. It ALSO carries .graph-legend so the canvas layout's
+   legend measurement pads the hull grid below it automatically; this class
+   only has to move it to the LEFT edge (the base class pins right). */
+.graph-title-chip {
+  right: auto;
+  left: 14px;
+  font-size: 10px;
+  letter-spacing: var(--track);
+  text-transform: uppercase;
+  color: var(--muted);
+  align-items: center;
+  gap: 7px;
+  /* The explainer bubble hangs BELOW the chip, over the canvas. */
+  overflow: visible;
+}
+
+.graph-title-chip::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  flex: none;
+}
+
+/* The bubble inherits .explained-title's ::after; left-anchor it to the chip
+   and let it grow wide enough to read comfortably. */
+.graph-title-chip[data-tooltip]::after {
+  max-width: min(460px, 74vw);
+}
+
+/* The society tab's sentiment key also lives top-left — when a title chip is
+   present (rendered before the graph, so an earlier sibling), the key steps
+   down one row instead of overprinting it. */
+.graph-title-chip ~ .sentiment-key {
+  top: 48px;
+}
+
+/* While the reader is on the chip, its bubble must beat the sibling legends
+   (same z tier, later in the DOM) instead of sliding underneath them. */
+.graph-title-chip:hover,
+.graph-title-chip:focus-visible {
+  z-index: 40;
+}
+
 /* ─── Justification panel ─────────────────────────────────────── */
 
 .justify-block {
@@ -4402,7 +4448,8 @@ body.is-resizing * {
 /* Headers that carry a reading of their own plot. `help` rather than
    `pointer` where the header is not also a button, so the cursor does not
    promise a click that does nothing. */
-.forecast-panel-head--explained {
+.forecast-panel-head--explained,
+.explained-title {
   position: relative;
   cursor: help;
 }
@@ -4411,7 +4458,8 @@ body.is-resizing * {
   cursor: pointer;
 }
 
-.forecast-panel-head--explained:hover {
+.forecast-panel-head--explained:hover,
+.explained-title:hover {
   color: var(--fg);
 }
 
@@ -4419,7 +4467,8 @@ body.is-resizing * {
    left-aligned to the header rather than centred on it. .forecast-canvas
    scrolls vertically, which makes overflow-x compute to auto, so anything
    overhanging its edge is clipped rather than drawn. */
-.forecast-panel-head--explained[data-tooltip]::after {
+.forecast-panel-head--explained[data-tooltip]::after,
+.explained-title[data-tooltip]::after {
   content: attr(data-tooltip);
   position: absolute;
   top: calc(100% + 8px);
@@ -4453,7 +4502,9 @@ body.is-resizing * {
 }
 
 .forecast-panel-head--explained:hover[data-tooltip]::after,
-.forecast-panel-head--explained:focus-visible[data-tooltip]::after {
+.forecast-panel-head--explained:focus-visible[data-tooltip]::after,
+.explained-title:hover[data-tooltip]::after,
+.explained-title:focus-visible[data-tooltip]::after {
   opacity: 1;
 }
 

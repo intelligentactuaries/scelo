@@ -30,6 +30,9 @@ type Props = {
 type ClusterChip = {
   name: string;
   color: string;
+  /** Untruncated `c<N> <descriptor>` — the chip's visible label clips at
+   *  ~36 chars, so the whole text rides along for the hover title. */
+  full: string;
 };
 
 export function SocietyGraph({
@@ -369,6 +372,9 @@ export function SocietyGraph({
               onClick={() => onLegendClick(c.name)}
               role="button"
               tabIndex={0}
+              // The visible label clips the descriptor at ~36 chars; the
+              // native title carries the whole thing on hover.
+              title={c.full}
             >
               <i style={{ background: c.color }} />
               <span className="graph-legend-item-label">{c.name}</span>
@@ -423,8 +429,14 @@ function buildOption(
   // demographics) so the hover can explain *why* the two members are linked.
   const byId = new Map(run.societyResults.map((r) => [r.agent.id, r] as const));
 
+  const clusterDescs = new Map(
+    clusters.map((c) => [
+      c,
+      run.societySummary?.clusters.find((x) => x.cluster === c)?.description ?? '',
+    ]),
+  );
   const categories = clusters.map((c, i) => {
-    const desc = run.societySummary?.clusters.find((x) => x.cluster === c)?.description ?? '';
+    const desc = clusterDescs.get(c) ?? '';
     return {
       name: `c${c} ${truncate(desc, 36)}`,
       itemStyle: { color: clusterColor(i, dark) },
@@ -434,6 +446,9 @@ function buildOption(
   const clusterChips: ClusterChip[] = categories.map((c, i) => ({
     name: c.name,
     color: clusterColor(i, dark),
+    // Untruncated descriptor — the chip clips at 36 chars for width, so the
+    // full text rides along for the hover title.
+    full: `c${clusters[i]} ${clusterDescs.get(clusters[i]) ?? ''}`.trim(),
   }));
 
   // ─── Cluster clumps + shaded hulls ───────────────────────────────────
@@ -601,7 +616,7 @@ function buildOption(
             emp: string;
             intensity: number;
           };
-          return `${d.id} · cluster c${d.cluster}<br/>${d.age}y · ${d.income} · ${d.edu} · ${d.region} · ${d.emp}<br/><b>${d.sentiment}</b> · intensity ${d.intensity}<br/><i>${escapeHtml(d.reaction).slice(0, 200)}</i>`;
+          return `${d.id} · cluster c${d.cluster}<br/>${d.age}y · ${d.income} · ${d.edu} · ${d.region} · ${d.emp}<br/><b>${d.sentiment}</b> · intensity ${d.intensity}<br/><i>${escapeHtml(d.reaction.length > 360 ? `${d.reaction.slice(0, 359)}…` : d.reaction)}</i>`;
         }
         if (p.dataType === 'edge') {
           const e = p.data as { source: string; target: string; value: number };

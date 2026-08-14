@@ -74,6 +74,12 @@ import { HelpOverlay } from './components/HelpOverlay';
 import { ResizeHandle } from './components/ResizeHandle';
 import { ForecastCanvas } from './components/ForecastCanvas';
 import { RunStatus, STALL_SEC } from './components/RunStatus';
+import {
+  explainCouncilGraph,
+  explainCouncilSankey,
+  explainSocietyGraph,
+  explainSocietySankey,
+} from './lib/plotExplainers';
 
 interface RoundProgress {
   round: 1 | 2 | 3;
@@ -1459,6 +1465,17 @@ export function App() {
                 {tab === 'council' && (
                   <div className="council-stack">
                     <div className="council-stack-graph">
+                      {run && run.councilResults.length > 0 && (
+                        <div
+                          className="graph-legend graph-title-chip explained-title"
+                          data-tooltip={explainCouncilGraph(run)}
+                          tabIndex={0}
+                          role="note"
+                          aria-label={`council reactions. ${explainCouncilGraph(run)}`}
+                        >
+                          council reactions · adviser network
+                        </div>
+                      )}
                       {run && (
                         <CouncilGraph
                           run={run}
@@ -1483,7 +1500,13 @@ export function App() {
                     </div>
                     {run && run.councilResults.length > 0 && (
                       <div className="council-stack-sankey">
-                        <div className="council-stack-sankey-label">
+                        <div
+                          className="council-stack-sankey-label explained-title"
+                          data-tooltip={explainCouncilSankey(run)}
+                          tabIndex={0}
+                          role="note"
+                          aria-label={`council readback. ${explainCouncilSankey(run)}`}
+                        >
                           council readback · profession → trust the forecast? → confidence
                         </div>
                         <DecisionSankey
@@ -1498,6 +1521,17 @@ export function App() {
                 {tab === 'society' && (
                   <div className="council-stack">
                     <div className="council-stack-graph">
+                      {run && run.societyResults.length > 0 && (
+                        <div
+                          className="graph-legend graph-title-chip explained-title"
+                          data-tooltip={explainSocietyGraph(run)}
+                          tabIndex={0}
+                          role="note"
+                          aria-label={`society pulse. ${explainSocietyGraph(run)}`}
+                        >
+                          society pulse · citizen reactions
+                        </div>
+                      )}
                       {run && run.societyResults.length > 0 && (
                         <SocietyGraph
                           run={run}
@@ -1521,7 +1555,13 @@ export function App() {
                     </div>
                     {run && run.societyResults.length > 0 && (
                       <div className="council-stack-sankey">
-                        <div className="council-stack-sankey-label">
+                        <div
+                          className="council-stack-sankey-label explained-title"
+                          data-tooltip={explainSocietySankey(run)}
+                          tabIndex={0}
+                          role="note"
+                          aria-label={`society reactions. ${explainSocietySankey(run)}`}
+                        >
                           society reactions to the forecast · cluster → sentiment → intensity
                           {run && absentSentiments(run).length > 0 && (
                             <span className="muted">

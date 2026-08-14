@@ -558,7 +558,7 @@ function buildOption(
             conf: number;
             keyRisk: string;
           };
-          return `${d.agent.id}<br/>${d.agent.profession} · ${d.agent.mbti} · ${d.agent.gender}<br/>verdict: <b>${STANCE_LABEL[d.stance as CouncilAgentResult['finalStance']]}s the forecast</b> · conf: <b>${d.conf}</b>/100<br/>risk: ${escapeHtml(d.keyRisk).slice(0, 100)}<br/><span style="opacity:0.7">circle size = confidence · ring colour = verdict</span>`;
+          return `${d.agent.id}<br/>${d.agent.profession} · ${d.agent.mbti} · ${d.agent.gender}<br/>verdict: <b>${STANCE_LABEL[d.stance as CouncilAgentResult['finalStance']]}s the forecast</b> · conf: <b>${d.conf}</b>/100<br/>risk: ${escapeHtml(d.keyRisk)}<br/><span style="opacity:0.7">circle size = confidence · ring colour = verdict</span>`;
         }
         if (p.dataType === 'edge') {
           const e = p.data as { source: string; target: string; value: number };

@@ -1,3 +1,4 @@
+import { explainSynthesisByProfession, explainSynthesisTrust } from '../lib/plotExplainers';
 import type { Run } from '../../shared/types';
 import { colorsForTheme, PROFESSIONS, type Profession } from '../../shared/constants';
 import { useTheme } from '../lib/theme';
@@ -55,7 +56,14 @@ export function SynthesisView({ run, onSelectAgent }: Props) {
       </div>
 
       <section className="syn-section">
-        <div className="panel-label">trust in the forecast</div>
+        <div
+          className="panel-label explained-title"
+          data-tooltip={explainSynthesisTrust(run)}
+          tabIndex={0}
+          role="note"
+        >
+          trust in the forecast
+        </div>
         <HalfDonut
           name="trust in the forecast"
           data={[
@@ -84,7 +92,14 @@ export function SynthesisView({ run, onSelectAgent }: Props) {
       </section>
 
       <section className="syn-section">
-        <div className="panel-label">trust by profession</div>
+        <div
+          className="panel-label explained-title"
+          data-tooltip={explainSynthesisByProfession(run)}
+          tabIndex={0}
+          role="note"
+        >
+          trust by profession
+        </div>
         <table className="syn-table">
           <thead>
             <tr>
@@ -177,7 +192,9 @@ export function SynthesisView({ run, onSelectAgent }: Props) {
                   {r.finalStance === 'support' ? 'trust' : r.finalStance === 'oppose' ? 'distrust' : 'uncertain'}
                 </span>
                 <span className="num">{r.finalConfidence}</span>
-                <span className="dissent-risk">{r.keyRisk}</span>
+                <span className="dissent-risk" title={r.keyRisk}>
+                  {r.keyRisk}
+                </span>
               </button>
             ))}
             {s.dissentingAgentIds.length > dissenters.length && (
