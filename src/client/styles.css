@@ -2058,6 +2058,21 @@ input[type='range']:focus::-moz-range-thumb {
   max-width: min(60%, 340px);
 }
 
+/* Wide layout only: the society overlays huddle as ONE block in the top-left
+   corner — title chip, cluster legend right beside it, sentiment key
+   beneath — instead of the chip sitting alone while the cluster legend
+   floats orphaned at the far edge of the pane. (The council tab's
+   profession legend is horizontal and stays right-anchored; this targets
+   the vertical cluster legend the society tab uses.) Below 880px the
+   stacked-layout query above re-anchors everything right, unchanged. */
+@container canvas (width > 880px) {
+  .council-stack-graph .graph-legend.graph-legend-vertical {
+    top: 10px;
+    right: auto;
+    left: 252px;
+  }
+}
+
 /* ─── Justification panel ─────────────────────────────────────── */
 
 .justify-block {
