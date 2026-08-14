@@ -449,16 +449,34 @@ export function App() {
   // including the `bun --watch` reload that fires on any src/server save. An
   // open tab had no way to notice: the run would just quietly fall back to a
   // local model. Poll the server's view and re-push whatever it has lost.
+  //
+  // The same poll now refreshes the health chip and the canon count. Both
+  // were fetched exactly once on mount, so a page opened during a server
+  // blip said "api unreachable · canon: 0" forever — long after the server
+  // was back and answering this very poll.
+  const canonRef = useRef(canon);
+  useEffect(() => {
+    canonRef.current = canon;
+  }, [canon]);
   useEffect(() => {
     const id = setInterval(() => {
+      api
+        .health()
+        .then((d) => setHealth(d.ok ? 'ok' : 'down'))
+        .catch(() => setHealth('unreachable'));
       api
         .providers()
         .then(async (current) => {
           const restored = await resyncProvidersIfDrifted(current);
           setInfo(restored ?? current);
+          // Server answered — if the canon never loaded (mount raced a down
+          // server), backfill it now rather than showing 0 all session.
+          if (!canonRef.current || canonRef.current.length === 0) {
+            api.getCanon().then((c) => setCanon(c.works)).catch(() => {});
+          }
         })
         .catch(() => {
-          /* server down — the health indicator already says so */
+          /* server down — the health chip above just said so */
         });
     }, 20_000);
     return () => clearInterval(id);
@@ -874,7 +892,20 @@ export function App() {
 
   // No run, and on a surface that has nothing to show without one. Canon and
   // Simulation are excluded because both work standalone.
-  const emptyStage = !run && tab !== 'canon' && tab !== 'simulation';
+  //
+  // Council and Society are ALSO excluded while a first run is streaming:
+  // the empty stage used to swallow every tab until `run` landed, so a user
+  // who pressed "Forecast & convene", hid the overlay and opened Council
+  // Reactions got the composer again — nothing anywhere said the council
+  // was mid-deliberation. Those two surfaces now fall through to their
+  // stacks, whose RunStatus cards narrate the live run. Forecast keeps the
+  // composer while busy — its artifact genuinely doesn't exist client-side
+  // until the run lands, and the composer's "running…" caption covers it.
+  const emptyStage =
+    !run &&
+    !(runBusy && (tab === 'council' || tab === 'society')) &&
+    tab !== 'canon' &&
+    tab !== 'simulation';
 
   // Panel toggle + the setup group, rendered inside the one rail rather than
   // in a 44px column of their own. Two rails down the left edge — six animals
@@ -1360,6 +1391,9 @@ export function App() {
                   canonWorks: canonState.draft.length,
                   simRows: simulation.result?.rows.length,
                   simDone: !!simulation.result,
+                  // Lets the no-run lines say "deliberating…" instead of
+                  // "has not reported" while a first run is streaming.
+                  busy: runBusy,
                 }}
                 onOpen={() => setExpanded(true)}
                 onSelect={chooseSurface}
@@ -1412,18 +1446,25 @@ export function App() {
                     }}
                   />
                 )}
-                {tab === 'council' && run && (
+                {/* NOT gated on `run` as a whole: on a FIRST run there is no
+                    `run` yet, and the old guard left this tab a blank canvas
+                    while the council deliberated — the society tab, gated
+                    per-child, showed its live status card the whole time.
+                    RunStatus is the piece that must always render. */}
+                {tab === 'council' && (
                   <div className="council-stack">
                     <div className="council-stack-graph">
-                      <CouncilGraph
-                        run={run}
-                        selectedAgentId={selectedAgentId}
-                        onSelectAgent={setSelectedAgentId}
-                        pinnedProfession={pinnedProfession}
-                        onPinnedProfessionChange={setPinnedProfession}
-                        crossHighlight={crossHighlight}
-                        onCrossHighlight={setCrossHighlight}
-                      />
+                      {run && (
+                        <CouncilGraph
+                          run={run}
+                          selectedAgentId={selectedAgentId}
+                          onSelectAgent={setSelectedAgentId}
+                          pinnedProfession={pinnedProfession}
+                          onPinnedProfessionChange={setPinnedProfession}
+                          crossHighlight={crossHighlight}
+                          onCrossHighlight={setCrossHighlight}
+                        />
+                      )}
                       <RunStatus
                         phase="council"
                         run={run}
@@ -1435,7 +1476,7 @@ export function App() {
                         onRetry={startRun}
                       />
                     </div>
-                    {run.councilResults.length > 0 && (
+                    {run && run.councilResults.length > 0 && (
                       <div className="council-stack-sankey">
                         <div className="council-stack-sankey-label">
                           council readback · profession → trust the forecast? → confidence

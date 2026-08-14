@@ -370,6 +370,12 @@ export function CouncilGraph({
             <span className="graph-legend-item-label">{p}</span>
           </span>
         ))}
+        {/* Decode the two per-node encodings, right where the colours are
+            already being decoded. Size used to be an unlabelled mystery
+            (weighted degree, min-max stretched) — now it reads directly. */}
+        <span className="graph-legend-note" aria-hidden="true">
+          size = confidence · ring = verdict
+        </span>
       </div>
     </>
   );
@@ -405,27 +411,25 @@ function buildOption(
   // can render both agents' professions / MBTI / stance side by side.
   const byId = new Map(run.councilResults.map((r) => [r.agent.id, r] as const));
 
-  // ─── Node size = weighted degree (Les-Mis-style centrality) ──────────
-  // Sum every edge's value at each endpoint — agents who form strong
-  // consensus links with many others read as hubs (big), isolated
-  // dissenters as tiny satellites. Exactly the variance Les Misérables
-  // uses for Valjean vs. Champtercier.
+  // ─── Node size = final confidence (absolute 0–100 scale) ─────────────
+  // Diameter answers one question a reader can actually ask the graph:
+  // "how sure is this agent of their verdict?" — 10 px at conf 0, 32 px at
+  // conf 100, the same mapping in every run.
+  //
+  // It replaced a min-max-normalised weighted degree of the shared-reasoning
+  // edges. That stretched whatever spread existed — even noise — across a
+  // 6× visual range, so two agents in one hull could differ hugely for no
+  // reason anyone could name ("why is one actuary tiny?"). The degree is
+  // still computed for the tooltip/inspector; it just no longer sets size.
   const weightedDegree = new Map<string, number>();
   for (const e of run.councilEdges) {
     weightedDegree.set(e.source, (weightedDegree.get(e.source) ?? 0) + e.value);
     weightedDegree.set(e.target, (weightedDegree.get(e.target) ?? 0) + e.value);
   }
-  const degVals = Array.from(weightedDegree.values());
-  const maxDeg = degVals.length ? Math.max(...degVals) : 1;
-  const minDeg = degVals.length ? Math.min(...degVals) : 0;
-  const degSpan = Math.max(maxDeg - minDeg, 0.0001);
-  // Sqrt curve compresses the tail so a few outliers don't crush the rest.
-  // Range: 6 px (isolated) → 38 px (most connected hub). ~6× variance,
-  // close to Valjean / minor-character ratio in the les-mis sample.
+  const confById = new Map(run.councilResults.map((r) => [r.agent.id, r.finalConfidence] as const));
   const sizeFor = (id: string) => {
-    const d = (weightedDegree.get(id) ?? 0) - minDeg;
-    const norm = Math.sqrt(d / degSpan);
-    return 6 + norm * 32;
+    const conf = Math.max(0, Math.min(100, confById.get(id) ?? 50));
+    return 10 + (conf / 100) * 22;
   };
 
   // ─── Force layout, clustered by profession ───────────────────────────
@@ -547,7 +551,7 @@ function buildOption(
             conf: number;
             keyRisk: string;
           };
-          return `${d.agent.id}<br/>${d.agent.profession} · ${d.agent.mbti} · ${d.agent.gender}<br/>verdict: <b>${STANCE_LABEL[d.stance as CouncilAgentResult['finalStance']]}s the forecast</b> · conf: <b>${d.conf}</b><br/>risk: ${escapeHtml(d.keyRisk).slice(0, 100)}`;
+          return `${d.agent.id}<br/>${d.agent.profession} · ${d.agent.mbti} · ${d.agent.gender}<br/>verdict: <b>${STANCE_LABEL[d.stance as CouncilAgentResult['finalStance']]}s the forecast</b> · conf: <b>${d.conf}</b>/100<br/>risk: ${escapeHtml(d.keyRisk).slice(0, 100)}<br/><span style="opacity:0.7">circle size = confidence · ring colour = verdict</span>`;
         }
         if (p.dataType === 'edge') {
           const e = p.data as { source: string; target: string; value: number };

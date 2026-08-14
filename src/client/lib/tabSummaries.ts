@@ -30,14 +30,14 @@ function pct(n: number | undefined): string {
 export function summariesFor(
   tab: TabId,
   run: Run | null,
-  extras: { canonWorks?: number; simRows?: number; simDone?: boolean } = {},
+  extras: { canonWorks?: number; simRows?: number; simDone?: boolean; busy?: boolean } = {},
 ): string[] {
   const s = run?.summary;
   const w = run?.wmtr;
 
   switch (tab) {
     case 'forecast':
-      if (!run || !w) return ['no forecast yet'];
+      if (!run || !w) return [extras.busy ? 'forecast running…' : 'no forecast yet'];
       return [
         lead(explainOutcomeGauge(w, run.scenario)),
         lead(explainDriverBridge(w, run.scenario)),
@@ -45,7 +45,7 @@ export function summariesFor(
       ];
 
     case 'council': {
-      if (!run || !s) return ['council has not reported'];
+      if (!run || !s) return [extras.busy ? 'the council is deliberating…' : 'council has not reported'];
       const top = clusterRisks(run.councilResults.map((r) => r.keyRisk))[0];
       return [
         `${pct(s.supportPct)} trust the forecast · ${run.councilResults.length} agents`,
@@ -56,7 +56,7 @@ export function summariesFor(
 
     case 'society': {
       const soc = run?.societySummary;
-      if (!soc) return ['society has not reacted'];
+      if (!soc) return [extras.busy ? 'the society reacts once the council finishes…' : 'society has not reacted'];
       const warm =
         (soc.sentimentMix.enthusiastic ?? 0) + (soc.sentimentMix.supportive ?? 0);
       return [
@@ -67,7 +67,7 @@ export function summariesFor(
     }
 
     case 'synthesis': {
-      if (!s) return ['no readback yet'];
+      if (!s) return [extras.busy ? 'readback lands when the run completes…' : 'no readback yet'];
       const hidden = Math.max(0, (s.riskClusterCount ?? s.topRisks.length) - s.topRisks.length);
       return [
         `consensus ${s.consensusScore}/100`,

@@ -96,8 +96,14 @@ export function PetRail({
           >
             <img className="pet-icon" data-pet={p.id} src={p.src} alt="" aria-hidden />
             {/* The active label wears the surface's own colour — it is the
-                one piece of text on screen naming where you are. */}
-            <span className="pet-label" style={active ? { color: p.hue } : undefined}>
+                one piece of text on screen naming where you are. Passed as a
+                custom property rather than a literal `color` so the CSS can
+                mix it toward --fg: the pale hues (hamster, bunny) vanish on
+                the cream theme at full strength. */}
+            <span
+              className="pet-label"
+              style={active ? ({ '--pet-hue': p.hue } as React.CSSProperties) : undefined}
+            >
               {p.label}
             </span>
             </button>
