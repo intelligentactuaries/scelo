@@ -157,7 +157,10 @@ function CouncilSegment({
             <div className="round-header"><span className="panel-label">recurring key risks</span></div>
             <ul className="muted small" style={{ paddingLeft: 18, margin: 0 }}>
               {risks.map((r) => (
-                <li key={r.phrase}>{r.phrase}{r.count > 1 ? ` (${r.count}×)` : ''}</li>
+                <li key={r.phrase} title={r.full !== r.phrase ? r.full : undefined}>
+                  {r.phrase}
+                  {r.count > 1 ? ` (${r.count}×)` : ''}
+                </li>
               ))}
             </ul>
           </section>
@@ -431,8 +434,11 @@ function stripPrefix(s: string): string {
 // lowercase, take the first 8 words of each risk, group exact duplicates,
 // return top-N. Good enough to surface "Solvency II compliance" or
 // "liquidity stress" as repeating themes.
-function topPhrases(strings: string[], n: number): { phrase: string; count: number }[] {
-  const c = new Map<string, { phrase: string; count: number }>();
+function topPhrases(
+  strings: string[],
+  n: number,
+): { phrase: string; full: string; count: number }[] {
+  const c = new Map<string, { phrase: string; full: string; count: number }>();
   for (const s of strings) {
     const key = s
       .toLowerCase()
@@ -444,7 +450,9 @@ function topPhrases(strings: string[], n: number): { phrase: string; count: numb
     if (!key) continue;
     const e = c.get(key);
     if (e) e.count++;
-    else c.set(key, { phrase: s.split(/\s+/).slice(0, 14).join(' '), count: 1 });
+    // `full` keeps the exemplar sentence intact — the list clips the display
+    // at 14 words, and the hover title shows the whole thing.
+    else c.set(key, { phrase: s.split(/\s+/).slice(0, 14).join(' '), full: s, count: 1 });
   }
   return Array.from(c.values()).sort((a, b) => b.count - a.count).slice(0, n);
 }

@@ -61,7 +61,12 @@ function ClusterInspector({
     <aside className="inspector">
       <div className="inspector-header">
         <div className="agent-tag">
-          <div className="agent-id">Cluster {clusterName}</div>
+          {/* Short id only. The pin's name arrives as the legend chip's
+              label — "c3 age≈40 · low · tertiary · rural · e…" — so echoing
+              it here printed a TRUNCATED descriptor one line above the body
+              rendering the same descriptor in full. The id is the title;
+              the description below carries the whole text. */}
+          <div className="agent-id">Cluster c{idx}</div>
           <div className="muted small">
             {summary?.size ?? members.length} agents · society cluster
           </div>

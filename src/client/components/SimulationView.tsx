@@ -566,12 +566,26 @@ function SimulationResults({
   return (
     <div className="simulation-results">
       <section className="simulation-section">
-        <div className="panel-label">macro impact · scaled to {ZAR(result.population).replace('R', '')} population</div>
+        <div
+          className="panel-label explained-title"
+          data-tooltip={`Every figure here starts as a per-person answer from the ${result.rows.length} simulated agents, then scales up to the full population of ${ZAR(result.population).replace('R', '')} people. Read each line as "if the whole population behaved like this sample". Small-sample caution applies: the sample is ${result.rows.length} people, so treat these as direction and rough size, not point estimates.`}
+          tabIndex={0}
+          role="note"
+        >
+          macro impact · scaled to {ZAR(result.population).replace('R', '')} population
+        </div>
         <MacroLedger macro={result.macro} />
       </section>
 
       <section className="simulation-section">
-        <div className="panel-label">treatment uptake · spending response</div>
+        <div
+          className="panel-label explained-title"
+          data-tooltip={`Two headcounts from the same interviews. Left: who would accept the treatment — ${Math.round(((result.macro.uptake.accepted ?? 0) / Math.max(1, (result.macro.uptake.accepted ?? 0) + (result.macro.uptake.declined ?? 0) + (result.macro.uptake.unsure ?? 0))) * 100)}% accept, and the unsure group is the one outreach can still win over. Right: what happens to household spending — the "reduced" share is the drag the shock puts on the local economy.`}
+          tabIndex={0}
+          role="note"
+        >
+          treatment uptake · spending response
+        </div>
         <div className="simulation-breakdown">
           <div className="simulation-breakdown-col">
             <div className="muted small">treatment uptake</div>
@@ -601,7 +615,14 @@ function SimulationResults({
       </section>
 
       <section className="simulation-section">
-        <div className="panel-label">distributional · workdays lost by age (scaled)</div>
+        <div
+          className="panel-label explained-title"
+          data-tooltip={'Who carries the burden: lost workdays summed within each age band, scaled to the population. A tall working-age bar means lost income and output, not just illness — that is the band where support (sick pay, clinic hours, transport) buys the most relief per rand.'}
+          tabIndex={0}
+          role="note"
+        >
+          distributional · workdays lost by age (scaled)
+        </div>
         <Distributional macro={result.macro} />
       </section>
 
@@ -776,7 +797,14 @@ function DatasetDashboard({ rows }: { rows: SimRow[] }) {
   return (
     <div className="sim-chart-grid">
       <div className="sim-chart">
-        <div className="muted small sim-chart-title">cohort · age × sex</div>
+        <div
+          className="muted small sim-chart-title explained-title"
+          data-tooltip={`Who is in the simulated sample: ${usable.length} people stacked by age band and sex. Check this first — if the cohort doesn't look like the community you care about, read every other chart with that gap in mind.`}
+          tabIndex={0}
+          role="note"
+        >
+          cohort · age × sex
+        </div>
         {/* The palette's categorical trio, not the status ramp: sex has no
             valence, and consensus-green against adversarial-red would encode
             one sex as the good outcome. Olive and steel also sidestep the
@@ -793,7 +821,14 @@ function DatasetDashboard({ rows }: { rows: SimRow[] }) {
       </div>
 
       <div className="sim-chart">
-        <div className="muted small sim-chart-title">treatment uptake · by age band</div>
+        <div
+          className="muted small sim-chart-title explained-title"
+          data-tooltip={'Acceptance by age: each bar splits an age band into accept / decline / unsure. A band where refusals dominate is where uptake campaigns matter; the unsure slice is the persuadable middle.'}
+          tabIndex={0}
+          role="note"
+        >
+          treatment uptake · by age band
+        </div>
         <BarChart
           stacked
           categories={charts.bands}
@@ -806,7 +841,14 @@ function DatasetDashboard({ rows }: { rows: SimRow[] }) {
       </div>
 
       <div className="sim-chart">
-        <div className="muted small sim-chart-title">severity if infected · agents</div>
+        <div
+          className="muted small sim-chart-title explained-title"
+          data-tooltip={'If infected, how ill do agents get — from mild through hospital-level. The right-hand tail is what sizes clinic demand: even a small severe share becomes a large absolute number once scaled to the population.'}
+          tabIndex={0}
+          role="note"
+        >
+          severity if infected · agents
+        </div>
         <BarChart
           categories={SEVERITY_ORDER}
           series={[
@@ -820,7 +862,14 @@ function DatasetDashboard({ rows }: { rows: SimRow[] }) {
       </div>
 
       <div className="sim-chart">
-        <div className="muted small sim-chart-title">out-of-pocket · median per agent by income band</div>
+        <div
+          className="muted small sim-chart-title explained-title"
+          data-tooltip={'The median rand amount a person expects to pay themselves, split by income band. Compare it to the band itself: R200 is noise for a high earner and a real barrier on a low income — flat bars across bands mean a regressive cost.'}
+          tabIndex={0}
+          role="note"
+        >
+          out-of-pocket · median per agent by income band
+        </div>
         <BarChart
           horizontal
           categories={charts.incomeBands}
@@ -852,7 +901,14 @@ function Distributional({ macro }: { macro: MacroSummary }) {
         />
       </div>
       <div className="sim-chart">
-        <div className="muted small sim-chart-title">excess mortality by comorbidity status</div>
+        <div
+          className="muted small sim-chart-title explained-title"
+          data-tooltip={'Mortality probability for agents with a pre-existing condition versus without. The gap between the two bars is the extra risk the comorbid group carries — the case for prioritising them in any rollout.'}
+          tabIndex={0}
+          role="note"
+        >
+          excess mortality by comorbidity status
+        </div>
         <BarChart
           horizontal
           height={150}
