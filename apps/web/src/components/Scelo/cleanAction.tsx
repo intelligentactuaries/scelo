@@ -106,15 +106,26 @@ const OP_ALIASES: Record<string, CleaningOpKey> = {
   "fill-blanks": "impute-missing",
   median: "impute-missing",
   mode: "impute-missing",
+  // imputation (continued) — common pandas-flavoured phrasings
+  fillna: "impute-missing",
+  "fill-na": "impute-missing",
+  "fill na": "impute-missing",
+  "handle-missing": "impute-missing",
   // outliers
   outliers: "cap-outliers",
   outlier: "cap-outliers",
   winsorize: "cap-outliers",
   winsorise: "cap-outliers",
+  winsor: "cap-outliers",
   "cap-outliers-at-fences": "cap-outliers",
   "clip-outliers": "cap-outliers",
+  clip: "cap-outliers",
   "handle-outliers": "cap-outliers",
   "extreme-values": "cap-outliers",
+  tukey: "cap-outliers",
+  "tukey-fences": "cap-outliers",
+  iqr: "cap-outliers",
+  "iqr-cap": "cap-outliers",
   // sentinels
   sentinels: "replace-numeric-sentinels",
   "numeric-sentinels": "replace-numeric-sentinels",
@@ -139,6 +150,11 @@ const OP_ALIASES: Record<string, CleaningOpKey> = {
   "lower-case": "lowercase-categoricals",
   "merge-case": "lowercase-categoricals",
   "case-duplicates": "lowercase-categoricals",
+  "normalise-case": "lowercase-categoricals",
+  "normalize-case": "lowercase-categoricals",
+  // missing markers, UK/US spellings
+  "normalise-missing": "missing-tokens",
+  "normalize-missing": "missing-tokens",
   // headers
   "snake-case": "rename-snake-case",
   snakecase: "rename-snake-case",

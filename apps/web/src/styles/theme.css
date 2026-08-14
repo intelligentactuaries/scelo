@@ -695,7 +695,14 @@
 }
 .ia-md .katex-display {
   margin: 0.75rem 0;
+  /* Horizontal scroll only when a formula is genuinely wide. KaTeX ships
+     `overflow: auto` on BOTH axes, and Σ/Π limits overhang the line box by a
+     few px — on Windows Chrome that painted an arrow-button scrollbar pill
+     beside every display formula. The vertical padding gives the overhang
+     room; overflow-y stays hidden so no vertical bar can appear. */
   overflow-x: auto;
+  overflow-y: hidden;
+  padding: 0.35em 0;
 }
 
 /* ─────────────────────────────────────────────────────────────────────────

@@ -5,15 +5,18 @@
 // Progress is real, not theatrical: the swarm streams per-agent SSE events
 // (round_start / agent_done / round_done / society_progress / done) from
 // /api/run/:id/stream — the same feed its own UI uses. Each completed agent
-// lights a seat around the council ring; rounds sweep the ring three times;
-// the society pulse fills the outer arc. If the stream can't attach, the
-// overlay degrades to a breathing indeterminate state and the caller's
-// polling still lands completion.
+// adds a persona to the BLOOM — the swarm app's mirrored crowd-of-circles
+// animation, ported back here so both shells show the same processing
+// visual (the old seat ring could only say how MANY had answered, never
+// who). Round pips and a labelled society bar sit under the crowd. If the
+// stream can't attach, the overlay degrades to an indeterminate note and
+// the caller's polling still lands completion.
 //
 // Esc / "hide" tucks the overlay away without touching the run; "cancel"
 // aborts it. Animations respect prefers-reduced-motion.
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { PersonaBloom, seatColorFor } from "./PersonaBloom";
 
 type Phase = "starting" | "council" | "society" | "finishing";
 
@@ -33,26 +36,6 @@ const ROUND_LABEL: Record<1 | 2 | 3, string> = {
   2: "peers respond",
   3: "votes + interventions",
 };
-
-const SEAT_COLORS = [
-  "#4a9eff",
-  "#00d0a0",
-  "#b388ff",
-  "#ffb000",
-  "#f472b6",
-  "#22d3ee",
-  "#a3e635",
-  "#ff6b6b",
-];
-
-function seatColorFor(agentId: string): string {
-  // agent ids look like c-actuary-intj-f — hash the profession token so a
-  // profession keeps its hue across rounds.
-  const prof = agentId.split("-")[1] ?? agentId;
-  let h = 0;
-  for (let i = 0; i < prof.length; i++) h = (h * 31 + prof.charCodeAt(i)) >>> 0;
-  return SEAT_COLORS[h % SEAT_COLORS.length];
-}
 
 function useElapsed(): string {
   const [t0] = useState(() => Date.now());
@@ -102,7 +85,10 @@ export function CouncilDeliberationOverlay({
     streamLive: false,
     ...initialProgress,
   });
-  const seatColorsRef = useRef<Map<number, string>>(new Map());
+  // index → agent id; the bloom colours each circle by its speaker. Reset per
+  // round AND per phase — carrying the council's map into the society phase
+  // would paint hundreds of personas with a few council hues.
+  const [seatIds, setSeatIds] = useState<Map<number, string>>(() => new Map());
   const seqRef = useRef(0);
 
   // Live progress from the swarm's SSE feed.
@@ -125,7 +111,7 @@ export function CouncilDeliberationOverlay({
             next.round = (ev.round as 1 | 2 | 3) ?? prev.round;
             next.roundDone = 0;
             next.roundTotal = (ev.total as number) ?? prev.roundTotal;
-            seatColorsRef.current = new Map();
+            setSeatIds(new Map());
             break;
           }
           case "agent_done": {
@@ -135,7 +121,12 @@ export function CouncilDeliberationOverlay({
             next.roundTotal = (ev.total as number) ?? prev.roundTotal;
             const id = String(ev.agentId ?? "");
             if (id) {
-              seatColorsRef.current.set(next.roundDone - 1, seatColorFor(id));
+              const idx = next.roundDone - 1;
+              setSeatIds((m) => {
+                const nm = new Map(m);
+                nm.set(idx, id);
+                return nm;
+              });
               next.recent = [{ seq: seqRef.current++, id }, ...prev.recent].slice(0, 4);
             }
             break;
@@ -144,12 +135,23 @@ export function CouncilDeliberationOverlay({
             next.phase = "society";
             next.societyTotal = (ev.total as number) ?? prev.societyTotal;
             next.societyDone = 0;
+            setSeatIds(new Map());
             break;
           }
           case "society_progress": {
             next.phase = "society";
             next.societyDone = (ev.done as number) ?? prev.societyDone;
             next.societyTotal = (ev.total as number) ?? prev.societyTotal;
+            const sid = String(ev.agentId ?? "");
+            if (sid) {
+              const idx = next.societyDone - 1;
+              setSeatIds((m) => {
+                const nm = new Map(m);
+                nm.set(idx, sid);
+                return nm;
+              });
+              next.recent = [{ seq: seqRef.current++, id: sid }, ...prev.recent].slice(0, 4);
+            }
             break;
           }
           case "round_done": {
@@ -186,19 +188,14 @@ export function CouncilDeliberationOverlay({
     return () => document.removeEventListener("keydown", onKey, true);
   }, [onHide]);
 
-  // Council ring geometry — cap the drawn seats so 192-agent councils stay
-  // legible; fills proportionally.
-  const seats = Math.min(agents, 48);
-  const litSeats =
-    p.phase === "council" && p.roundTotal > 0
-      ? Math.round((p.roundDone / p.roundTotal) * seats)
-      : p.phase === "starting"
-        ? 0
-        : seats;
-  const R = 118;
+  // Bloom sizing — the crowd lays out for whichever roster is currently
+  // answering (council rounds, then the society sample), and reveals exactly
+  // as many circles as have reported. No cap: the bloom compresses spacing
+  // for large rosters instead of truncating them.
+  const bloomTotal =
+    p.phase === "society" ? p.societyTotal : p.roundTotal > 0 ? p.roundTotal : agents;
+  const bloomDone = p.phase === "council" ? p.roundDone : p.phase === "society" ? p.societyDone : 0;
   const societyFrac = p.societyTotal > 0 ? p.societyDone / p.societyTotal : 0;
-  const OUTER_R = 148;
-  const outerCirc = 2 * Math.PI * OUTER_R;
 
   const phaseTitle =
     p.phase === "starting"
@@ -220,27 +217,12 @@ export function CouncilDeliberationOverlay({
           ? `${p.societyDone} / ${p.societyTotal} personas reacted`
           : "clustering stances + proposed shifts";
 
-  const seatDots = useMemo(() => {
-    return Array.from({ length: seats }, (_, i) => {
-      const angle = (i / seats) * Math.PI * 2 - Math.PI / 2;
-      return {
-        x: 170 + R * Math.cos(angle),
-        y: 170 + R * Math.sin(angle),
-        lit: i < litSeats,
-        color: seatColorsRef.current.get(i) ?? "rgb(var(--rgb-primary))",
-      };
-    });
-  }, [seats, litSeats]);
-
   return (
     <div className="fixed inset-0 z-[90] flex flex-col items-center justify-center bg-bg/90 backdrop-blur-md">
       <style>{`
-        @keyframes scelo-council-breathe {
-          0%, 100% { transform: scale(1); opacity: 0.55; }
-          50% { transform: scale(1.12); opacity: 0.9; }
-        }
-        @keyframes scelo-council-spin {
-          to { transform: rotate(360deg); }
+        @keyframes scelo-council-pip {
+          0%, 100% { opacity: 0.45; }
+          50% { opacity: 1; }
         }
         @media (prefers-reduced-motion: reduce) {
           .scelo-council-anim { animation: none !important; }
@@ -255,102 +237,60 @@ export function CouncilDeliberationOverlay({
         <span className="tabular-nums text-fg-mute">{elapsed}</span>
       </div>
 
-      {/* the ring */}
-      <div className="relative">
-        <svg width="340" height="340" viewBox="0 0 340 340" role="img" aria-label={phaseTitle}>
-          {/* society arc (outer) */}
-          {!skipSociety && (
-            <>
-              <circle
-                cx="170"
-                cy="170"
-                r={OUTER_R}
-                fill="none"
-                stroke="rgb(var(--rgb-border))"
-                strokeWidth="3"
-                opacity="0.5"
+      {/* the bloom — one circle per persona that has answered, coloured by
+          profession. Replaces the seat ring (same visual as the swarm app). */}
+      <PersonaBloom total={bloomTotal} litSeats={bloomDone} seatIds={seatIds} />
+
+      {/* strips under the crowd: round pips · society bar · stream note */}
+      <div className="flex min-h-[14px] w-[min(620px,86vw)] items-center gap-3.5">
+        <div className="flex flex-none gap-[7px]" aria-hidden>
+          {([1, 2, 3] as const).map((r) => {
+            const done = p.phase !== "starting" && (r < p.round || p.phase !== "council");
+            const now = r === p.round && p.phase === "council";
+            return (
+              <span
+                key={r}
+                className="scelo-council-anim h-2 w-2 rounded-full border"
+                style={{
+                  borderColor: "rgb(var(--rgb-primary))",
+                  background: done
+                    ? "rgb(var(--rgb-primary))"
+                    : now
+                      ? "rgb(var(--rgb-primary) / 0.5)"
+                      : "transparent",
+                  opacity: done || now ? 1 : 0.6,
+                  animation: now ? "scelo-council-pip 1.6s ease-in-out infinite" : undefined,
+                }}
               />
-              {societyFrac > 0 && (
-                <circle
-                  cx="170"
-                  cy="170"
-                  r={OUTER_R}
-                  fill="none"
-                  stroke="rgb(var(--rgb-accent-2))"
-                  strokeWidth="3"
-                  strokeLinecap="round"
-                  strokeDasharray={`${societyFrac * outerCirc} ${outerCirc}`}
-                  transform="rotate(-90 170 170)"
-                  style={{ transition: "stroke-dasharray 600ms ease" }}
-                />
-              )}
-            </>
-          )}
-          {/* seat dots */}
-          {seatDots.map((s, i) => (
-            <circle
-              key={`${i}-${s.lit}`}
-              cx={s.x}
-              cy={s.y}
-              r={s.lit ? 5 : 3.5}
-              fill={s.lit ? s.color : "transparent"}
-              stroke={s.lit ? s.color : "rgb(var(--rgb-fg-dim))"}
-              strokeWidth="1.4"
-              opacity={s.lit ? 0.95 : 0.45}
-              style={{ transition: "all 300ms ease" }}
-            />
-          ))}
-          {/* breathing centre */}
-          <circle
-            className="scelo-council-anim"
-            cx="170"
-            cy="170"
-            r="52"
-            fill="rgb(var(--rgb-primary) / 0.12)"
-            stroke="rgb(var(--rgb-primary) / 0.6)"
-            strokeWidth="1.5"
-            style={{
-              transformOrigin: "170px 170px",
-              animation: "scelo-council-breathe 2.6s ease-in-out infinite",
-            }}
-          />
-          {/* round ticks in the centre */}
-          {[1, 2, 3].map((r) => (
-            <circle
-              key={r}
-              cx={154 + (r - 1) * 16}
-              cy="170"
-              r="4.5"
-              fill={
-                p.phase !== "starting" && (r < p.round || p.phase !== "council")
-                  ? "rgb(var(--rgb-primary))"
-                  : r === p.round && p.phase === "council"
-                    ? "rgb(var(--rgb-primary) / 0.5)"
-                    : "transparent"
-              }
-              stroke="rgb(var(--rgb-primary))"
-              strokeWidth="1.2"
-              opacity={r === p.round && p.phase === "council" ? 1 : 0.7}
-            />
-          ))}
-        </svg>
-        {/* orbiting comet while indeterminate (starting / stream lost) */}
-        {(p.phase === "starting" || !p.streamLive) && (
-          <div
-            className="scelo-council-anim pointer-events-none absolute inset-0"
-            style={{ animation: "scelo-council-spin 3.4s linear infinite" }}
-          >
+            );
+          })}
+        </div>
+        {!skipSociety && (
+          <>
+            {/* Named, not just implied: an unlabelled fill sitting mid-screen
+                after the pips read as a glitch rather than the society's own
+                meter. */}
+            <span className="flex-none font-mono text-[10px] uppercase tracking-wider text-fg-dim">
+              society
+            </span>
             <div
-              className="absolute h-2 w-2 rounded-full"
-              style={{
-                left: "50%",
-                top: `${170 - R - 4}px`,
-                transform: "translateX(-50%)",
-                background: "rgb(var(--rgb-primary))",
-                boxShadow: "0 0 12px rgb(var(--rgb-primary))",
-              }}
-            />
-          </div>
+              className="h-[3px] min-w-0 flex-1 overflow-hidden rounded-sm"
+              title="society pulse"
+              style={{ background: "rgb(var(--rgb-border))" }}
+            >
+              <div
+                className="h-full rounded-sm"
+                style={{
+                  width: `${Math.round(societyFrac * 100)}%`,
+                  background: "rgb(var(--rgb-accent-2))",
+                  transition: "width 600ms ease",
+                }}
+              />
+            </div>
+          </>
+        )}
+        {(p.phase === "starting" || !p.streamLive) && (
+          <span className="flex-none font-mono text-[11px] text-fg-mute">working…</span>
         )}
       </div>
 
