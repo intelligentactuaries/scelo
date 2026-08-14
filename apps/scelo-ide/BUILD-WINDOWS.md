@@ -25,7 +25,7 @@ Wine entirely.
   app.
 
 The version number comes from `apps/scelo-ide/package.json` → `version`
-(currently **0.1.0**). Don't change it unless you intend a new release.
+(currently **0.1.2**). Don't change it unless you intend a new release.
 
 ---
 
@@ -55,7 +55,7 @@ Run these in **PowerShell** (or CMD) except where it says **Git Bash**.
 ```powershell
 git clone git@github.com:intelligentactuaries/scelo.git
 cd scelo
-git checkout feat/claude-code-provider-and-soa-benchmark
+git checkout fix/wmtr-driver-attribution
 # For a guaranteed-identical build, pin the exact commit instead of the branch tip:
 #   git checkout <COMMIT_SHA>
 # (the SHA of the commit that added this BUILD-WINDOWS.md — see the chat/release notes)
@@ -100,7 +100,7 @@ bun run dist:win
 `dist:win` runs `bun run build` (rebuilds the renderer + main) then
 `electron-builder --win nsis`. Output lands in `apps/scelo-ide/build/`:
 
-- **`Scelo IDE-0.1.0-x64.exe`** — the NSIS installer (this is the deliverable)
+- **`Scelo IDE-0.1.2-x64.exe`** — the NSIS installer (this is the deliverable)
 - `win-unpacked/` — the unpacked app
 - `*.blockmap` / `latest.yml` — auto-update metadata
 
@@ -110,14 +110,33 @@ bun run dist:win
 
 ## Verify the result
 
-1. `apps/scelo-ide/build/Scelo IDE-0.1.0-x64.exe` exists (~700 MB).
+1. `apps/scelo-ide/build/Scelo IDE-0.1.2-x64.exe` exists (~700 MB).
 2. Run it → the installer opens (you can choose the install directory) → it
    installs and launches the **Welcome** screen.
-3. Confirm this version's changes are present:
+3. Confirm the **0.1.2** changes are present:
+   - Right-click anywhere in the app — the context menu has **no "Inspect
+     Element"** entry.
+   - **Soft Data** → load a table with gaps and outliers → ask the chat to
+     clean it: it imputes missing values and caps outliers, and the write-up
+     names the columns it touched instead of claiming a blanket clean.
+   - **Tools** → load the Synthetic claims sample → a **"why these models"**
+     bubble floats over the canvas naming the pick's evidence; removing any
+     model makes it disappear.
+   - **Hard Data** → run the reserving stack → the board-pack narrative's
+     Mack line shows a **sane CV (tens of %, not thousands)** and the
+     forest plot's axis brackets the reserve estimates readably.
+   - **Hard Data** → select a model → **Convene council** → the overlay is
+     the swarm-style persona BLOOM (mirrored crowd of coloured circles with
+     round pips and a labelled SOCIETY bar), not the old seat ring.
+   - Open any model's theory panel — display formulas render **without a
+     scrollbar pill** beside them (Windows-specific regression).
+
+4. Confirm the earlier features are still there (cumulative — these were new
+   in 0.1.0, not in this build):
    - **Soft Data** → `load sample` → **Workspace demo** → the `◈ workspace`
      toolbar button opens the decision-relevance preview.
    - The **Sample workspaces** list on Welcome has **no "SOA exams" card**
-     (removed in this version).
+     (removed in 0.1.0).
    - Open `/workspace` → the sidebar has a **`facts`** tab (the global-workspace
      panel).
    - **Tools** → add **Workspace bottleneck** (family `workspace`); **Hard Data**
@@ -148,12 +167,12 @@ bun run dist:win
 > Prereqs: Git for Windows (Git Bash), Bun ≥ 1.1, internet, ~8 GB free disk.
 > Steps:
 > 1. `git clone git@github.com:intelligentactuaries/scelo.git`, `cd scelo`,
->    `git checkout feat/claude-code-provider-and-soa-benchmark` (or the exact
+>    `git checkout fix/wmtr-driver-attribution` (or the exact
 >    commit SHA given to you), then `bun install`.
 > 2. In **Git Bash**: `cd apps/scelo-ide && TARGET_OS=win bun run bundle:runtime`.
 >    Verify `resources/runtime/python/python.exe` and an `R.exe` exist.
 > 3. In PowerShell: `cd apps\scelo-ide && bun run dist:win`.
-> 4. Confirm `apps/scelo-ide/build/Scelo IDE-0.1.0-x64.exe` was produced, then
+> 4. Confirm `apps/scelo-ide/build/Scelo IDE-0.1.2-x64.exe` was produced, then
 >    run it and check the Welcome screen loads and there is no "SOA exams" sample
 >    card. Report the artifact path, its size, and the commit SHA you built from.
 > Do not change `package.json` `version`. Do not install Wine. If the native
