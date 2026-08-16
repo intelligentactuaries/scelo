@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import * as echarts from 'echarts/core';
 import { GraphChart } from 'echarts/charts';
 import { LegendComponent, TooltipComponent, TitleComponent, GridComponent, GraphicComponent } from 'echarts/components';
@@ -34,6 +34,9 @@ type Props = {
   onPinnedProfessionChange: (p: Profession | null) => void;
   crossHighlight?: CrossHighlight;
   onCrossHighlight?: (h: CrossHighlight) => void;
+  /** The pane's title chip, rendered at the head of the graph's own header
+   *  band so title, key and plot stack as one chart. */
+  header?: ReactNode;
 };
 
 export function CouncilGraph({
@@ -44,6 +47,7 @@ export function CouncilGraph({
   onPinnedProfessionChange,
   crossHighlight,
   onCrossHighlight,
+  header,
 }: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const chartRef = useRef<echarts.ECharts | null>(null);
@@ -51,7 +55,7 @@ export function CouncilGraph({
   const colors = useMemo(() => colorsForTheme(resolved), [resolved]);
   // Measured canvas size drives the labelled-region grid layout; it's remeasured
   // on container resize so the region boxes always fill the panel.
-  const [size, setSize] = useState({ w: 0, h: 0, padTop: 0 });
+  const [size, setSize] = useState({ w: 0, h: 0 });
   // Keep the latest onCrossHighlight + crossHighlight in refs so the
   // chart.on(...) handlers (registered once on mount) always read the
   // live values without re-registering.
@@ -112,27 +116,13 @@ export function CouncilGraph({
     // Reflow the canvas immediately on resize, but debounce the size *state*
     // update — that rebuilds the option (which re-runs the force layout), so we
     // only want it once the drag settles, not on every intermediate width.
+    // The key sits in the header band above this element, in normal flow, so
+    // the plot is exactly this box — nothing floats over it to be measured
+    // around (see SocietyGraph for the history).
     const applySize = () => {
       const w = el.clientWidth;
       const h = el.clientHeight;
-      // The legend floats over the canvas as an absolutely positioned sibling
-      // with a higher z-index, so professions laid out beneath it are hidden
-      // AND unhoverable. Measure how far down it reaches and keep the layout
-      // clear of that band.
-      const parent = el.parentElement;
-      let pad = 0;
-      if (parent) {
-        const base = el.getBoundingClientRect().top;
-        for (const box of parent.querySelectorAll('.graph-legend')) {
-          const r = (box as HTMLElement).getBoundingClientRect();
-          if (r.height > 0) pad = Math.max(pad, r.bottom - base);
-        }
-      }
-      // + room for the hull's own label, which is drawn ABOVE the disc:
-      // clearing only the disc left the label tucked under the legend.
-      const padTop = Math.round(pad > 0 ? pad + 28 : 0);
-      if (w > 0 && h > 0)
-        setSize((s) => (s.w === w && s.h === h && s.padTop === padTop ? s : { w, h, padTop }));
+      if (w > 0 && h > 0) setSize((s) => (s.w === w && s.h === h ? s : { w, h }));
     };
     let sizeTimer: ReturnType<typeof setTimeout> | undefined;
     const onResize = () => {
@@ -360,38 +350,46 @@ export function CouncilGraph({
     [onPinnedProfessionChange],
   );
 
+  // Title, key, plot — in normal flow, top to bottom, so nothing sits over
+  // the plot (see SocietyGraph for why that mattered).
   return (
-    <>
-      <div ref={ref} className="graph-canvas" />
-      <div className="graph-legend graph-legend-horizontal" onMouseLeave={onLegendLeave}>
-        {PROFESSIONS.map((p) => (
-          <span
-            key={p}
-            className={`graph-legend-item ${pinned === p ? 'is-pinned' : ''}${highlightActive ? (chipActive(p) ? ' is-active' : ' is-muted') : ''}`}
-            onMouseEnter={() => onLegendEnter(p)}
-            onClick={() => onLegendClick(p)}
-            role="button"
-            tabIndex={0}
-          >
-            <i style={{ background: professionColor(p, resolved === 'dark') }} />
-            <span className="graph-legend-item-label">{p}</span>
+    <div className="graph-frame">
+      <div className="graph-keys">
+        {header}
+        <div className="graph-legend" onMouseLeave={onLegendLeave}>
+          <span className="graph-legend-label">professions</span>
+          <span className="graph-key-items">
+          {PROFESSIONS.map((p) => (
+            <span
+              key={p}
+              className={`graph-legend-item ${pinned === p ? 'is-pinned' : ''}${highlightActive ? (chipActive(p) ? ' is-active' : ' is-muted') : ''}`}
+              onMouseEnter={() => onLegendEnter(p)}
+              onClick={() => onLegendClick(p)}
+              role="button"
+              tabIndex={0}
+            >
+              <i style={{ background: professionColor(p, resolved === 'dark') }} />
+              <span className="graph-legend-item-label">{p}</span>
+            </span>
+          ))}
+          {/* Decode the two per-node encodings, right where the colours are
+              already being decoded. Size used to be an unlabelled mystery
+              (weighted degree, min-max stretched) — now it reads directly. */}
+          <span className="graph-legend-note" aria-hidden="true">
+            size = confidence · ring = verdict
           </span>
-        ))}
-        {/* Decode the two per-node encodings, right where the colours are
-            already being decoded. Size used to be an unlabelled mystery
-            (weighted degree, min-max stretched) — now it reads directly. */}
-        <span className="graph-legend-note" aria-hidden="true">
-          size = confidence · ring = verdict
-        </span>
+          </span>
+        </div>
       </div>
-    </>
+      <div ref={ref} className="graph-canvas" />
+    </div>
   );
 }
 
 function buildOption(
   run: Run,
   colors: ThemeColors,
-  size: { w: number; h: number; padTop?: number },
+  size: { w: number; h: number },
   dark: boolean,
 ): { option: echarts.EChartsCoreOption; hulls: HullDatum[]; basePos: Map<string, { x: number; y: number }> } {
   const STANCE_BORDER = stanceColors(colors);
@@ -406,10 +404,12 @@ function buildOption(
   const groups: Group[] = present.map((p) => ({ key: p, label: p, color: professionColor(p, dark) }));
   const W = size.w > 0 ? size.w : 900;
   const H = size.h > 0 ? size.h : 600;
-  // EDGE_PAD keeps a node's label off the canvas edge; padTop clears the legend.
+  // EDGE_PAD keeps a node's label off the canvas edge.
   const EDGE_PAD = 26;
   const cells = layoutCells(groups, W, H, {
-    top: Math.max(size.padTop ?? 0, EDGE_PAD),
+    // The header band sits right above this canvas and each cell reserves
+    // its own label strip, so the top needs only a hairline.
+    top: 8,
     left: EDGE_PAD,
     right: EDGE_PAD,
     bottom: EDGE_PAD,

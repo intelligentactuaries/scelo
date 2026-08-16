@@ -1255,7 +1255,11 @@ export function App() {
             showPets={emptyStage || selected !== null}
             tools={railTools}
           />
-          <div className="canvas-stack">
+          <div
+            className="canvas-stack"
+            data-tab={tab}
+            data-dock={run ? (conversationOpen ? 'open' : 'shut') : 'none'}
+          >
           {/* When a run exists (or we're on Canon), the heading lives at the
               top of the canvas. When empty, the heading is hoisted INTO the
               canvas-empty-stage below so it sits right above the scenario
@@ -1436,17 +1440,6 @@ export function App() {
                 {tab === 'council' && (
                   <div className="council-stack">
                     <div className="council-stack-graph">
-                      {run && run.councilResults.length > 0 && (
-                        <div
-                          className="graph-legend graph-title-chip explained-title"
-                          data-tooltip={explainCouncilGraph(run)}
-                          tabIndex={0}
-                          role="note"
-                          aria-label={`council reactions. ${explainCouncilGraph(run)}`}
-                        >
-                          council reactions · adviser network
-                        </div>
-                      )}
                       {run && (
                         <CouncilGraph
                           run={run}
@@ -1456,6 +1449,19 @@ export function App() {
                           onPinnedProfessionChange={setPinnedProfession}
                           crossHighlight={crossHighlight}
                           onCrossHighlight={setCrossHighlight}
+                          header={
+                            run.councilResults.length > 0 && (
+                              <div
+                                className="graph-title-chip explained-title"
+                                data-tooltip={explainCouncilGraph(run)}
+                                tabIndex={0}
+                                role="note"
+                                aria-label={`council reactions. ${explainCouncilGraph(run)}`}
+                              >
+                                council reactions · adviser network
+                              </div>
+                            )
+                          }
                         />
                       )}
                       <RunStatus
@@ -1493,23 +1499,23 @@ export function App() {
                   <div className="council-stack">
                     <div className="council-stack-graph">
                       {run && run.societyResults.length > 0 && (
-                        <div
-                          className="graph-legend graph-title-chip explained-title"
-                          data-tooltip={explainSocietyGraph(run)}
-                          tabIndex={0}
-                          role="note"
-                          aria-label={`society pulse. ${explainSocietyGraph(run)}`}
-                        >
-                          society pulse · citizen reactions
-                        </div>
-                      )}
-                      {run && run.societyResults.length > 0 && (
                         <SocietyGraph
                           run={run}
                           pinned={societyPin}
                           onPinnedChange={setSocietyPin}
                           crossHighlight={crossHighlight}
                           onCrossHighlight={setCrossHighlight}
+                          header={
+                            <div
+                              className="graph-title-chip explained-title"
+                              data-tooltip={explainSocietyGraph(run)}
+                              tabIndex={0}
+                              role="note"
+                              aria-label={`society pulse. ${explainSocietyGraph(run)}`}
+                            >
+                              society pulse · citizen reactions
+                            </div>
+                          }
                         />
                       )}
                       <RunStatus

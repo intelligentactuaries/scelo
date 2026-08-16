@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import * as echarts from 'echarts/core';
 import { GraphChart } from 'echarts/charts';
 import { LegendComponent, TooltipComponent, GridComponent, GraphicComponent } from 'echarts/components';
@@ -25,13 +25,17 @@ type Props = {
   onPinnedChange: (p: SocietyPin | null) => void;
   crossHighlight?: CrossHighlight;
   onCrossHighlight?: (h: CrossHighlight) => void;
+  /** The pane's title chip. Rendered inside the graph's own header band —
+   *  first thing on the row, ahead of the keys — so title, keys and plot
+   *  stack as one chart anatomy instead of the title floating alone. */
+  header?: ReactNode;
 };
 
 type ClusterChip = {
   name: string;
   color: string;
   /** Untruncated `c<N> <descriptor>` — the chip's visible label clips at
-   *  ~36 chars, so the whole text rides along for the hover title. */
+   *  ~44 chars, so the whole text rides along for the hover title. */
   full: string;
 };
 
@@ -41,6 +45,7 @@ export function SocietyGraph({
   onPinnedChange,
   crossHighlight,
   onCrossHighlight,
+  header,
 }: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const chartRef = useRef<echarts.ECharts | null>(null);
@@ -48,7 +53,7 @@ export function SocietyGraph({
   const colors = useMemo(() => colorsForTheme(resolved), [resolved]);
   const SENTIMENT_COLOR = useMemo(() => sentimentColors(colors), [colors]);
   // Measured canvas size drives the labelled-region (cluster) grid layout.
-  const [size, setSize] = useState({ w: 0, h: 0, padTop: 0 });
+  const [size, setSize] = useState({ w: 0, h: 0 });
 
   // Live cross-highlight callback + state held in refs so the
   // chart.on(...) listeners (registered once on mount) keep seeing the
@@ -111,27 +116,15 @@ export function SocietyGraph({
     chart.setOption(option);
     // Reflow the canvas immediately on resize, but debounce the size *state*
     // update — that re-runs the force layout, so only do it once the drag settles.
+    // The keys live in the header band above this element, in normal flow, so
+    // the plot is exactly this box — nothing floats over it to be measured
+    // around. (It used to: the legends were absolutely positioned siblings, and
+    // the grid was inset by however far down they reached, which held only
+    // while the clumps stayed inside their cells.)
     const applySize = () => {
       const w = el.clientWidth;
       const h = el.clientHeight;
-      // The legends float over the canvas as absolutely positioned siblings
-      // with a higher z-index, so clusters laid out beneath them are hidden
-      // AND unhoverable. Measure how far down they reach and keep the layout
-      // clear of that band.
-      const parent = el.parentElement;
-      let pad = 0;
-      if (parent) {
-        const base = el.getBoundingClientRect().top;
-        for (const box of parent.querySelectorAll('.graph-legend, .sentiment-key')) {
-          const r = (box as HTMLElement).getBoundingClientRect();
-          if (r.height > 0) pad = Math.max(pad, r.bottom - base);
-        }
-      }
-      // + room for the hull's own label, which is drawn ABOVE the disc:
-      // clearing only the disc left the label tucked under the legend.
-      const padTop = Math.round(pad > 0 ? pad + 28 : 0);
-      if (w > 0 && h > 0)
-        setSize((s) => (s.w === w && s.h === h && s.padTop === padTop ? s : { w, h, padTop }));
+      if (w > 0 && h > 0) setSize((s) => (s.w === w && s.h === h ? s : { w, h }));
     };
     let sizeTimer: ReturnType<typeof setTimeout> | undefined;
     const onResize = () => {
@@ -358,57 +351,70 @@ export function SocietyGraph({
     );
   }
 
+  // Title, keys, plot — stacked in normal flow, top to bottom. The keys used
+  // to float over the plot as glass cards, and the hull grid was inset to
+  // dodge them; whenever a clump outgrew its cell it slid back underneath,
+  // and the c0 label ended up buried under the sentiment key. Whatever sits
+  // over a plot hides part of it; the fix is that nothing does.
   return (
-    <>
+    <div className="graph-frame">
+      <div className="graph-keys">
+        {header}
+        <div className="sentiment-key" onMouseLeave={onSentimentLeave}>
+          <span className="sentiment-key-label">sentiment</span>
+          <span className="graph-key-items">
+          {SENTIMENT_ORDER.map((s) => {
+            const isPinned = pinned?.kind === 'sentiment' && pinned.name === s;
+            return (
+              <span
+                key={s}
+                className={`sentiment-pip ${isPinned ? 'is-pinned' : ''}${highlightActive ? (sentimentActive(s) ? ' is-active' : ' is-muted') : ''}`}
+                onMouseEnter={() => onSentimentEnter(s)}
+                onClick={() => onSentimentClick(s)}
+                role="button"
+                tabIndex={0}
+              >
+                <i style={{ background: SENTIMENT_COLOR[s] }} />
+                {s}
+              </span>
+            );
+          })}
+          </span>
+        </div>
+        <div className="graph-legend" onMouseLeave={onLegendLeave}>
+          <span className="graph-legend-label">clusters</span>
+          <span className="graph-key-items">
+          {clusterChips.map((c) => {
+            const isPinned = pinned?.kind === 'cluster' && pinned.name === c.name;
+            return (
+              <span
+                key={c.name}
+                className={`graph-legend-item ${isPinned ? 'is-pinned' : ''}${highlightActive ? (clusterActive(c.name) ? ' is-active' : ' is-muted') : ''}`}
+                onMouseEnter={() => onLegendEnter(c.name)}
+                onClick={() => onLegendClick(c.name)}
+                role="button"
+                tabIndex={0}
+                // The visible label clips the descriptor at ~44 chars; the
+                // native title carries the whole thing on hover.
+                title={c.full}
+              >
+                <i style={{ background: c.color }} />
+                <span className="graph-legend-item-label">{c.name}</span>
+              </span>
+            );
+          })}
+          </span>
+        </div>
+      </div>
       <div ref={ref} className="graph-canvas" />
-      <div className="graph-legend graph-legend-vertical" onMouseLeave={onLegendLeave}>
-        {clusterChips.map((c) => {
-          const isPinned = pinned?.kind === 'cluster' && pinned.name === c.name;
-          return (
-            <span
-              key={c.name}
-              className={`graph-legend-item ${isPinned ? 'is-pinned' : ''}${highlightActive ? (clusterActive(c.name) ? ' is-active' : ' is-muted') : ''}`}
-              onMouseEnter={() => onLegendEnter(c.name)}
-              onClick={() => onLegendClick(c.name)}
-              role="button"
-              tabIndex={0}
-              // The visible label clips the descriptor at ~36 chars; the
-              // native title carries the whole thing on hover.
-              title={c.full}
-            >
-              <i style={{ background: c.color }} />
-              <span className="graph-legend-item-label">{c.name}</span>
-            </span>
-          );
-        })}
-      </div>
-      <div className="sentiment-key" onMouseLeave={onSentimentLeave}>
-        <div className="sentiment-key-label">sentiment</div>
-        {SENTIMENT_ORDER.map((s) => {
-          const isPinned = pinned?.kind === 'sentiment' && pinned.name === s;
-          return (
-            <span
-              key={s}
-              className={`sentiment-pip ${isPinned ? 'is-pinned' : ''}${highlightActive ? (sentimentActive(s) ? ' is-active' : ' is-muted') : ''}`}
-              onMouseEnter={() => onSentimentEnter(s)}
-              onClick={() => onSentimentClick(s)}
-              role="button"
-              tabIndex={0}
-            >
-              <i style={{ background: SENTIMENT_COLOR[s] }} />
-              {s}
-            </span>
-          );
-        })}
-      </div>
-    </>
+    </div>
   );
 }
 
 function buildOption(
   run: Run,
   colors: ThemeColors,
-  size: { w: number; h: number; padTop?: number },
+  size: { w: number; h: number },
   dark: boolean,
 ): {
   option: echarts.EChartsCoreOption;
@@ -438,7 +444,7 @@ function buildOption(
   const categories = clusters.map((c, i) => {
     const desc = clusterDescs.get(c) ?? '';
     return {
-      name: `c${c} ${truncate(desc, 36)}`,
+      name: `c${c} ${truncate(desc, 44)}`,
       itemStyle: { color: clusterColor(i, dark) },
     };
   });
@@ -446,7 +452,7 @@ function buildOption(
   const clusterChips: ClusterChip[] = categories.map((c, i) => ({
     name: c.name,
     color: clusterColor(i, dark),
-    // Untruncated descriptor — the chip clips at 36 chars for width, so the
+    // Untruncated descriptor — the chip clips at 44 chars for width, so the
     // full text rides along for the hover title.
     full: `c${clusters[i]} ${clusterDescs.get(clusters[i]) ?? ''}`.trim(),
   }));
@@ -473,7 +479,9 @@ function buildOption(
   // panel, so a cluster flush against it had its label cut ("ge≈33 · lower-mid…").
   const EDGE_PAD = 26;
   const cells = layoutCells(groups, W, H, {
-    top: Math.max(size.padTop ?? 0, EDGE_PAD),
+    // The header band sits right above this canvas and each cell already
+    // reserves its own label strip, so the top needs only a hairline.
+    top: 8,
     left: EDGE_PAD,
     right: EDGE_PAD,
     bottom: EDGE_PAD,
@@ -738,9 +746,21 @@ function applySocietyAgentFocus(chart: echarts.ECharts, ids: Set<string>, edgeMo
   chart.setOption({ series: [{ data: nextData, edges: nextEdges }] }, { lazyUpdate: true });
 }
 
+/** Shorten a ` · `-separated descriptor to at most `n` characters by
+ *  dropping whole trailing segments, so the chip ends on a complete word
+ *  ("… · urban …") rather than a fragment ("… · urb…"). Falls back to a
+ *  hard cut only when even the first segment is too long. */
 function truncate(s: string, n: number): string {
   if (!s) return '';
-  return s.length > n ? s.slice(0, n - 1) + '…' : s;
+  if (s.length <= n) return s;
+  const parts = s.split(' · ');
+  let out = '';
+  for (const part of parts) {
+    const next = out ? `${out} · ${part}` : part;
+    if (next.length + 2 > n) break;
+    out = next;
+  }
+  return out ? `${out} …` : `${s.slice(0, n - 1)}…`;
 }
 
 function escapeHtml(s: string): string {
