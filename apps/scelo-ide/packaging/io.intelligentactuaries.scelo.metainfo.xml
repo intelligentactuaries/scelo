@@ -73,6 +73,15 @@
     abandoned. Dates are the release publication dates on GitHub.
   -->
   <releases>
+    <release version="0.1.3" date="2026-08-16">
+      <description>
+        <p>
+          Packaging only: the Linux package now ships this AppStream
+          metadata, so app stores show the publisher, license and release
+          date instead of "Unknown". No application changes.
+        </p>
+      </description>
+    </release>
     <release version="0.1.2" date="2026-08-14">
       <description>
         <p>
