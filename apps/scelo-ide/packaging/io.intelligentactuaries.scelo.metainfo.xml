@@ -73,6 +73,18 @@
     abandoned. Dates are the release publication dates on GitHub.
   -->
   <releases>
+    <release version="0.1.3" date="2026-08-16">
+      <description>
+        <p>
+          Desktop-integration fixes. This metainfo file is now actually
+          installed to /usr/share/metainfo, so App Center shows the publisher,
+          license and release date instead of "Unknown". The .desktop entry is
+          no longer malformed: it dropped the literal "entry=[object Object]"
+          key and its Comment is a single line, so it passes
+          desktop-file-validate for the first time. Linux only.
+        </p>
+      </description>
+    </release>
     <release version="0.1.2" date="2026-08-14">
       <description>
         <p>
