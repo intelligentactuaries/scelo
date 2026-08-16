@@ -34,7 +34,7 @@ bash scripts/finish-install.sh
 ```
 
 When it finishes, your installer is in `apps/scelo-ide/build/`
-(`Scelo IDE-0.1.0-arm64.dmg`). Open it and drag Scelo to Applications.
+(`Scelo IDE-<version>-arm64.dmg`). Open it and drag Scelo to Applications.
 
 ### Windows
 
@@ -45,7 +45,7 @@ Git Bash), then open **Git Bash** in the `scelo` folder and run:
 bash scripts/finish-install.sh
 ```
 
-Your installer lands in `apps/scelo-ide/build/` (`Scelo IDE-0.1.0-x64.exe`).
+Your installer lands in `apps/scelo-ide/build/` (`Scelo IDE-<version>-x64.exe`).
 
 ### Just run it without building an installer
 

@@ -6,21 +6,23 @@ the install on your own machine.
 ## One-click installer
 
 Download the installer for your platform from the
-[downloads page](https://intelligentactuaries.com/scelo):
+[downloads page](https://intelligentactuaries.com/scelo). Filenames are
+version-stamped (`Scelo.IDE-<version>-x64.exe`); the download tile always
+points at the current one.
 
 === "Windows"
 
-    1. Download `Scelo IDE-0.1.0-x64.exe`.
+    1. Download the `.exe` from the Windows tile.
     2. Run it. SmartScreen may warn ("unknown publisher") — click
        **More info → Run anyway** (the installer isn't code-signed yet).
     3. Follow the installer (you can change the install directory).
 
 === "macOS"
 
-    1. Download `Scelo IDE-0.1.0-arm64.dmg` (Apple Silicon).
-    2. Open the `.dmg` and drag **Scelo IDE** to Applications.
-    3. First launch: right-click the app → **Open** → **Open** (Gatekeeper
-       warns because the app isn't notarised yet).
+    **No prebuilt `.dmg` yet.** macOS has not had a signed release, so the
+    downloads page shows macOS as "build from source" rather than offering an
+    installer. Use the local build below — it produces the same app, and the
+    `.dmg` it writes can be installed normally.
 
 ## Build the latest on your own machine
 

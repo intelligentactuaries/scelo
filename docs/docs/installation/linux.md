@@ -45,19 +45,30 @@ baseline above) — no package manager involved.
 
 ```bash
 # download from the website's Linux tile, then:
-chmod +x 'Scelo IDE-0.1.0-x86_64.AppImage'
-./'Scelo IDE-0.1.0-x86_64.AppImage'
+chmod +x Scelo.IDE-*-x86_64.AppImage
+./Scelo.IDE-*-x86_64.AppImage
 ```
 
 The AppImage needs no root and leaves nothing installed system-wide — handy for
 trying Scelo or running it on a locked-down machine.
+
+!!! warning "Ubuntu 22.04+ needs FUSE 2"
+    AppImages are mounted with FUSE 2, which Ubuntu stopped installing by
+    default in 22.04. If the file downloaded fine but exits immediately with a
+    `libfuse.so.2` error, install it:
+
+    ```bash
+    sudo apt install libfuse2t64   # libfuse2 on releases before 24.04
+    ```
+
+    The apt and `.deb` methods have no such requirement.
 
 ## 3. .deb (Debian / Ubuntu)
 
 Download the `.deb` from the website and install it with `apt`:
 
 ```bash
-sudo apt install ./'Scelo IDE-0.1.0-amd64.deb'
+sudo apt install ./Scelo.IDE-*-amd64.deb
 ```
 
 !!! warning "Side-loaded `.deb` shows 'third party'"
@@ -68,9 +79,6 @@ sudo apt install ./'Scelo IDE-0.1.0-amd64.deb'
 
 ## Snap
 
-A classic-confinement snap is also available (it shows as a verified publisher
-in the App Center once published to the Snap Store):
-
-```bash
-sudo snap install scelo-ide --classic
-```
+Not published yet. A classic-confinement snap is planned — it will show as a
+verified publisher in the App Center — but `scelo-ide` is not in the Snap Store
+today, so `snap install` will not find it. Use apt above.
