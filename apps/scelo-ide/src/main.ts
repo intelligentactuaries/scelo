@@ -20,6 +20,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { cp, mkdir, open, readFile, readdir, stat, writeFile } from "node:fs/promises";
+import { homedir, tmpdir } from "node:os";
 import { join, normalize, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
@@ -990,6 +991,30 @@ function _claudeLaunchFor(bin: string): ClaudeLaunch {
   return { bin, argPrefix: [], viaShell: false };
 }
 
+/** Where a `claude` binary may live when it is NOT on this process's PATH.
+ *  A desktop app launched from a .desktop entry, the Dock or the Start menu
+ *  gets the session's PATH, not the shell's — on Ubuntu that often lacks
+ *  `~/.local/bin`, which is exactly where the native installer puts the CLI
+ *  (and where a shell finds it fine, so "it works in the terminal" is no
+ *  comfort). Same list the swarm server probes, for the same reason. */
+function _wellKnownClaudePaths(): string[] {
+  const home = homedir();
+  if (isWin) {
+    const list = [join(home, ".local", "bin", "claude.exe")];
+    if (process.env.APPDATA) list.push(join(process.env.APPDATA, "npm", "claude.cmd"));
+    list.push(join(home, ".bun", "bin", "claude.exe"), join(home, ".bun", "bin", "claude.cmd"));
+    return list;
+  }
+  return [
+    join(home, ".local", "bin", "claude"), // native installer
+    join(home, ".claude", "local", "claude"), // older "local" install
+    "/usr/local/bin/claude",
+    "/opt/homebrew/bin/claude",
+    join(home, ".bun", "bin", "claude"),
+    join(home, ".npm-global", "bin", "claude"),
+  ];
+}
+
 function resolveClaudeLaunch(): ClaudeLaunch | null {
   if (_claudeLaunch !== undefined) return _claudeLaunch;
   const override = process.env.SCELO_CLAUDE_BIN;
@@ -997,6 +1022,7 @@ function resolveClaudeLaunch(): ClaudeLaunch | null {
     _claudeLaunch = _claudeLaunchFor(override);
     return _claudeLaunch;
   }
+  let chosen: string | null = null;
   try {
     const out = execFileSync(isWin ? "where" : "which", ["claude"], {
       encoding: "utf-8",
@@ -1011,12 +1037,70 @@ function resolveClaudeLaunch(): ClaudeLaunch | null {
     // .cmd/.bat outranks it.
     const exe = lines.find((l) => /\.exe$/i.test(l));
     const cmdShim = lines.find((l) => /\.(cmd|bat)$/i.test(l));
-    const chosen = exe ?? cmdShim ?? lines[0] ?? null;
-    _claudeLaunch = chosen ? _claudeLaunchFor(chosen) : null;
+    chosen = exe ?? cmdShim ?? lines[0] ?? null;
   } catch {
-    _claudeLaunch = null;
+    chosen = null;
   }
+  // Not on PATH: try the places installers put it.
+  if (!chosen) chosen = _wellKnownClaudePaths().find((p) => existsSync(p)) ?? null;
+  _claudeLaunch = chosen ? _claudeLaunchFor(chosen) : null;
+  if (_claudeLaunch) log.info(`claude code: using ${_claudeLaunch.bin} ${_claudeLaunch.argPrefix.join(" ")}`.trim());
+  else log.info("claude code: CLI not found on PATH or in the well-known install locations");
   return _claudeLaunch;
+}
+
+/** Flags only newer CLIs accept, read once from `--help` — an unknown flag
+ *  is a hard exit, so they are passed only when the help text lists them.
+ *  `--tools ""` disables the built-in tool set outright: without it the
+ *  chat's "do not use tools" is a request the model can decline, and a
+ *  headless -p call could read or write files on this machine.
+ *  `--no-session-persistence` stops every reply from writing a resumable
+ *  session under ~/.claude. */
+type ClaudeCaps = { tools: boolean; noSessionPersistence: boolean };
+let _claudeCaps: ClaudeCaps | undefined;
+function resolveClaudeCaps(launch: ClaudeLaunch): ClaudeCaps {
+  if (_claudeCaps) return _claudeCaps;
+  let help = "";
+  try {
+    help = launch.viaShell
+      ? execFileSync(_cmdArg(launch.bin), [...launch.argPrefix, "--help"].map(_cmdArg), {
+          encoding: "utf-8",
+          shell: true,
+          timeout: 15_000,
+          windowsHide: true,
+          cwd: claudeWorkDir(),
+        })
+      : execFileSync(launch.bin, [...launch.argPrefix, "--help"], {
+          encoding: "utf-8",
+          timeout: 15_000,
+          windowsHide: true,
+          cwd: claudeWorkDir(),
+        });
+  } catch (e) {
+    // Some CLIs exit non-zero after printing help; keep whatever came out.
+    const out = (e as { stdout?: string }).stdout;
+    help = typeof out === "string" ? out : "";
+  }
+  _claudeCaps = {
+    tools: /(^|\s)--tools\b/m.test(help),
+    noSessionPersistence: /(^|\s)--no-session-persistence\b/m.test(help),
+  };
+  log.info(`claude code: caps ${JSON.stringify(_claudeCaps)}`);
+  return _claudeCaps;
+}
+
+/** A neutral cwd for the CLI. It treats its cwd as "the project" — reading
+ *  that directory's CLAUDE.md, .claude/settings and hooks into every call.
+ *  A chat reply wants none of that, and Electron's own cwd (a repo checkout
+ *  in dev, / or the app dir when launched from a menu) is the wrong project
+ *  anyway. */
+let _claudeWorkDir: string | null = null;
+function claudeWorkDir(): string {
+  if (!_claudeWorkDir) {
+    _claudeWorkDir = join(tmpdir(), "scelo-claude-code");
+    mkdirSync(_claudeWorkDir, { recursive: true });
+  }
+  return _claudeWorkDir;
 }
 
 /** Quote one argument for the cmd.exe fallback (`shell: true`). cmd cannot
@@ -1048,6 +1132,11 @@ async function chatClaudeCode(req: LlmChatRequest): Promise<LlmChatResult> {
       : turns.map((m) => `${m.role === "user" ? "User" : "Assistant"}: ${m.content}`).join("\n\n");
   const system = `${systemText ? `${systemText}\n\n` : ""}Answer directly and concisely in plain text. Do not use tools, do not read or write files, do not run commands — this is a chat reply.`;
 
+  // --strict-mcp-config is not optional: without it the CLI loads every
+  // MCP server the user has configured and folds the tool schemas into the
+  // prompt — measured at 5,222 input tokens for a six-word question against
+  // 167 with the flag.
+  const caps = resolveClaudeCaps(launch);
   const args = [
     ...launch.argPrefix,
     "-p",
@@ -1057,6 +1146,8 @@ async function chatClaudeCode(req: LlmChatRequest): Promise<LlmChatResult> {
     "--system-prompt",
     system,
   ];
+  if (caps.noSessionPersistence) args.push("--no-session-persistence");
+  if (caps.tools) args.push("--tools", "");
   if (req.model) args.push("--model", req.model);
 
   return new Promise<LlmChatResult>((resolve) => {
@@ -1067,10 +1158,11 @@ async function chatClaudeCode(req: LlmChatRequest): Promise<LlmChatResult> {
       child = launch.viaShell
         ? spawn(_cmdArg(launch.bin), args.map(_cmdArg), {
             env: process.env,
+            cwd: claudeWorkDir(),
             windowsHide: true,
             shell: true,
           })
-        : spawn(launch.bin, args, { env: process.env, windowsHide: true });
+        : spawn(launch.bin, args, { env: process.env, cwd: claudeWorkDir(), windowsHide: true });
     } catch (e) {
       const code = (e as NodeJS.ErrnoException).code;
       resolve(

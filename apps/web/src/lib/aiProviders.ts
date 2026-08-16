@@ -68,7 +68,7 @@ export const PROVIDER_CATALOG: ProviderDescriptor[] = [
     id: "claude_code",
     label: "Claude Code (your Claude login · no key)",
     blurb:
-      "Answers via the Claude Code CLI already installed and signed in on this machine — strongest reasoning, no API key, no spend beyond your Claude plan. Desktop app only (needs `claude` on PATH). Inherits whichever model your Claude Code uses by default.",
+      "Answers via the Claude Code CLI already installed and signed in on this machine — strongest reasoning, no API key, no spend beyond your Claude plan. Desktop app only (needs the `claude` CLI installed; found on PATH or in its usual install locations). Inherits whichever model your Claude Code uses by default.",
     needsKey: false,
     testable: true,
     // Blank → inherit the CLI's configured model (your Opus/Sonnet default).
