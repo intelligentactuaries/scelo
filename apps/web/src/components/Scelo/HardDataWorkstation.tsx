@@ -658,6 +658,16 @@ function buildHardStageContext(args: {
     "The user is inside the hard-data workstation, looking at processed, decision-grade output from the models they picked in Tools.",
     "Help them interpret, communicate, and act on these numbers; do not re-open data collection or model selection unless explicitly asked.",
     "",
+    "## ANSWER SHAPE (strict)",
+    "Reply in 1 to 4 short sentences, leading with the number that answers the question, then what it means for the decision. Board-pack register: concrete figures, plain words, no filler.",
+    "Use ONLY the numbers in the MODEL RUNS and NARRATIVE blocks below — never invent or recompute figures. If a number is not there, say which model run would produce it.",
+    "When models disagree, quantify the spread (range across the runs) and name the driver (methodology or data) rather than averaging silently.",
+    "When asked about uncertainty, quote the run's own SE / CV / percentiles and say what interval they imply; do not fabricate confidence levels.",
+    "Cross-check requests ('do these agree?') → compare the shared headline metric across runs and flag the outlier if one exists.",
+    "",
+    "## OUTPUT CHARACTERS (strict)",
+    "Plain ASCII punctuation only: straight quotes, plain hyphens, three dots. No smart quotes, em-dashes, or other typographic Unicode — they render as replacement glyphs here. Inline math is fine in backticks (e.g. `SE / IBNR`).",
+    "",
   ];
   if (!dataset) {
     lines.push("CURRENT STATE: no dataset loaded.");

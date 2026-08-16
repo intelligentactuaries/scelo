@@ -419,6 +419,26 @@ describe("wired pipeline · upstream results change downstream runs", () => {
     expect(boot.headline.value).toBe(cl.headline.value);
   });
 
+  test("Mack SE is a sane fraction of the reserve, not a blow-up", () => {
+    // Regression: the pre-2026-08 SE formula mixed Mack's C-weighted σ_k
+    // (√currency units) into a dimensionless ratio and re-scaled by IBNR,
+    // producing SEs ~20× the reserve (a 2000% CV) that blew the forest
+    // plot's axis to ±60m. The real Mack (1993) mse must keep the CV in a
+    // plausible band on this well-behaved synthetic triangle.
+    const mack = runModel("mack", triangle);
+    expect(mack.status).toBe("done");
+    const se = mack.detail?.se as number;
+    const cv = mack.detail?.cv as number;
+    const ibnr = mack.headline.value;
+    expect(Number.isFinite(se)).toBe(true);
+    expect(se).toBeGreaterThan(0);
+    // SE must not exceed the reserve itself on clean synthetic data —
+    // the broken formula produced se ≈ 20 × ibnr.
+    expect(se).toBeLessThan(ibnr);
+    expect(cv).toBeGreaterThan(0);
+    expect(cv).toBeLessThan(1);
+  });
+
   test("severity crossed with wired frequency yields the pure premium", () => {
     const freq = runModel("glm-frequency", motor);
     const sev = runModel("glm-severity", motor, new Map([["glm-frequency", freq]]));

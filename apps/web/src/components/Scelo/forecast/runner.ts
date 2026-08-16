@@ -8,6 +8,8 @@ import {
   type WmtrSingleResult,
   type Outcome,
   OUTCOME_COLOR,
+  dominantDriver,
+  driverContributions,
   runSingleCommunity,
 } from "./wmtr";
 import { type DomainLabels, domainLabelsFor } from "./domainLabels";
@@ -23,14 +25,20 @@ export type ForecastResult = {
   driver: "M" | "T" | "R";
 };
 
-function dominantDriver(r: WmtrSingleResult): "M" | "T" | "R" {
-  const i = r.meanM.length - 1;
-  const m = r.meanM[i] ?? 0;
-  const t = r.meanT[i] ?? 0;
-  const rr = r.meanR[i] ?? 0;
-  if (m >= t && m >= rr) return "M";
-  if (t >= m && t >= rr) return "T";
-  return "R";
+/**
+ * Contribution of each component to W's MOVEMENT over the horizon.
+ *
+ * Delegates to the engine's `driverContributions` rather than carrying a
+ * second copy: this file's own version ranked log LEVELS, which measures
+ * where a component sits instead of how far it moved and so named the wrong
+ * driver on most runs. See `driverContributions` for why the distinction
+ * matters. Kept as a named export for the callers and tests that use it.
+ */
+export function componentContributions(
+  r: WmtrSingleResult,
+): Record<"M" | "T" | "R", number> {
+  const c = driverContributions(r);
+  return { M: c.M, T: c.T, R: c.R };
 }
 
 export function runForecast(

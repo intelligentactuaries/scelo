@@ -508,19 +508,35 @@ function rotateAlternates(base: PickResult, variant: number): PickResult {
 // ── LLM picker ──────────────────────────────────────────────────────────────
 
 function describeColumnsForPrompt(metas: ColumnMeta[]): string {
+  // The full evidence base, compactly: type, cardinality, range/centre,
+  // missingness, mixed-text and outlier counts. The picker's rationales are
+  // only as grounded as this block — a model choice that can't cite the
+  // missingness or the outlier tail wasn't really studying the data.
   return metas
     .map((m) => {
+      const miss =
+        m.missing > 0 && m.count > 0
+          ? `, missing=${((m.missing / m.count) * 100).toFixed(m.missing / m.count < 0.01 ? 2 : 0)}%`
+          : "";
       if (m.type === "number") {
         const range =
           m.min !== undefined && m.max !== undefined ? `, range=[${m.min}, ${m.max}]` : "";
-        return `  • ${m.name} (num, ${m.unique} unique${range})`;
+        const centre =
+          m.median !== undefined ? `, median=${m.median}` : m.mean !== undefined ? `, mean=${m.mean}` : "";
+        const out = m.outlierCount ? `, outliers=${m.outlierCount}` : "";
+        const mixed = m.mixedCount ? `, mixed_text=${m.mixedCount}` : "";
+        return `  • ${m.name} (num, ${m.unique} unique${range}${centre}${miss}${out}${mixed})`;
+      }
+      if (m.type === "date") {
+        const span = m.dateMin && m.dateMax ? `, span ${m.dateMin} → ${m.dateMax}` : "";
+        return `  • ${m.name} (date, ${m.unique} unique${span}${miss})`;
       }
       const top =
         m.topValues
           ?.slice(0, 4)
           .map((v) => v.value)
           .join(", ") ?? "";
-      return `  • ${m.name} (cat, ${m.unique} unique${top ? `, top: ${top}` : ""})`;
+      return `  • ${m.name} (cat, ${m.unique} unique${top ? `, top: ${top}` : ""}${miss})`;
     })
     .join("\n");
 }
@@ -555,10 +571,11 @@ CATALOG (id | family | description) — pick ids ONLY from this list:
 ${catalogLines}
 
 RULES
-- Pick 3 to 6 models that fit this data shape.
+- Pick 3 to 6 models that fit this data shape — every model the data genuinely supports, not just the headline one.
 - Prefer one dominant family (e.g. reserving) and optionally 1-2 models from related families.
 - Use ids EXACTLY as written above; do not invent new ids.
-- Each model gets a short, data-grounded rationale (≤ 18 words).
+- Each model gets a short, data-grounded rationale (≤ 18 words) that CITES the deciding evidence — a column name, the row count, missingness, or the outlier tail. Never a generic "useful for analysis".
+- "summary" is ONE plain sentence (≤ 28 words) naming the decisive evidence and the family it implies — it is shown to the user next to the picks, so make it earn its place.
 - Output JSON only — no prose, no code fences, no tool calls.
 
 FAMILY ROUTING (use as a strong prior — override only with explicit data evidence):
