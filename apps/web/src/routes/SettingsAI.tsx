@@ -582,7 +582,7 @@ function ProviderCard({
             )}
             <span className="text-xs text-fg-mute">
               {desc.id === "claude_code"
-                ? "No key needed — reuses your Claude Code login. Requires the `claude` CLI installed and signed in on this machine (desktop app only)."
+                ? "No key needed — reuses your Claude Code login. Requires the `claude` CLI installed and signed in on this machine (desktop app only). Replies never use tools or touch your files."
                 : "Default provider. Edit IA_AGENT_PROVIDER in the API env to remap globally."}
             </span>
           </>
