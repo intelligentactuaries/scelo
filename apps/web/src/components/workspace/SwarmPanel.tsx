@@ -89,10 +89,21 @@ export default function SwarmPanel() {
     <div className="flex h-full flex-col bg-bg-2 text-fg">
       <div className="flex shrink-0 items-baseline justify-between border-b border-border px-3 py-1">
         <span className="text-[10px] uppercase tracking-wider text-fg-mute">swarm</span>
+        {/* The dot carries the state's colour — green for a live swarm, red
+            for none, hollow while probing — so life reads at a glance; the
+            word stays muted like the rest of the header. */}
         <span className="font-mono text-[10px] text-fg-mute" title={SWARM_URL}>
-          {probe === "up" && "● live"}
+          {probe === "up" && (
+            <>
+              <span className="text-primary">●</span> live
+            </>
+          )}
           {probe === "probing" && "○ probing…"}
-          {probe === "down" && "● offline"}
+          {probe === "down" && (
+            <>
+              <span className="text-error">●</span> offline
+            </>
+          )}
         </span>
       </div>
       {probe === "up" ? (
