@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- Both schemes: styles.css sets color-scheme per data-theme, so the
+         browser's own chrome (dropdown lists, scrollbars) follows the app
+         theme. Pinning `light` here is what made dropdowns white in dark mode. -->
+    <meta name="color-scheme" content="light dark" />
+    <!-- Paint the resolved theme before the stylesheet arrives (Vite injects
+         it from main.tsx, after first paint in dev): same key + resolution
+         as lib/theme.ts, so a dark user never sees a light flash and the
+         `light dark` meta above never gets to pick the wrong one. -->
+    <script>
+      (function () {
+        try {
+          var c = localStorage.getItem('ia.theme');
+          var dark =
+            c === 'dark' ||
+            (c !== 'light' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+          document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
+        } catch (e) {}
+      })();
+    </script>
+    <title>SWARM COUNCIL</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <!-- SN Pro: the only project typeface. Falls back to system stack
+         until loaded. KaTeX retains its bundled math fonts for formula
+         typesetting. -->
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=SN+Pro:wght@300;400;500;600;700&display=swap"
+    />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/client/main.tsx"></script>
+  </body>
+</html>

@@ -1,0 +1,20 @@
+node_modules/
+dist/
+*.log
+.env
+.env.*
+!.env.example
+
+# runtime data — recreated per machine
+data/*.db
+data/*.db-wal
+data/*.db-shm
+data/*.json
+
+# TS build cache
+tsconfig.tsbuildinfo
+
+# editor / OS
+.DS_Store
+.vscode/
+.idea/

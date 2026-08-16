@@ -1,0 +1,646 @@
+// Population simulation engine — per-agent LLM call returning a strict
+// JSON outcome envelope. Scenarios can be medical (new virus, drug
+// introduction, treatment regimen) or social (policy change, market
+// shock); the per-agent profile + reference data shapes the reaction.
+
+import { router, type Message } from '../llm/router';
+import type {
+  ComorbidityCode,
+  SimulationAgentResult,
+  SimulationOutcome,
+  SocietyAgent,
+} from '../../shared/types';
+
+const TIER = 'society' as const;
+/**
+ * The envelope alone is ~180 tokens once a model pretty-prints it the way the
+ * protocol below shows it, and the rationale is now two or three spoken
+ * sentences rather than a 140-character fragment. At the old 280 the reply
+ * was routinely cut off mid-object, which arrives here as unparseable JSON —
+ * the "parse failed: invalid JSON" cells were mostly truncation, not a model
+ * that can't write JSON.
+ */
+const MAX_TOKENS = 700;
+/** Rationale cap, applied after parsing. Kept in step with the prompt's own
+ *  stated limit — when these two drift the model writes to one number and
+ *  gets cut at the other, mid-word. */
+const RATIONALE_MAX_CHARS = 400;
+/** Employment states that can actually lose a paid workday. Mirrors the zero
+ *  wage `macroMap.dailyWageFor` assigns to everyone else. */
+const WORKING_EMPLOYMENT = new Set<SocietyAgent['employment']>([
+  'employed',
+  'self-employed',
+  'informal',
+]);
+
+export interface SimulationOpts {
+  scenario: string;
+  /** Pre-formatted reference data block (PubChem / OpenFDA / ChEMBL etc).
+   *  Empty string = no reference data. */
+  referenceBlock: string;
+  /** Concurrency cap to keep local Ollama from melting. Defaults to 12. */
+  concurrency?: number;
+  fresh?: boolean;
+  /** The run's population seed. Folded into the LLM cache key so each draw
+   *  is independent, and so re-running a pinned seed reproduces it exactly. */
+  seed?: number;
+  onProgress?: (e: SimulationProgress) => void;
+}
+
+export type SimulationProgress =
+  | { type: 'sim_start'; total: number }
+  | { type: 'sim_progress'; done: number; total: number }
+  | { type: 'sim_done'; total: number; elapsedMs: number };
+
+
+/**
+ * Comorbidities that materially raise the risk of a severe respiratory
+ * course. Drawn from the burden-of-disease set the SA sampler emits.
+ */
+const HIGH_RISK_COMORBIDITIES = new Set<ComorbidityCode>([
+  'copd',
+  'ckd',
+  'cancer-active',
+  'immunosuppressed',
+  'hiv-not-on-art',
+  'tb-active',
+  'diabetes-t2',
+  'cvd',
+]);
+
+/**
+ * A clinical risk band for the agent, stated to it explicitly.
+ *
+ * Personas were asked to self-assess `severityIfInfected` with their
+ * comorbidities merely listed in the profile, and a layperson roleplay
+ * answers that optimistically every time: on a scenario that spelled out
+ * "infection-fatality concentrated in the over-65s and the immunocompromised",
+ * all 24 agents came back asymptomatic or mild — including a 58-year-old with
+ * hypertension and type-2 diabetes. Nobody moderate, nobody severe, nobody
+ * hospitalised, nobody dead, on any scenario.
+ *
+ * Naming the band, and the factors behind it, gives the model something it
+ * cannot read past. It still decides — the band is an anchor, not a verdict.
+ */
+export function clinicalRiskFor(agent: SocietyAgent): { band: string; because: string } {
+  const h = agent.health;
+  const factors: string[] = [];
+  if (agent.age >= 75) factors.push('75+');
+  else if (agent.age >= 65) factors.push('65-74');
+  for (const c of h?.comorbidities ?? []) {
+    if (HIGH_RISK_COMORBIDITIES.has(c)) factors.push(c);
+  }
+  const soft = (h?.comorbidities ?? []).filter(
+    (c) => !HIGH_RISK_COMORBIDITIES.has(c),
+  );
+  const score = factors.length * 2 + soft.length + (agent.age >= 65 ? 1 : 0);
+  const band =
+    score >= 5 ? 'very high' : score >= 3 ? 'high' : score >= 1 ? 'moderate' : 'low';
+  const because = [...factors, ...soft].join(', ') || 'no recorded risk factors';
+  return { band, because };
+}
+
+export type Severity = SimulationOutcome['health']['severityIfInfected'];
+
+/** Ascending, so a floor is a simple index comparison. */
+const SEVERITY_ORDER: Severity[] = [
+  'asymptomatic',
+  'mild',
+  'moderate',
+  'severe',
+  'critical',
+];
+
+/**
+ * The least severe course a clinical band admits.
+ *
+ * Personas under-call their own prognosis — asked to self-assess, a
+ * 62-year-old who is diabetic, HIV-positive and immunosuppressed answered
+ * "mild" even with the band stated in its prompt. Since admissions, deaths
+ * and the severe count are all coupled to severity, that optimism zeroed the
+ * entire health block on every scenario. Anchoring the band in the prompt cut
+ * asymptomatic answers from 14/24 to 2/24 but never produced a severe case.
+ *
+ * So the floor is enforced rather than requested. It only ever raises: an
+ * agent who reports a WORSE course than its band keeps it, because the
+ * persona knows things the band does not (it read the scenario).
+ *
+ * It is applied BEFORE the severity couplings, which is what makes it
+ * meaningful rather than cosmetic — `hospitalised` and `mortalityProbability`
+ * are gated on severity, so raising the floor releases the model's OWN
+ * reported numbers for high-risk agents instead of discarding them. Nothing
+ * here invents a mortality rate.
+ */
+export function severityFloorFor(band: string): Severity {
+  switch (band) {
+    case 'very high':
+      return 'severe';
+    case 'high':
+      return 'moderate';
+    case 'moderate':
+      return 'mild';
+    default:
+      return 'asymptomatic';
+  }
+}
+
+/** The worse of two severities. */
+export function atLeastSeverity(reported: Severity, floor: Severity): Severity {
+  return SEVERITY_ORDER.indexOf(reported) >= SEVERITY_ORDER.indexOf(floor) ? reported : floor;
+}
+
+function buildAgentSystemPrompt(agent: SocietyAgent, scenario: string, ref: string): string {
+  const h = agent.health;
+  // Minors don't answer for themselves. Under 12 (below SA's medical-consent
+  // age, Children's Act s129) the caregiver speaks and decides; 12-17 speak
+  // in their own voice but with a guardian involved. Under 15 nobody works
+  // (BCEA s43) — stated here and enforced again after parsing.
+  const youngChild = agent.age < 12;
+  const minor = agent.age < 18;
+  const profile = [
+    `id=${agent.id}`,
+    `age=${agent.age}`,
+    `sex=${agent.sex ?? h?.sex ?? '?'}`,
+    `income=${agent.incomeBand} (household)`,
+    `education=${agent.employment === 'child' ? 'none (pre-school)' : agent.education}`,
+    `employment=${agent.employment === 'child' ? 'child (below school age)' : agent.employment}`,
+    `region=${agent.region}`,
+    `culture=${agent.culture}`,
+    `risk_tol=${agent.riskTolerance.toFixed(2)}`,
+    `fin_lit=${agent.financialLiteracy.toFixed(2)}`,
+  ];
+  if (h) {
+    profile.push(
+      `comorbidities=[${h.comorbidities.join(', ') || 'none'}]`,
+      `baseline_mortality=${h.baselineMortality.toFixed(4)}`,
+      `vaccination=${h.vaccinationHistory}`,
+      `trust_health_system=${h.trustInHealthSystem.toFixed(2)}`,
+      `health_literacy=${h.healthLiteracy.toFixed(2)}`,
+      `insurance_cov=${h.insuranceCoverage.toFixed(2)}`,
+    );
+    const risk = clinicalRiskFor(agent);
+    profile.push(`clinical_risk_band=${risk.band} (${risk.because})`);
+  }
+  // Who is speaking, and how the rationale must read. The two used to
+  // disagree: the caregiver framing said "speak as the parent" while the
+  // output protocol asked for a "first-person reason", so the model split the
+  // difference and produced impersonal fragments — which is how a 2-year-old
+  // ended up with a stated opinion. Voice is now decided once, here, and the
+  // protocol quotes this same description instead of hard-coding a person.
+  const child = youngChild
+    ? agent.sex === 'F'
+      ? 'daughter'
+      : agent.sex === 'M'
+        ? 'son'
+        : 'child'
+    : null;
+  const them = agent.sex === 'F' ? 'her' : agent.sex === 'M' ? 'him' : 'them';
+  // Where the child spends the day, so the caregiver's example doesn't put a
+  // 10-year-old back in crèche.
+  const dayPlace = agent.age < 6 ? 'crèche' : 'school';
+  const voice = youngChild
+    ? `the caregiver's own voice, speaking ABOUT the ${child} in the third person ("My ${child} is only ${agent.age}, so…", "I'd keep ${them} home from ${dayPlace}…"). NEVER write as the ${child}: a ${agent.age}-year-old does not explain their own medical decisions`
+    : minor
+      ? `your own voice as a ${agent.age}-year-old, mentioning a parent or guardian where they'd be the one deciding`
+      : `your own voice, first person`;
+  const framing = youngChild
+    ? [
+        `You are the parent/guardian of ONE young child, reacting to a real-world`,
+        `scenario. The profile below describes THE CHILD, not you. Answer entirely`,
+        `on the child's behalf: treatment, isolation and spending decisions are`,
+        `yours to make, and the costs come out of your household budget.`,
+        `The health fields still describe the CHILD's own risk.`,
+      ]
+    : minor
+      ? [
+          `You are simulating ONE person's reaction to a real-world scenario.`,
+          `You are a minor (under 18) still in school. React in your own voice,`,
+          `but any medical treatment involves your parent/guardian's say-so and`,
+          `money usually isn't yours to spend.`,
+        ]
+      : [
+          `You are simulating ONE person's reaction to a real-world scenario.`,
+          `You are NOT an expert; you are an ordinary individual with the profile below.`,
+          `React as that person would — your education, income, comorbidities, and`,
+          `trust in institutions all shape your decisions.`,
+        ];
+  return [
+    ...framing,
+    ``,
+    `## ${youngChild ? "The child's profile" : 'Your profile'}`,
+    profile.join('\n'),
+    ``,
+    `## Scenario`,
+    scenario.trim(),
+    ``,
+    ref || '',
+    ``,
+    `## Output protocol`,
+    `Respond with JSON only (no prose, no fences), in this exact shape:`,
+    `{`,
+    `  "behaviour": {`,
+    `    "treatmentUptake": "accepted" | "declined" | "unsure",`,
+    `    "isolationDays": <0-30>,`,
+    `    "spendingShift": "reduced" | "unchanged" | "increased",`,
+    `    "rationale": "2-3 sentences, <=${RATIONALE_MAX_CHARS} chars"`,
+    `  },`,
+    `  "health": {`,
+    `    "infectionProbability": <0.0-1.0>,`,
+    `    "severityIfInfected": "asymptomatic" | "mild" | "moderate" | "severe" | "critical",`,
+    `    "mortalityProbability": <0.0-1.0>,`,
+    `    "hospitalised": true | false`,
+    `  },`,
+    `  "economic": {`,
+    `    "workdaysLost": <0-365>,`,
+    `    "outOfPocketCostZar": <0-500000>,`,
+    `    "insurerClaimZar": <0-2000000>`,
+    `  }`,
+    `}`,
+    ``,
+    `### The rationale field`,
+    `Write it in ${voice}.`,
+    `Speak the way a real person answers a question from a neighbour: 2-3 plain`,
+    `sentences, contractions welcome, naming the ONE thing that actually decided`,
+    `it for you. Say what you are weighing — the cost against this month's money,`,
+    `the clinic queue, what happened last time, who else is in the house, whether`,
+    `you believe what you've been told.`,
+    `Do NOT write a telegram ("Free vaccine, trust health system") — that is a`,
+    `label, not a reason, and it is useless to whoever reads this dataset.`,
+    `Do NOT restate the profile fields back as a list, and do NOT quote their`,
+    `labels at yourself — a person says "money's tight this month", never "my`,
+    `income band is low" or "my trust in the health system is 0.3".`,
+    `Do NOT open by announcing the decision ("Accepted the vaccine because…") —`,
+    `the decision is already in the fields above. Start with the reason.`,
+    `Do NOT mention the profile, this exercise, probabilities, or that you are`,
+    `simulating anyone.`,
+    ...(WORKING_EMPLOYMENT.has(agent.employment)
+      ? []
+      : [
+          `You are ${agent.employment === 'child' ? 'a pre-school child' : agent.employment},`,
+          `so do not talk about losing pay or missing work — that is not your`,
+          `situation, and workdaysLost must be 0.`,
+        ]),
+    `Ground it in this person's actual circumstances: a ${agent.incomeBand}-income`,
+    `${agent.region} household${
+      h && h.comorbidities.length ? ` with ${h.comorbidities.join(' and ')}` : ''
+    } does not reason like anyone else's.`,
+    ``,
+    `Cite only data from the Reference block above; do not invent compounds,`,
+    `mechanisms, or adverse events. If the scenario doesn't apply (e.g. you're`,
+    `outside the affected age band), reflect that with low infectionProbability`,
+    `and 0 isolationDays.`,
+    ``,
+    `### severityIfInfected — a clinical judgement, not a hope`,
+    `Answer from the clinical_risk_band above and the lethality the scenario`,
+    `actually describes. Do NOT default to a mild course because it is the`,
+    `comfortable answer: for a serious illness, the plausible range is`,
+    `  low risk        → asymptomatic or mild`,
+    `  moderate risk   → mild or moderate`,
+    `  high risk       → moderate or severe`,
+    `  very high risk  → severe or critical`,
+    `If the scenario names a group as worst affected and ${youngChild ? 'the child' : 'you'} are in it,`,
+    `say so in this field. A scenario that describes hospitalisations and`,
+    `deaths cannot be one in which nobody is worse than mild.`,
+    `Immunosuppression, active cancer, COPD, untreated HIV or active TB put a`,
+    `person at moderate AT MINIMUM for a serious respiratory illness, and at`,
+    `severe once combined with age 60+ or a second condition. Answering "mild"`,
+    `for such a profile is a clinical error, not modesty.`,
+    ``,
+    `Costs must reconcile with that outcome. outOfPocketCostZar and`,
+    `insurerClaimZar cover what is actually spent: money paid for prevention or`,
+    `treatment you chose, plus care for the course above. An asymptomatic case`,
+    `that declined treatment and bought nothing costs nothing — do not enter a`,
+    `claim for care that never happened.`,
+    ``,
+    `severityIfInfected, mortalityProbability, and hospitalised are all`,
+    `CONDITIONAL on ${youngChild ? 'the child' : 'you'} actually being affected`,
+    `(infectionProbability is the chance of that). "hospitalised" must be false`,
+    `unless severityIfInfected is "moderate", "severe", or "critical".`,
+    ...(agent.age < 15
+      ? [
+          `${youngChild ? 'The child' : 'You'} cannot legally work (SA minimum`,
+          `working age is 15): workdaysLost MUST be 0. School days missed go in`,
+          `isolationDays, and outOfPocketCostZar is household money spent.`,
+        ]
+      : []),
+  ].join('\n');
+}
+
+function clampNum(n: unknown, lo: number, hi: number, fallback: number): number {
+  const v = typeof n === 'number' ? n : typeof n === 'string' ? Number(n) : NaN;
+  if (!Number.isFinite(v)) return fallback;
+  return Math.max(lo, Math.min(hi, v));
+}
+
+/**
+ * Read the model's reply as JSON, tolerating the three ways a small local
+ * model routinely fails to emit it cleanly:
+ *
+ *   1. fences and a chatty preamble around the object,
+ *   2. a trailing comma before a closing brace,
+ *   3. the reply being cut off at the token ceiling, so the closing braces
+ *      never arrive at all.
+ *
+ * (3) was the big one: an object truncated mid-value has a `}` somewhere
+ * inside it, so slicing to the LAST `}` produced a fragment that could never
+ * parse. Balancing the delimiters recovers every field the model did finish,
+ * which is nearly all of them — far better than discarding the whole agent.
+ */
+export function repairJson(text: string): string | null {
+  const cleaned = text
+    .replace(/^[^{]*?```(?:json)?\s*/i, '')
+    .replace(/```[\s\S]*$/i, '')
+    .trim();
+  const first = cleaned.indexOf('{');
+  if (first === -1) return null;
+  let body = cleaned.slice(first);
+
+  // Walk the text tracking string state so braces inside a rationale ("I'd
+  // say {maybe}") never count as structure.
+  let inString = false;
+  let escaped = false;
+  let end = -1;
+  const stack: string[] = [];
+  for (let i = 0; i < body.length; i++) {
+    const c = body[i];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (c === '\\') {
+      escaped = true;
+      continue;
+    }
+    if (c === '"') {
+      inString = !inString;
+      continue;
+    }
+    if (inString) continue;
+    if (c === '{' || c === '[') stack.push(c === '{' ? '}' : ']');
+    else if (c === '}' || c === ']') {
+      stack.pop();
+      if (stack.length === 0) {
+        end = i;
+        break;
+      }
+    }
+  }
+
+  if (end !== -1) {
+    body = body.slice(0, end + 1);
+  } else {
+    // Truncated. Close whatever is still open, innermost first. An unfinished
+    // string has to be closed before its container.
+    if (inString) body += '"';
+    // Peel off whatever the cut left dangling before the braces land: a
+    // trailing comma, a key with no value, or a key severed before its own
+    // colon. Looped because removing one can expose the next. The delimiter
+    // capture is what keeps a trailing VALUE — preceded by `:`, not by `{`
+    // or `,` — from being mistaken for a dangling key and discarded.
+    for (;;) {
+      const before = body;
+      body = body
+        .replace(/[,\s]+$/, '')
+        .replace(/([{,])\s*"(?:[^"\\]|\\.)*"\s*:?\s*$/, (_m, delim: string) =>
+          delim === '{' ? '{' : '',
+        );
+      if (body === before) break;
+    }
+    for (let i = stack.length - 1; i >= 0; i--) body += stack[i];
+  }
+  // Trailing commas are legal in JS, not in JSON.
+  return body.replace(/,(\s*[}\]])/g, '$1');
+}
+
+export function parseOutcome(
+  text: string,
+  opts: { severityFloor?: Severity } = {},
+): { outcome: SimulationOutcome; failure?: string } {
+  const repaired = repairJson(text);
+  if (repaired === null) return { outcome: neutralOutcome(), failure: 'no JSON in reply' };
+  try {
+    const j = JSON.parse(repaired) as Record<string, unknown>;
+    const b = (j.behaviour ?? {}) as Record<string, unknown>;
+    const h = (j.health ?? {}) as Record<string, unknown>;
+    const e = (j.economic ?? {}) as Record<string, unknown>;
+    const rationale = String(b.rationale ?? '')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, RATIONALE_MAX_CHARS);
+    // A reply whose envelope parsed but carries no reason is not a usable
+    // agent — every downstream reader treats the rationale as the evidence.
+    if (!rationale) {
+      return { outcome: neutralOutcome(), failure: 'reply carried no rationale' };
+    }
+    const severityIfInfected = atLeastSeverity(
+      normaliseSeverity(h.severityIfInfected),
+      opts.severityFloor ?? 'asymptomatic',
+    );
+    // Couple the health fields to the severity the model just reported.
+    // Untethered, they contradicted the macro panel outright — 136,000
+    // expected deaths beside a severe-or-critical count of zero, because
+    // mortality was read straight off a reply that had also said
+    // "asymptomatic".
+    //
+    // Admission needs moderate+ (the prompt's own rule). Death needs severe+:
+    // fatalities are modelled as passing through severe or critical illness,
+    // which keeps deaths ≤ severe/critical ≤ admissions instead of letting
+    // the three tiles disagree about the same cohort. Deaths from an
+    // unhospitalised moderate case are real but rare, and excluding them is
+    // the standard simplification — noted in SA_MACRO_PROVENANCE.
+    const admissible =
+      severityIfInfected === 'moderate' ||
+      severityIfInfected === 'severe' ||
+      severityIfInfected === 'critical';
+    const fatal = severityIfInfected === 'severe' || severityIfInfected === 'critical';
+    return {
+      outcome: {
+        behaviour: {
+          treatmentUptake: normaliseUptake(b.treatmentUptake),
+          isolationDays: clampNum(b.isolationDays, 0, 30, 0),
+          spendingShift: normaliseSpending(b.spendingShift),
+          rationale,
+        },
+        health: {
+          infectionProbability: clampNum(h.infectionProbability, 0, 1, 0),
+          severityIfInfected,
+          mortalityProbability: fatal ? clampNum(h.mortalityProbability, 0, 1, 0) : 0,
+          hospitalised: Boolean(h.hospitalised) && admissible,
+        },
+        economic: {
+          workdaysLost: clampNum(e.workdaysLost, 0, 365, 0),
+          outOfPocketCostZar: clampNum(e.outOfPocketCostZar, 0, 500000, 0),
+          insurerClaimZar: clampNum(e.insurerClaimZar, 0, 2000000, 0),
+        },
+      },
+    };
+  } catch (err) {
+    return {
+      outcome: neutralOutcome(),
+      failure: `invalid JSON (${err instanceof Error ? err.message.slice(0, 80) : 'unknown'})`,
+    };
+  }
+}
+
+/**
+ * Placeholder for an agent that produced nothing usable. Deliberately carries
+ * an EMPTY rationale: the reason a call failed is plumbing, and writing it
+ * here put "parse failed: invalid JSON" into the dataset's `sim_rationale`
+ * column as though the person had said it. The failure now travels beside the
+ * outcome on `SimulationAgentResult.failure`, where the aggregates can see it
+ * and drop the row.
+ */
+function neutralOutcome(): SimulationOutcome {
+  return {
+    behaviour: {
+      treatmentUptake: 'unsure',
+      isolationDays: 0,
+      spendingShift: 'unchanged',
+      rationale: '',
+    },
+    health: {
+      infectionProbability: 0,
+      severityIfInfected: 'asymptomatic',
+      mortalityProbability: 0,
+      hospitalised: false,
+    },
+    economic: { workdaysLost: 0, outOfPocketCostZar: 0, insurerClaimZar: 0 },
+  };
+}
+
+function normaliseUptake(v: unknown): 'accepted' | 'declined' | 'unsure' {
+  const s = String(v ?? '').toLowerCase();
+  if (s === 'accepted' || s === 'declined' || s === 'unsure') return s;
+  return 'unsure';
+}
+function normaliseSpending(v: unknown): 'reduced' | 'unchanged' | 'increased' {
+  const s = String(v ?? '').toLowerCase();
+  if (s === 'reduced' || s === 'unchanged' || s === 'increased') return s;
+  return 'unchanged';
+}
+function normaliseSeverity(
+  v: unknown,
+): 'asymptomatic' | 'mild' | 'moderate' | 'severe' | 'critical' {
+  const s = String(v ?? '').toLowerCase();
+  if (['asymptomatic', 'mild', 'moderate', 'severe', 'critical'].includes(s)) {
+    return s as 'asymptomatic' | 'mild' | 'moderate' | 'severe' | 'critical';
+  }
+  return 'asymptomatic';
+}
+
+async function runOne(
+  agent: SocietyAgent,
+  scenario: string,
+  ref: string,
+  fresh: boolean,
+  seed: number | undefined,
+): Promise<SimulationAgentResult> {
+  const system = buildAgentSystemPrompt(agent, scenario, ref);
+  const ask = async (nudge: string, salt: number | undefined): Promise<string> =>
+    router.route(
+      [
+        { role: 'system', content: system },
+        { role: 'user', content: nudge },
+      ] satisfies Message[],
+      TIER,
+      { fresh, maxTokens: MAX_TOKENS, temperature: 0.5, cacheSalt: salt },
+    );
+
+  try {
+    let raw = await ask('Respond with the JSON envelope only.', seed);
+    const severityFloor = severityFloorFor(clinicalRiskFor(agent).band);
+    let parsed = parseOutcome(raw, { severityFloor });
+
+    // One retry on a bad envelope. A local model that rambles once will
+    // usually comply when told exactly what went wrong, and losing a whole
+    // agent — which then has to be excluded from every aggregate — is far
+    // more expensive than one extra call. The salt is changed so the retry
+    // isn't served the same cached reply that just failed.
+    if (parsed.failure) {
+      const retryRaw = await ask(
+        'Your previous reply could not be read as JSON. Output ONLY the JSON object described above — no prose, no markdown fences, no commentary — and make sure every brace is closed.',
+        (seed ?? 0) + 1_000_003,
+      );
+      const retry = parseOutcome(retryRaw, { severityFloor });
+      if (!retry.failure) {
+        raw = retryRaw;
+        parsed = retry;
+      }
+    }
+
+    if (parsed.failure) {
+      return {
+        agent,
+        outcome: parsed.outcome,
+        raw,
+        failure: { kind: 'parse_failed', message: parsed.failure },
+      };
+    }
+
+    // Hard rules regardless of what the model wrote. Under-15s cannot be
+    // employed (SA BCEA s43), and nobody outside work loses workdays — the
+    // macro layer already values their day at R0, so a retired agent
+    // reporting "10 workdays lost" moved the national workdays headline
+    // without moving GDP drag, which is the same number disagreeing with
+    // itself. School days missed belong in isolationDays.
+    if (agent.age < 15 || !WORKING_EMPLOYMENT.has(agent.employment)) {
+      parsed.outcome.economic.workdaysLost = 0;
+    }
+    return { agent, outcome: parsed.outcome, raw };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return {
+      agent,
+      outcome: neutralOutcome(),
+      raw: '',
+      failure: { kind: 'router_error', message: msg },
+    };
+  }
+}
+
+/**
+ * Run the simulation across every agent with bounded concurrency.
+ */
+export async function runSimulation(
+  agents: SocietyAgent[],
+  opts: SimulationOpts,
+): Promise<{ results: SimulationAgentResult[]; elapsedMs: number }> {
+  const start = performance.now();
+  const concurrency = opts.concurrency ?? 12;
+  const total = agents.length;
+  opts.onProgress?.({ type: 'sim_start', total });
+
+  // One event per agent until a run is large enough to need thinning.
+  const PROGRESS_STEP = Math.max(1, Math.floor(total / 200));
+  const results: SimulationAgentResult[] = new Array(total);
+  let done = 0;
+  let cursor = 0;
+
+  async function worker(): Promise<void> {
+    while (cursor < agents.length) {
+      const i = cursor++;
+      const agent = agents[i];
+      results[i] = await runOne(agent, opts.scenario, opts.referenceBlock, !!opts.fresh, opts.seed);
+      done++;
+      // Report every agent on a normal run, and thin only when a run is big
+      // enough for that to matter — at most ~200 events either way.
+      //
+      // The flat "every 10th" this replaces was invisible on the server and
+      // very visible on the client: the progress crowd sat frozen for seconds
+      // and then jumped by ten, which reads as a stall followed by a lurch
+      // rather than as work being done. A default 120-agent run only ever
+      // produced twelve updates.
+      if (done % PROGRESS_STEP === 0 || done === total) {
+        opts.onProgress?.({ type: 'sim_progress', done, total });
+      }
+    }
+  }
+
+  await Promise.all(
+    Array.from({ length: Math.min(concurrency, total) }, () => worker()),
+  );
+
+  const elapsedMs = Math.round(performance.now() - start);
+  opts.onProgress?.({ type: 'sim_done', total, elapsedMs });
+  return { results, elapsedMs };
+}
