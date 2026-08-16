@@ -1,7 +1,8 @@
 {
-  "name": "swarm-council",
+  "name": "@ia/swarm",
   "version": "0.1.0",
   "private": true,
+  "license": "LicenseRef-Scelo-IDE-1.1",
   "type": "module",
   "scripts": {
     "dev:client": "vite",

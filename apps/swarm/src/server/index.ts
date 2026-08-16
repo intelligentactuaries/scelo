@@ -41,7 +41,9 @@ import { runSimulation, type SimulationProgress } from './agents/simulation';
 import { aggregateMacro, SA_MACRO_PROVENANCE } from './macroMap';
 import { fetchReferenceBundle, formatReferenceBlock, type ReferenceBundle } from './refdata';
 
-const PORT = Number(process.env.PORT ?? 3000);
+// 3010 is what the Scelo IDE probes (and what vite.config.ts proxies /api to),
+// so a bare `bun run dev` — on any OS / shell, no env var — lands there.
+const PORT = Number(process.env.PORT ?? 3010);
 
 interface RouteCtx {
   req: Request;
