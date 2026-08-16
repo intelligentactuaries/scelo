@@ -6,7 +6,7 @@ this file covers the *technical* one. Read both.
 
 ## What you're looking at
 
-Two apps, one repo:
+Three apps, one repo:
 
 ```
 apps/web/         the React + Vite SPA. Renders the IDE workspace, chat,
@@ -20,6 +20,12 @@ apps/scelo-ide/   the Electron wrapper. Bundles Python + R runtimes, the
                   renderer dist. Owns the OS-touching surface: file I/O,
                   process exec, terminal, git, dataset downloads, OS
                   keychain, auto-update.
+
+apps/swarm/       the swarm. A Bun server (council + society simulator,
+                  bun:sqlite, LLM router) + its own Vite UI. Scelo's
+                  Hard Data workstation calls its API on :3010 and the
+                  swarm panel iframes its UI on :5190. Not bundled into
+                  the installer; started with `bun run dev:swarm`.
 ```
 
 The desktop IDE = `apps/web` running inside `apps/scelo-ide`. There is no
@@ -129,10 +135,15 @@ cd apps/web && bun run dev
 # Desktop IDE dev (Electron wrapping the dev server)
 cd apps/scelo-ide && bun run dev
 
+# The swarm (api :3010 + ui :5190) — same command on every OS
+bun run dev:swarm
+
 # Tests
 cd apps/web && bun test                # ~86 tests, ~1 s
 cd apps/web && bunx tsc --noEmit       # type-check both apps
 cd apps/scelo-ide && bunx tsc --noEmit
+cd apps/swarm && bun test              # 83 tests
+cd apps/swarm && bun run typecheck
 
 # Production build (renderer dist + AppImage / dmg / nsis)
 cd apps/scelo-ide && bun run dist:linux # / dist:mac / dist:win

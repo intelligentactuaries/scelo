@@ -53,9 +53,10 @@ On a result card you can send the forecast to the multi-agent swarm:
 4. Click **Open in swarm** to jump into the full
    [swarm view](../swarm/index.md) for that run.
 
-!!! warning "The swarm is a separate server"
-    Council and simulation features need the swarm running on port 3010. If you
-    see "Swarm server unreachable", [start it first](../swarm/running.md). A
+!!! warning "The swarm is its own server"
+    Council and simulation features need the swarm running on port 3010 (start
+    it with `bun run dev:swarm` from a Scelo checkout). If you see "Swarm server
+    unreachable", [start it first](../swarm/running.md). A
     large 192-agent council on a local model can take many minutes — a smaller
     subset (12–48) completes much faster.
 

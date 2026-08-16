@@ -27,10 +27,12 @@ You reach it two ways:
 | **Simulation** | Population simulation of a scenario → macro impact |
 | **IAAI Canon** | The reference works injected into every agent's prompt |
 
-## Important: it runs as a separate server
+## Important: it runs as its own server
 
-The swarm is a self-contained app with its own server. Scelo embeds it, but you
-must **start it first**. See [Running the swarm](running.md).
+The swarm is a self-contained app (`apps/swarm` in the Scelo repo) with its own
+server. Scelo embeds it, but it isn't inside the installer, so you must
+**start it first** — `bun run dev:swarm` from a Scelo checkout. See
+[Running the swarm](running.md).
 
 !!! tip
     The swarm is a decision-*support* cockpit. The agents report; the actuary

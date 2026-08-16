@@ -1,20 +1,17 @@
-// Tests the platform fork of the swarm start command — the copy the
-// offline fallback (and the simulate modal's error hint) shows must be
-// pasteable into the user's actual shell.
+// Tests the swarm start command — the copy the offline fallback (and
+// the simulate modal's error hint) shows must be pasteable into the
+// user's actual shell, on every OS.
 import { describe, expect, test } from "bun:test";
-import { SWARM_DOCS_URL, swarmStartCommand } from "./SwarmPanel";
+import { SWARM_DOCS_URL, SWARM_START_COMMAND, swarmStartCommand } from "./SwarmPanel";
 
 describe("swarmStartCommand", () => {
-  test("PowerShell variant on Windows (no VAR=x prefix syntax there)", () => {
-    expect(swarmStartCommand(true)).toBe("$env:PORT=3010; bun run dev");
+  test("is the repo-root script, identical on every OS / shell", () => {
+    expect(swarmStartCommand()).toBe("bun run dev:swarm");
+    expect(swarmStartCommand()).toBe(SWARM_START_COMMAND);
   });
 
-  test("POSIX variant elsewhere", () => {
-    expect(swarmStartCommand(false)).toBe("PORT=3010 bun run dev");
-  });
-
-  test("auto-detection always yields one of the two known variants", () => {
-    expect(["$env:PORT=3010; bun run dev", "PORT=3010 bun run dev"]).toContain(swarmStartCommand());
+  test("carries no shell-specific env-var prefix (PORT defaults to 3010 in apps/swarm)", () => {
+    expect(swarmStartCommand()).not.toMatch(/PORT=|\$env:/);
   });
 });
 
