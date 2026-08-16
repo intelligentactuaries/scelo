@@ -74,7 +74,18 @@ linux:
   maintainer: Intelligent Actuaries <hello@intelligentactuaries.com>
   category: Development
   synopsis: Actuarial workbench with bundled Python + R
-  description: |
+  # FOLDED (`>-`), NOT literal (`|`). This one string becomes both the deb
+  # control's extended description AND the .desktop `Comment`, and a
+  # desktop-entry value may not span lines. Under `|` the four lines below
+  # were emitted verbatim, so 0.1.0-0.1.2 all shipped a .desktop whose last
+  # three lines are bare text — `desktop-file-validate` rejects it with
+  # "not a comment, a group or an entry". `>-` folds it to a single line.
+  #
+  # Setting `Comment` in the `desktop:` map below does NOT avoid this:
+  # app-builder-lib 25.1.8 LinuxTargetHelper.js assigns
+  # `desktopMeta.Comment = getDescription(...)` *after* spreading the user
+  # map, so this description always wins. Keep it single-line.
+  description: >-
     Scelo IDE is a downloadable desktop workbench for actuaries: a
     soft-data → tools → hard-data pipeline with a bundled Python and R
     runtime, the lifelib + chainladder + climada stack, and AI co-pilots
@@ -84,14 +95,11 @@ linux:
   # The nested `entry:` form is electron-builder 26+. On the 25.x we pin,
   # `desktop` is a plain name→value map, so a nested block is written out
   # verbatim as one line — the shipped 0.1.0 .desktop literally contains
-  # `entry=[object Object]`, and Name/Comment/Keywords below never applied.
-  # Comment then fell back to `description` above, which is four lines long;
-  # desktop-entry values must be single-line, so the file was malformed too.
+  # `entry=[object Object]`, and Name/Keywords below never applied.
   #
   # If electron-builder is ever bumped to 26, this has to become nested again.
   desktop:
     Name: Scelo IDE
-    Comment: Actuarial workbench with bundled Python and R
     Keywords: actuarial;data-science;python;r;reserving;mortality;capital;
     StartupWMClass: Scelo IDE
   target:
