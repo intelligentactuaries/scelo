@@ -30,16 +30,36 @@ never reads from soft. The tools layer is the only path between them.
 
 ## Download
 
-Grab an installer from the
-[**Releases tab**](https://github.com/intelligentactuaries/scelo/releases) —
-Windows (NSIS `.exe`) and Linux (`.AppImage` / `.deb`), with Python + R and
-the IA actuarial stack bundled so everything runs offline.
+Python + R and the IA actuarial stack are bundled, so everything runs offline
+once installed.
 
-Builds are not code-signed yet: Windows SmartScreen warns on first launch
-(**More info → Run anyway**); on Linux, `chmod +x` the AppImage. Installed
-copies auto-update from the same Releases feed. Prefer building from
-source? See [INSTALL-WINDOWS-MACOS.md](INSTALL-WINDOWS-MACOS.md) or the
-Quick start below.
+**Debian / Ubuntu — recommended.** The signed, auto-updating apt repository:
+
+```bash
+curl -1sLf 'https://dl.cloudsmith.io/public/intelligentactuaries/scelo/setup.deb.sh' | sudo -E bash
+sudo apt install scelo-ide
+```
+
+Rather not pipe a script into a root shell? The
+[Linux install guide](https://docs.intelligentactuaries.com/scelo/installation/linux/)
+has the same repo as a deb822 `.sources` entry.
+
+**Everything else** is on the
+[**Releases tab**](https://github.com/intelligentactuaries/scelo/releases).
+Note the platforms are not in lockstep: Linux is on 0.1.2, Windows on 0.1.1,
+and **macOS has no build yet** — see
+[INSTALL-WINDOWS-MACOS.md](INSTALL-WINDOWS-MACOS.md) to build it locally.
+
+Caveats worth knowing before you download:
+
+- **Not code-signed yet** — Windows SmartScreen warns on first launch
+  (**More info → Run anyway**).
+- **The AppImage needs FUSE 2** on Ubuntu 22.04+, which is no longer installed
+  by default. `chmod +x` it, and if it exits on a `libfuse.so.2` error run
+  `sudo apt install libfuse2t64`. The apt and `.deb` routes don't need it.
+- **Auto-update works on Linux only.** No release ships a `latest.yml`, so
+  electron-updater has nothing to poll on Windows; reinstall from Releases.
+  apt installs update normally with the rest of your system.
 
 ## What's in this repository
 
