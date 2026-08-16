@@ -578,6 +578,15 @@ function buildToolsStageContext(args: {
     "Help them understand the model picks, swap models, and prepare for the Hard Data stage.",
     "Stay focused on model choice / methodology — do not pre-empt the final outputs or re-collect raw data.",
     "",
+    "## ANSWER SHAPE (strict)",
+    "Reply in 1 to 4 short sentences. Lead with the verdict (keep / add / remove / swap and WHY), then the evidence from the dataset shape below. No preamble, no methodology lectures unless asked.",
+    "When the user asks to change the stack (add / remove / swap / enable / disable a model), EMIT the stack directive from the PROTOCOL below — do not merely describe the change.",
+    "When asked 'why these models', ground the answer in the SELECTED MODELS rationales and the column evidence — cite column names, row count, missingness. Never a generic 'these are industry standard'.",
+    "When a model is a poor fit for the data shape, say so plainly and name the better catalog id.",
+    "",
+    "## OUTPUT CHARACTERS (strict)",
+    "Plain ASCII punctuation only: straight quotes, plain hyphens, three dots. No smart quotes, em-dashes, or other typographic Unicode — they render as replacement glyphs here.",
+    "",
   ];
   if (!dataset) {
     lines.push("CURRENT STATE: no dataset loaded yet — direct the user to load one in Soft Data.");
@@ -1261,6 +1270,15 @@ export function ToolsWorkstation() {
   const [status, setStatus] = useState<"idle" | "loading" | "ready" | "fallback">("idle");
   const [regenSeed, setRegenSeed] = useState(0);
   const previousIdsRef = useRef<string[]>([]);
+  // The ids of the LAST AI pick, in pick order. Drives the justification
+  // bubble on the canvas: while the attached roster still equals this set,
+  // the bubble explains why THESE models; the moment the user adds, removes
+  // or swaps one, the roster is theirs — the justification no longer
+  // describes what's on screen, so the bubble goes. Local state on purpose
+  // (not persisted): after a reload the summary still lives in the chat
+  // context, but a stale bubble should not reappear over a curated stack.
+  const [aiPickIds, setAiPickIds] = useState<string[] | null>(null);
+  const [pickBubbleDismissed, setPickBubbleDismissed] = useState(false);
 
   // Column metas — used both for the LLM prompt and the heuristic. We
   // profile the raw dataset (not the filtered slice) because model
@@ -1304,6 +1322,8 @@ export function ToolsWorkstation() {
           setSelectedModels(picks);
           setPicksDatasetName(dataset.name);
           previousIdsRef.current = picks.map((p) => p.id);
+          setAiPickIds(picks.map((p) => p.id));
+          setPickBubbleDismissed(false);
           setStatus("ready");
           logEvent({
             stage: "tools",
@@ -1333,6 +1353,8 @@ export function ToolsWorkstation() {
           setSelectedModels(picks);
           setPicksDatasetName(dataset.name);
           previousIdsRef.current = picks.map((p) => p.id);
+          setAiPickIds(picks.map((p) => p.id));
+          setPickBubbleDismissed(false);
           setStatus("fallback");
           logEvent({
             stage: "tools",
@@ -1380,6 +1402,23 @@ export function ToolsWorkstation() {
   const regenerate = useCallback(() => {
     setRegenSeed((s) => s + 1);
   }, []);
+
+  // Justification bubble visibility: the summary describes the AI's pick, so
+  // it shows only while the attached roster IS that pick (order-insensitive).
+  // Adding, removing or swapping a model breaks the equality and the bubble
+  // disappears — the stack is now the user's curation, not the AI's claim.
+  // Toggling a model off keeps it: the roster is unchanged, merely muted.
+  const pickBubbleVisible = useMemo(() => {
+    if (!pickSummary || !aiPickIds || pickBubbleDismissed) return false;
+    if (status === "loading") return false;
+    if (selectedModels.length !== aiPickIds.length) return false;
+    // Every attached model must still be the AI's own pick — remove-then-
+    // re-add restores the same id with source "user", and the bubble must
+    // not resurrect over a roster the user has already touched.
+    if (selectedModels.some((m) => m.source !== "ai")) return false;
+    const current = new Set(selectedModels.map((m) => m.id));
+    return aiPickIds.every((id) => current.has(id));
+  }, [pickSummary, aiPickIds, pickBubbleDismissed, status, selectedModels]);
   // biome-ignore lint/correctness/useExhaustiveDependencies: only react to regenSeed; dataset/identify already trigger the first-mount effect above.
   useEffect(() => {
     if (regenSeed === 0 || !dataset) return;
@@ -2090,6 +2129,51 @@ export function ToolsWorkstation() {
               accent="primary"
               state={{ verb: "identifying", name: dataset.name }}
             />
+          )}
+          {/* Why-these-models bubble. Floats over the canvas while the
+              attached stack is still exactly the AI's pick; vanishes the
+              moment the user adds / removes / swaps a model (see
+              pickBubbleVisible) or dismisses it. */}
+          {pickBubbleVisible && dataset && (
+            <div className="pointer-events-none absolute inset-x-0 bottom-5 z-20 flex justify-center px-4">
+              <div className="pointer-events-auto relative max-w-xl rounded-2xl border border-border bg-bg-2/80 px-4 py-3 pr-9 shadow-lg backdrop-blur-md">
+                <div className="mb-1 flex items-center gap-2 font-mono text-[10px] uppercase tracking-wider text-fg-dim">
+                  <span
+                    className="inline-block h-1.5 w-1.5 rounded-full"
+                    style={{ background: "rgb(var(--rgb-primary))" }}
+                  />
+                  why these models
+                  {domain && <span className="text-fg-mute">· {domain}</span>}
+                  <span className="text-fg-mute">
+                    · {selectedModels.length} selected{status === "fallback" ? " · offline pick" : ""}
+                  </span>
+                </div>
+                <p className="text-[12.5px] leading-snug text-fg">{pickSummary}</p>
+                <button
+                  type="button"
+                  onClick={() => setPickBubbleDismissed(true)}
+                  className="absolute right-2 top-2 rounded p-0.5 text-fg-dim transition-colors hover:text-fg"
+                  aria-label="dismiss model justification"
+                  title="dismiss"
+                >
+                  <svg
+                    width="12"
+                    height="12"
+                    viewBox="0 0 12 12"
+                    fill="none"
+                    aria-hidden="true"
+                    role="presentation"
+                  >
+                    <path
+                      d="M3 3l6 6M9 3l-6 6"
+                      stroke="currentColor"
+                      strokeWidth="1.4"
+                      strokeLinecap="round"
+                    />
+                  </svg>
+                </button>
+              </div>
+            </div>
           )}
           {dataset ? (
             <ReactFlow

@@ -21,12 +21,25 @@
 // The op set tracks the traditional column-by-column cleaning playbook:
 // structural fixes, string normalisation, numeric coercion, datetime
 // parsing, boolean canonicalisation, missing-marker handling, and
-// row-level dedupe. Anything that LEARNS from the data (imputation
-// values, outlier thresholds, category vocabularies) is deliberately
-// left out of this layer: those decisions should be fit on the training
-// split, not baked into intake.
+// row-level dedupe.
+//
+// Most of those are RULES: they need no knowledge of the distribution, so
+// running them at intake can't leak anything. Two ops are different —
+// `impute-missing` fits a median or a mode, `cap-outliers` fits Tukey
+// fences — and both therefore learn from every row they will later be
+// evaluated on. They stay in this layer because "clean my data" plainly
+// means filling the holes and taming the tails, and sending users to write
+// the formula by hand taught them nothing the engine didn't already know.
+// What keeps them honest instead:
+//   • both are `safe: false`, so `defaultEnabled` leaves them off and the
+//     banner's recommended set never fires them silently;
+//   • `describeOp` carries the re-fit-on-train caveat in the text the user
+//     actually reads before applying;
+//   • imputation writes a `was_missing_<col>` flag beside every column it
+//     fills, so the fill is visible to whatever runs downstream instead of
+//     dissolving into the data.
 
-import type { ColumnMeta, Dataset, Row } from "@scelo/core";
+import type { CellValue, ColumnMeta, Dataset, Row } from "@scelo/core";
 
 // "Missing"-equivalent string tokens we want to normalise to null. Compared
 // case-insensitively against the trimmed cell. Pulled from CSV/parquet
@@ -257,6 +270,8 @@ export type CleaningOpKey =
   | "replace-numeric-sentinels"
   | "recode-value"
   | "null-future-years"
+  | "impute-missing"
+  | "cap-outliers"
   | "drop-duplicates"
   | "drop-empty-cols"
   | "drop-constant-cols"
@@ -294,6 +309,35 @@ export type CleaningOp =
       columns: Array<{ name: string; value: number; count: number }>;
       cells: number;
       safe: true;
+    }
+  | {
+      key: "impute-missing";
+      columns: Array<{
+        name: string;
+        strategy: "median" | "mode";
+        /** Fill value, already in the column's own type. */
+        value: number | string;
+        /** Cells to be filled. Exact — `missing` is a full-pass count. */
+        cells: number;
+        /** Companion `was_missing_…` column, or null when a column of that
+         *  name already exists (a second clean over the same frame) and we
+         *  won't clobber it. */
+        indicator: string | null;
+      }>;
+      cells: number;
+      safe: false;
+    }
+  | {
+      key: "cap-outliers";
+      columns: Array<{
+        name: string;
+        loFence: number;
+        hiFence: number;
+        /** Values outside the fences — stride-estimated on large frames. */
+        count: number;
+      }>;
+      cells: number;
+      safe: false;
     }
   | { key: "drop-duplicates"; rows: number; safe: false }
   | { key: "drop-empty-cols"; columns: Array<{ name: string; missingPct: number }>; safe: false }
@@ -345,11 +389,20 @@ export function cleaningOpsTouchedColumns(ops: CleaningOp[]): string[] | null {
           cols.add(c.to);
         }
         break;
+      case "impute-missing":
+        // Both names: a scoped restore has to retire the indicator column
+        // this op introduced as well as put the nulls back.
+        for (const c of op.columns) {
+          cols.add(c.name);
+          if (c.indicator) cols.add(c.indicator);
+        }
+        break;
       case "coerce-numeric":
       case "null-future-years":
       case "standardise-booleans":
       case "replace-numeric-sentinels":
       case "lowercase-categoricals":
+      case "cap-outliers":
       case "drop-empty-cols":
       case "drop-constant-cols":
         for (const c of op.columns) cols.add(c.name);
@@ -364,6 +417,17 @@ export function cleaningOpsTouchedColumns(ops: CleaningOp[]): string[] | null {
 function formatCount(n: number, sampled: boolean): string {
   const v = Math.round(n).toLocaleString();
   return sampled ? `~${v}` : v;
+}
+
+// Fill values and fences as read back to the user. Numbers stop at two
+// decimals — a median of 5553.4082361 is float noise past there — and
+// strings are quoted so an empty-ish category shows as "" instead of
+// vanishing into the sentence.
+function formatFillValue(v: number | string): string {
+  if (typeof v !== "number") return `"${v}"`;
+  return Number.isInteger(v)
+    ? v.toLocaleString()
+    : v.toLocaleString(undefined, { maximumFractionDigits: 2 });
 }
 
 export function describeOp(op: CleaningOp, sampled = false): { title: string; detail: string } {
@@ -464,6 +528,39 @@ export function describeOp(op: CleaningOp, sampled = false): { title: string; de
       return {
         title: "null future years",
         detail: `${op.columns.length} year-like column${op.columns.length === 1 ? "" : "s"} (${sample}${more}) with values beyond ${cutoff} — usually an "unknown" sentinel, but review before nulling ${formatCount(op.cells, sampled)} cells.`,
+      };
+    }
+    case "impute-missing": {
+      const n = op.columns.length;
+      const sample = op.columns
+        .slice(0, 3)
+        .map((c) => `\`${c.name}\` → ${c.strategy} ${formatFillValue(c.value)}`)
+        .join(", ");
+      const more = n > 3 ? `, +${n - 3} more` : "";
+      const flags = op.columns.filter((c) => c.indicator !== null).length;
+      return {
+        title: `impute missing values in ${n} column${n === 1 ? "" : "s"}`,
+        // `cells` here is exact even under sampling — it comes from the
+        // profile's full-pass `missing` count, not the analyser's stride.
+        detail: `Fill ${formatCount(op.cells, false)} empty cells: ${sample}${more}. Numbers take the column median, categories its most common value.${
+          flags > 0
+            ? " Each filled column gains a `was_missing_…` flag, so a model can tell an imputed value from an observed one."
+            : ""
+        } The fill is fitted on every row present — re-fit it on the training split before you model, or the test fold has seen it.`,
+      };
+    }
+    case "cap-outliers": {
+      const n = op.columns.length;
+      const sample = op.columns
+        .slice(0, 3)
+        .map(
+          (c) => `\`${c.name}\` to [${formatFillValue(c.loFence)}, ${formatFillValue(c.hiFence)}]`,
+        )
+        .join(", ");
+      const more = n > 3 ? `, +${n - 3} more` : "";
+      return {
+        title: `cap outliers in ${n} column${n === 1 ? "" : "s"}`,
+        detail: `${formatCount(op.cells, sampled)} values sit outside the Tukey fences (Q1 − 1.5·IQR, Q3 + 1.5·IQR) — clamp ${sample}${more}. Nothing is dropped and no row is lost; the extremes move to the fence. Only right when the tail is data-entry error. A genuinely fat-tailed exposure — large claims, catastrophe losses — is signal, and capping it understates the very risk you are measuring.`,
       };
     }
     case "drop-duplicates":
@@ -655,6 +752,123 @@ export function findNearDuplicateLabel(
   return best;
 }
 
+// ─── Learned-op decisions ────────────────────────────────────────────────
+//
+// `impute-missing` and `cap-outliers` are the two ops that can decline a
+// column for a reason worth saying out loud — "every value is distinct, so
+// it has no mode" is the answer to "why didn't you fill member_id?", and the
+// user only ever sees that answer if the analyser and the write-up agree on
+// it. So the decision lives in one function that returns either the action
+// or the reason, and both callers go through it. Anything else drifts: the
+// analyser silently skips, the chat says "cleaned it", and the two are
+// describing different datasets.
+
+/** Name of the companion indicator column for an imputed column. Built off
+ *  the snake_cased source name so `rename-snake-case` finds nothing to do on
+ *  it — otherwise every imputation would cost the auto-clean loop an extra
+ *  pass to rename the flag it had just created. */
+export function imputeIndicatorName(column: string): string {
+  return `was_missing_${toSnakeCase(column) ?? column}`;
+}
+
+export type ImputeDecision =
+  | { kind: "fill"; strategy: "median" | "mode"; value: number | string }
+  | { kind: "skip"; reason: string };
+
+/** Whether a column's own distribution can supply a defensible fill, and
+ *  what it is. Pure: takes a profile, decides nothing about the plan. */
+export function imputeDecision(meta: ColumnMeta): ImputeDecision {
+  if (meta.missing === 0) return { kind: "skip", reason: "nothing is missing" };
+  const present = meta.count - meta.missing;
+  if (present < 4) {
+    return { kind: "skip", reason: "too few known values to learn a fill from" };
+  }
+  if (meta.count > 0 && meta.missing / meta.count > 0.95) {
+    return {
+      kind: "skip",
+      reason: "over 95% missing — a fill would be inventing the column, not repairing it",
+    };
+  }
+  if (meta.type === "date") {
+    return {
+      kind: "skip",
+      reason:
+        "a date has no defensible constant fill — a median date is a date nothing happened on",
+    };
+  }
+  if (meta.type === "number") {
+    if (meta.median === undefined || !Number.isFinite(meta.median)) {
+      return { kind: "skip", reason: "no median available" };
+    }
+    // Median over mean: it survives the fat right tail that actuarial
+    // monetary columns almost always have.
+    return { kind: "fill", strategy: "median", value: meta.median };
+  }
+  // A category vocabulary has a mode; an identifier or a free-text field
+  // does not. Filling `member_id` with its commonest value would mint
+  // duplicate identities out of nothing. Checked before the frequency table
+  // because "it's an identifier" is the answer the user needs either way.
+  if (meta.unique > Math.max(20, present * 0.02)) {
+    return {
+      kind: "skip",
+      reason: `${meta.unique.toLocaleString()} distinct values — it reads as an identifier or free text rather than a category, so it has no meaningful mode`,
+    };
+  }
+  const top = meta.topValues?.[0];
+  if (!top) return { kind: "skip", reason: "no value frequencies available" };
+  if (top.count / present < 0.02) {
+    return { kind: "skip", reason: "no value is common enough to stand as the mode" };
+  }
+  return { kind: "fill", strategy: "mode", value: top.value };
+}
+
+export type CapDecision =
+  | { kind: "cap"; loFence: number; hiFence: number; count: number }
+  | { kind: "skip"; reason: string };
+
+/** Whether a column's tails can be clamped to its Tukey fences. */
+export function capDecision(meta: ColumnMeta): CapDecision {
+  if (meta.type !== "number") return { kind: "skip", reason: "not a numeric column" };
+  if (
+    meta.loFence === undefined ||
+    meta.hiFence === undefined ||
+    !Number.isFinite(meta.loFence) ||
+    !Number.isFinite(meta.hiFence)
+  ) {
+    return { kind: "skip", reason: "no Tukey fences available" };
+  }
+  // Degenerate IQR: Q1 === Q3 puts both fences on the same value, and
+  // min(max(x, f), f) would flatten the whole column to that constant.
+  if (meta.hiFence <= meta.loFence) {
+    return {
+      kind: "skip",
+      reason:
+        "Q1 equals Q3, so both fences land on one value — clamping there would flatten the column to a constant",
+    };
+  }
+  const count = meta.outlierCount ?? meta.outliers?.length ?? 0;
+  if (count === 0) return { kind: "skip", reason: "nothing sits outside the fences" };
+  if (/year|yr/i.test(meta.name)) {
+    return {
+      kind: "skip",
+      reason: "a year is a calendar fact, not a distribution to winsorise",
+    };
+  }
+  const present = meta.count - meta.missing;
+  if (
+    present > 0 &&
+    meta.unique === present &&
+    /(^|[_\s])(id|no|num|number|ref|code)$/i.test(meta.name)
+  ) {
+    return {
+      kind: "skip",
+      reason:
+        "every value is distinct and the name reads as an identifier — clamping would corrupt keys",
+    };
+  }
+  return { kind: "cap", loFence: meta.loFence, hiFence: meta.hiFence, count };
+}
+
 // Cheap row-key for duplicate detection — far faster than JSON.stringify for
 // wide rows and avoids the `123` vs `"123"` collision risk.
 function rowKey(row: Row, columns: string[]): string {
@@ -697,6 +911,11 @@ export function analyseCleaning(dataset: Dataset, metas: ColumnMeta[]): Cleaning
     booleanOther: number;
     firstTrueLabel: string | null;
     firstFalseLabel: string | null;
+    /** Boolean-ish cells NOT already spelled "true"/"false". Zero means the
+     *  column is canonical and `standardise-booleans` would rewrite nothing —
+     *  proposing it anyway made the op re-appear in every plan forever, which
+     *  the auto-clean loop can only exit through its stall guard. */
+    boolNonCanonical: number;
     // numeric-only: sentinel candidates (value → count). Populated when
     // the column meta says it's numeric so we can bypass the string fast
     // path. Kept on the ColAcc so the per-column rollup stays consistent.
@@ -717,6 +936,7 @@ export function analyseCleaning(dataset: Dataset, metas: ColumnMeta[]): Cleaning
       booleanOther: 0,
       firstTrueLabel: null,
       firstFalseLabel: null,
+      boolNonCanonical: 0,
       sentinelCounts: new Map<number, number>(),
       futureYears: 0,
     });
@@ -808,9 +1028,11 @@ export function analyseCleaning(dataset: Dataset, metas: ColumnMeta[]): Cleaning
       if (TRUE_TOKENS.has(lower)) {
         acc.trueCount++;
         if (!acc.firstTrueLabel) acc.firstTrueLabel = trimmed;
+        if (trimmed !== "true") acc.boolNonCanonical++;
       } else if (FALSE_TOKENS.has(lower)) {
         acc.falseCount++;
         if (!acc.firstFalseLabel) acc.firstFalseLabel = trimmed;
+        if (trimmed !== "false") acc.boolNonCanonical++;
       } else {
         acc.booleanOther++;
       }
@@ -905,6 +1127,9 @@ export function analyseCleaning(dataset: Dataset, metas: ColumnMeta[]): Cleaning
     if (acc.candidates < 4) continue;
     if (acc.trueCount === 0 || acc.falseCount === 0) continue;
     if (acc.booleanOther / acc.candidates > 0.05) continue;
+    // Already spelled "true"/"false" — applying the op would rewrite nothing
+    // while keeping the op in every subsequent plan.
+    if (acc.boolNonCanonical === 0) continue;
     // Don't double-suggest if parse-numeric or parse-dates already claimed
     // this column.
     if (parseableCols.includes(meta.name)) continue;
@@ -1095,6 +1320,98 @@ export function analyseCleaning(dataset: Dataset, metas: ColumnMeta[]): Cleaning
   }
   if (lcCols.length > 0) {
     ops.push({ key: "lowercase-categoricals", columns: lcCols, safe: false });
+  }
+
+  // ── Learned ops: impute + winsorise ──────────────────────────────────────
+  //
+  // Both are held back for a pass whenever an op ALREADY in this plan will
+  // rewrite the column's values. Imputing from a median computed while -999
+  // sentinels are still in the column bakes the sentinel into the fill;
+  // capping a column that `parse-numeric` is about to convert reads fences
+  // off a distribution that doesn't exist yet. The auto-clean loop
+  // re-analyses after every pass, so "not this pass" means "next pass, on
+  // settled numbers" rather than "never" — and a single-shot caller gets the
+  // conservative half now and the rest when they run it again.
+  const unsettled = new Set<string>();
+  for (const op of ops) {
+    switch (op.key) {
+      case "missing-tokens":
+        // Nulls string cells table-wide, so no string column is settled yet.
+        for (const meta of metas) if (meta.type === "string") unsettled.add(meta.name);
+        break;
+      case "parse-numeric":
+      case "parse-dates":
+        for (const c of op.columns) unsettled.add(c);
+        break;
+      case "recode-value":
+        unsettled.add(op.column);
+        break;
+      case "coerce-numeric":
+      case "replace-numeric-sentinels":
+      case "null-future-years":
+      case "standardise-booleans":
+      case "lowercase-categoricals":
+      case "drop-empty-cols":
+      case "drop-constant-cols":
+        for (const c of op.columns) unsettled.add(c.name);
+        break;
+      default:
+        break;
+    }
+  }
+
+  // Capping runs before imputation at apply time, so a filled median can
+  // never itself be an outlier; the order here only sets how they read in
+  // the plan.
+  const capCols: Array<{ name: string; loFence: number; hiFence: number; count: number }> = [];
+  let capCells = 0;
+  for (const meta of metas) {
+    if (unsettled.has(meta.name)) continue;
+    const decision = capDecision(meta);
+    if (decision.kind !== "cap") continue;
+    capCols.push({
+      name: meta.name,
+      loFence: decision.loFence,
+      hiFence: decision.hiFence,
+      count: decision.count,
+    });
+    capCells += decision.count;
+  }
+  if (capCols.length > 0) {
+    ops.push({ key: "cap-outliers", columns: capCols, cells: capCells, safe: false });
+  }
+
+  const imputeCols: Array<{
+    name: string;
+    strategy: "median" | "mode";
+    value: number | string;
+    cells: number;
+    indicator: string | null;
+  }> = [];
+  let imputeCells = 0;
+  const columnNames = new Set(cols);
+  const claimedIndicators = new Set<string>();
+  for (const meta of metas) {
+    if (unsettled.has(meta.name)) continue;
+    const decision = imputeDecision(meta);
+    if (decision.kind !== "fill") continue;
+    // A name already in use means a previous clean left its flag behind (or
+    // the source data has one). Fill the column, but leave the existing
+    // column alone rather than overwriting someone else's data.
+    const wanted = imputeIndicatorName(meta.name);
+    const free = !columnNames.has(wanted) && !claimedIndicators.has(wanted);
+    if (free) claimedIndicators.add(wanted);
+    imputeCols.push({
+      name: meta.name,
+      strategy: decision.strategy,
+      value: decision.value,
+      cells: meta.missing,
+      indicator: free ? wanted : null,
+    });
+    imputeCells += meta.missing;
+  }
+  if (imputeCols.length > 0) {
+    ops.push({ key: "impute-missing", columns: imputeCols, cells: imputeCells, safe: false });
   }
 
   // Header rename — columns that aren't snake_case. We only flag headers
@@ -1738,22 +2055,103 @@ export function applyCleaning(
     });
   }
 
-  // Header rename — done last so all preceding cell ops still see the
-  // original column names. We re-project rows in column order so the
-  // downstream Dataset.columns and Row keys stay consistent.
+  // Header rename — done last of the rule-based ops so all preceding cell
+  // ops still see the original column names. We re-project rows in column
+  // order so the downstream Dataset.columns and Row keys stay consistent.
+  const renameMap = new Map<string, string>();
   if (enabled.has("rename-snake-case")) {
-    const renameMap = new Map<string, string>();
     for (const op of plan.ops) {
       if (op.key !== "rename-snake-case") continue;
       for (const c of op.columns) renameMap.set(c.from, c.to);
     }
-    if (renameMap.size > 0) {
-      columns = columns.map((c) => renameMap.get(c) ?? c);
+  }
+  if (renameMap.size > 0) {
+    // Re-project from the CURRENT column list rather than `dataset.columns`:
+    // the original header list still holds anything dropped above, and the
+    // `includes` guard that used to compensate ran once per column per row.
+    const before = columns;
+    columns = before.map((c) => renameMap.get(c) ?? c);
+    rows = rows.map((r) => {
+      const out: Row = {};
+      for (const c of before) out[renameMap.get(c) ?? c] = r[c];
+      return out;
+    });
+  }
+  /** Plan column names are pre-rename; the rows are now post-rename. */
+  const finalName = (c: string): string => renameMap.get(c) ?? c;
+
+  // ── Learned ops ──────────────────────────────────────────────────────────
+  // Last of all, on final names and settled values: capping wants the column
+  // to be numeric already, imputation wants every null that the cell pass
+  // was going to create to exist, and neither should waste work on a column
+  // the drops above removed.
+  if (enabled.has("cap-outliers")) {
+    const fences = new Map<string, { lo: number; hi: number }>();
+    for (const op of plan.ops) {
+      if (op.key !== "cap-outliers") continue;
+      for (const c of op.columns) {
+        // Re-check the degenerate pair at apply time: a stale plan handed in
+        // by a caller must not be able to flatten a column to a constant.
+        if (!(c.hiFence > c.loFence)) continue;
+        fences.set(finalName(c.name), { lo: c.loFence, hi: c.hiFence });
+      }
+    }
+    for (const c of fences.keys()) if (!columns.includes(c)) fences.delete(c);
+    if (fences.size > 0) {
+      const targets = [...fences.entries()];
       rows = rows.map((r) => {
-        const out: Row = {};
-        for (const original of dataset.columns) {
-          const final = renameMap.get(original) ?? original;
-          if (columns.includes(final)) out[final] = r[original];
+        // Copy-on-write: most rows are inside the fences and keep their
+        // original object, which matters at 250k rows × a handful of columns.
+        let out: Row | null = null;
+        for (const [c, f] of targets) {
+          const v = r[c];
+          if (typeof v !== "number") continue;
+          const capped = v < f.lo ? f.lo : v > f.hi ? f.hi : v;
+          if (capped === v) continue;
+          if (out === null) out = { ...r };
+          out[c] = capped;
+        }
+        return out ?? r;
+      });
+    }
+  }
+
+  if (enabled.has("impute-missing")) {
+    const fills: Array<{ column: string; value: CellValue; indicator: string | null }> = [];
+    const taken = new Set(columns);
+    for (const op of plan.ops) {
+      if (op.key !== "impute-missing") continue;
+      for (const c of op.columns) {
+        const column = finalName(c.name);
+        if (!taken.has(column)) continue; // dropped by an op above
+        const indicator = c.indicator !== null && !taken.has(c.indicator) ? c.indicator : null;
+        if (indicator) taken.add(indicator);
+        fills.push({ column, value: c.value, indicator });
+      }
+    }
+    if (fills.length > 0) {
+      // The flag goes immediately after the column it qualifies, so it reads
+      // beside its data instead of at the far right of a wide frame.
+      const indicatorFor = new Map<string, string>();
+      for (const f of fills) if (f.indicator) indicatorFor.set(f.column, f.indicator);
+      if (indicatorFor.size > 0) {
+        const next: string[] = [];
+        for (const c of columns) {
+          next.push(c);
+          const flag = indicatorFor.get(c);
+          if (flag) next.push(flag);
+        }
+        columns = next;
+      }
+      rows = rows.map((r) => {
+        const out: Row = { ...r };
+        for (const f of fills) {
+          const empty = out[f.column] === null || out[f.column] === undefined;
+          // Written for every row, not just the filled ones — a flag that
+          // only appears on imputed rows would be null everywhere else and
+          // read as missing data about missing data.
+          if (f.indicator) out[f.indicator] = empty ? "true" : "false";
+          if (empty) out[f.column] = f.value;
         }
         return out;
       });
@@ -1776,10 +2174,18 @@ export function applyCleaning(
 // EVERYTHING proposed, re-analyse, repeat until the analyser proposes
 // nothing. Unlike the banner (which defaults to `safe` ops only) this
 // deliberately includes the unsafe ones — dropping duplicate rows, empty and
-// constant columns, snake-casing headers. Without them the loop could never
-// converge, because those ops would be re-proposed on every pass forever.
-// That makes this a DESTRUCTIVE operation by design; the caller is expected
-// to say so, and the result reports every drop.
+// constant columns, snake-casing headers, filling nulls, clamping tails.
+// Without them the loop could never converge, because those ops would be
+// re-proposed on every pass forever. That makes this a DESTRUCTIVE operation
+// by design; the caller is expected to say so, and the result reports every
+// drop, every fill and every cap.
+//
+// Both learned ops are idempotent, which is what lets them sit inside a
+// fixed-point loop at all: after a fill the column has no missing cells to
+// re-propose, and clamping to the fences leaves the quartiles untouched (it
+// only moves values that were already outside them, and rank order is
+// preserved), so the next pass computes the same fences and finds nothing
+// beyond them.
 //
 // Two guards stop it running away:
 //   • `maxPasses` — a hard ceiling on iterations.
@@ -1793,17 +2199,22 @@ export function applyCleaning(
 // dependency on the workstation type-level (importing `columnMetaCache`
 // here would close a require cycle through SoftDataWorkstation).
 
-/** Iterations before we stop and report what's left. Six is comfortably
- *  above the deepest real dependency chain observed (trim → parse-numeric →
- *  sentinels → drop-constant-cols) while still bounding worst-case cost at
- *  six full profile+scan passes. */
-export const AUTO_CLEAN_MAX_PASSES = 6;
+/** Iterations before we stop and report what's left. The deepest real
+ *  dependency chain runs trim → parse-numeric → sentinels → cap/impute →
+ *  drop-constant-cols: the learned ops sit at the end because they hold
+ *  themselves back until nothing else is still rewriting the column, which
+ *  costs a pass or two on messy input. Eight clears that with room to spare
+ *  while still bounding worst-case cost at eight profile+scan passes. */
+export const AUTO_CLEAN_MAX_PASSES = 8;
 
 export type AutoCleanPass = {
   /** 1-indexed pass number. */
   pass: number;
   /** `describeOp` titles of every op applied in this pass. */
   opLabels: string[];
+  /** The ops themselves. The caller needs these to answer "did you actually
+   *  fill anything, and how much?" without reverse-engineering the titles. */
+  ops: CleaningOp[];
   /** Dataset shape AFTER this pass — lets the caller show rows/cols shrinking. */
   rows: number;
   columns: number;
@@ -1910,6 +2321,7 @@ export function autoCleanDataset(
     passes.push({
       pass,
       opLabels: titles,
+      ops: plan.ops,
       rows: working.rows.length,
       columns: working.columns.length,
     });

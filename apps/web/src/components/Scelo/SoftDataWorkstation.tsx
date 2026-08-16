@@ -46,6 +46,7 @@ import { SimulateScenarioModal } from "./SimulateScenarioModal";
 import { SmartColumnDashboard } from "./SmartColumnDashboard";
 import { type ChatAction, StageChatPanel } from "./StageChatPanel";
 import { UploadIndicator, type UploadState, nextPaint, useMinVisible } from "./UploadIndicator";
+import { auditRequest, formatAutoCleanReport } from "./autoCleanReport";
 import {
   AUTO_CLEAN_MAX_PASSES,
   type AutoCleanResult,
@@ -1270,15 +1271,16 @@ const SOFT_STAGE_FRAME = [
   "Reply in plain ASCII punctuation only: straight apostrophes ('), straight double quotes (\"), plain hyphens (-), three dots (...). DO NOT emit smart curly quotes, em-dash, en-dash, ellipsis character, non-breaking space, or any other typographic Unicode. They render as replacement glyphs in this chat surface. When you need to quote an example value (a sentinel string like ?, N/A, or -), wrap it in backticks for code, never in curly quotes.",
   "",
   "## SHARED VOCABULARY (these are TOOLS, not text, pick one and emit it)",
-  "Banner ops (string match these exactly): trim whitespace · collapse internal whitespace · fix encoding artefacts · normalise missing markers · parse numeric strings · parse date strings · standardise booleans · replace sentinel numerics · merge case-only duplicates · rename to snake_case · drop near-empty columns · drop constant columns · drop duplicate rows.",
+  "Banner ops (string match these exactly): trim whitespace · collapse internal whitespace · fix encoding artefacts · normalise missing markers · parse numeric strings · parse date strings · standardise booleans · replace sentinel numerics · impute missing values · cap outliers · merge case-only duplicates · rename to snake_case · drop near-empty columns · drop constant columns · drop duplicate rows.",
   'Column ops (same family, scoped to ONE column — point the user at these by key): `coerce-numeric` (column) parses the numeric prefix of mixed cells in a number column ("6+" -> 6) and nulls what\'s left over — the fix for columns flagged with a `mixed` badge. `recode-value` (column, from, to) recodes one categorical label to another — the fix for typo categories like "Seperated" -> "Separated".',
   "Combining datasets: up to 3 OFFLINE files can be loaded at once (the active dataset + 2 staged) and combined via the '+ combine data' toolbar button — smart append (schema-aligned row stacking, optional exact-duplicate drop) or key join (left / inner on a shared id-like column). When the user asks to merge / join / concatenate / stack / combine another file with this one, point them at that button; its review panel suggests a strategy and key per staged file with match evidence before applying.",
   "",
-  "Dataset-wide cleaning: when the user asks to run a banner op (drop duplicate ROWS, drop empty/constant columns, normalise missing markers, fix encoding, trim/collapse whitespace, parse numeric/date strings, standardise booleans, replace sentinel numerics, merge case-only duplicates, rename headers to snake_case), DO NOT just name it — EMIT a fenced `clean` block. The client runs the deterministic cleaning engine immediately and renders a real before/after card:",
+  "Dataset-wide cleaning: when the user asks to run a banner op (drop duplicate ROWS, drop empty/constant columns, normalise missing markers, fix encoding, trim/collapse whitespace, parse numeric/date strings, standardise booleans, replace sentinel numerics, impute missing values, cap outliers, merge case-only duplicates, rename headers to snake_case), DO NOT just name it — EMIT a fenced `clean` block. The client runs the deterministic cleaning engine immediately and renders a real before/after card:",
   "```clean",
   '{"ops": ["<op-key>"]}',
   "```",
-  'Valid op keys: trim, collapse-whitespace, fix-encoding, missing-tokens, parse-numeric, coerce-numeric, parse-dates, standardise-booleans, replace-numeric-sentinels, null-future-years, drop-duplicates, drop-empty-cols, drop-constant-cols, lowercase-categoricals, rename-snake-case. Or {"ops": "safe"} for all safe fixes, {"ops": "all"} for every applicable op.',
+  'Valid op keys: trim, collapse-whitespace, fix-encoding, missing-tokens, parse-numeric, coerce-numeric, parse-dates, standardise-booleans, replace-numeric-sentinels, null-future-years, impute-missing, cap-outliers, drop-duplicates, drop-empty-cols, drop-constant-cols, lowercase-categoricals, rename-snake-case. Or {"ops": "safe"} for all safe fixes, {"ops": "all"} for every applicable op.',
+  "`impute-missing` fills every flagged column: numeric columns take their MEDIAN, categorical their MODE, and each filled column gains a `was_missing_…` indicator so a model can tell imputed from observed. `cap-outliers` clamps numeric columns to their Tukey fences (Q1 - 1.5*IQR, Q3 + 1.5*IQR) — nothing is dropped. Both are dataset-wide and fitted on ALL rows: remind the user to re-fit on the training split before modelling. To impute or cap ONE column only, use a `derive`-grammar formula instead: `coalesce(value, median(value))` in the column chat, or clamp with `min(max(x, lo), hi)`.",
   "",
   "Derived columns: when the user asks for any per-row transformation (round, log, sqrt, abs, clip, cap, normalise, bin, extract, derive, compute, calculate, etc.), DO NOT describe the formula. EMIT a fenced `derive` block. The client compiles the formula and adds the new column to the dataset IMMEDIATELY, so the user sees the result without copy-pasting anything.",
   "",
@@ -1312,6 +1314,20 @@ const SOFT_STAGE_FRAME = [
   '{"name": "incurred_log", "formula": "log(incurred + 1)"}',
   "```",
   "+1 keeps zero rows finite.",
+  "",
+  "User: fill the missing values",
+  "Reply:",
+  "```clean",
+  '{"ops": ["impute-missing"]}',
+  "```",
+  "Numeric columns take their median, categories their mode; each filled column gains a `was_missing_…` flag.",
+  "",
+  "User: handle the outliers",
+  "Reply:",
+  "```clean",
+  '{"ops": ["cap-outliers"]}',
+  "```",
+  "Values move to the Tukey fences; nothing is dropped. If the tail is genuine risk (large claims), keep it instead.",
   "",
   "User: what should I clean first?",
   "Reply: Pick the top suggestion from the banner. If the banner is empty, the dataset is already in decent shape, move on to Tools.",
@@ -1759,65 +1775,6 @@ function ImportFileModal({
   );
 }
 
-// Chat write-up for an autonomous clean. Reports pass by pass, because the
-// whole point of the multi-pass loop is that later passes fix things the
-// earlier ones exposed — collapsing it to one flat list would hide that. Row
-// and column drops are called out separately: they're the destructive part,
-// and the user needs to see them without reading the step list.
-function formatAutoCleanReport(result: AutoCleanResult): string {
-  const lines: string[] = [];
-  const stepCount = result.passes.reduce((n, p) => n + p.opLabels.length, 0);
-
-  lines.push(
-    `Went through the entire dataset and cleaned it — ${stepCount} step${
-      stepCount === 1 ? "" : "s"
-    } over ${result.passes.length} pass${result.passes.length === 1 ? "" : "es"}.`,
-  );
-  lines.push("");
-  for (const pass of result.passes) {
-    lines.push(`**Pass ${pass.pass}**`);
-    for (const label of pass.opLabels) lines.push(`- ${label}`);
-    lines.push("");
-  }
-
-  const rowsDropped = result.rowsBefore - result.rowsAfter;
-  const shape: string[] = [];
-  if (rowsDropped > 0) {
-    shape.push(
-      `${rowsDropped.toLocaleString()} row${rowsDropped === 1 ? "" : "s"} removed (duplicates), ${result.rowsAfter.toLocaleString()} remain`,
-    );
-  }
-  if (result.droppedColumns.length > 0) {
-    shape.push(
-      `${result.droppedColumns.length} column${
-        result.droppedColumns.length === 1 ? "" : "s"
-      } dropped as empty or single-valued (${result.droppedColumns.map((c) => `\`${c}\``).join(", ")})`,
-    );
-  }
-  if (shape.length > 0) lines.push(`Shape: ${shape.join("; ")}.`, "");
-
-  switch (result.outcome) {
-    case "clean":
-      lines.push(
-        "I re-scanned after the last pass and found nothing further — the dataset is clean.",
-      );
-      break;
-    case "stalled":
-      lines.push(
-        `I stopped early: the last pass detected the same issues again without resolving them, so repeating it wouldn't help. Still outstanding: ${result.remaining.join(", ")}. These need a decision rather than a rule — tell me how you'd like them handled.`,
-      );
-      break;
-    case "exhausted":
-      lines.push(
-        `I hit the ${AUTO_CLEAN_MAX_PASSES}-pass ceiling with work still outstanding: ${result.remaining.join(", ")}. Press it again to keep going.`,
-      );
-      break;
-    default:
-      break;
-  }
-  return lines.join("\n");
-}
-
 // ── top-level workstation ────────────────────────────────────────────────────
 
 export function SoftDataWorkstation() {
@@ -2067,37 +2024,53 @@ export function SoftDataWorkstation() {
   // `cleaningPlan`, which is a single pass computed from the CURRENT dataset
   // and would still be the pass-1 plan for every later iteration (React has
   // not re-rendered mid-loop). The loop re-derives its own plan each pass.
-  const runAutoClean = useCallback((): string => {
-    if (!dataset) return "Load a dataset first, then I can clean it end to end.";
+  // `request` is the user's message when this came from chat, so the report
+  // can be audited against what they actually asked for. The chip passes
+  // nothing — it has no request beyond "clean it".
+  const runAutoClean = useCallback(
+    (request?: string): string => {
+      if (!dataset) return "Load a dataset first, then I can clean it end to end.";
 
-    const result: AutoCleanResult = autoCleanDataset(dataset, getColumnMetas);
+      const result: AutoCleanResult = autoCleanDataset(dataset, getColumnMetas);
 
-    if (result.outcome === "empty") {
-      return "There's nothing to clean yet — the dataset has no rows.";
-    }
-    if (result.passes.length === 0) {
-      // Reached the fixed point without applying anything: already clean.
-      return "I went through the whole dataset and found nothing to fix — no whitespace, missing markers, mistyped columns, duplicate rows, or dead columns. It's already clean.";
-    }
+      if (result.outcome === "empty") {
+        return "There's nothing to clean yet — the dataset has no rows.";
+      }
+      if (result.passes.length === 0) {
+        // Reached the fixed point without applying anything. "Already clean"
+        // is still only true in the engine's terms, so the same audit runs —
+        // a dataset the rules have no work on can easily be one the user's
+        // request is entirely unmet on.
+        const audit = request ? auditRequest(request, [], getColumnMetas(dataset)) : null;
+        const base =
+          "I went through the whole dataset and found nothing my cleaning rules would change — no whitespace, missing markers, mistyped columns, duplicate rows, dead columns, fillable gaps or out-of-fence values.";
+        return audit && audit.lines.length > 0
+          ? `${base}\n\n${audit.lines.join("\n")}`
+          : `${base} It's already clean.`;
+      }
 
-    commitDataset(`auto-clean (${result.passes.length} passes)`, result.dataset);
-    setFilters([]);
-    logEvent({
-      stage: "soft",
-      kind: "cleaning.auto",
-      payload: {
-        passes: result.passes.length,
-        outcome: result.outcome,
-        opLabels: result.passes.flatMap((p) => p.opLabels),
-        rowsBefore: result.rowsBefore,
-        rowsAfter: result.rowsAfter,
-        columnsBefore: result.columnsBefore,
-        columnsAfter: result.columnsAfter,
-        droppedColumns: result.droppedColumns,
-      },
-    });
-    return formatAutoCleanReport(result);
-  }, [dataset, setFilters, logEvent, commitDataset]);
+      commitDataset(`auto-clean (${result.passes.length} passes)`, result.dataset);
+      setFilters([]);
+      logEvent({
+        stage: "soft",
+        kind: "cleaning.auto",
+        payload: {
+          passes: result.passes.length,
+          outcome: result.outcome,
+          opLabels: result.passes.flatMap((p) => p.opLabels),
+          rowsBefore: result.rowsBefore,
+          rowsAfter: result.rowsAfter,
+          columnsBefore: result.columnsBefore,
+          columnsAfter: result.columnsAfter,
+          droppedColumns: result.droppedColumns,
+        },
+      });
+      // Profile the RESULT, not `dataset` — the audit's whole job is to say
+      // what is still outstanding after the loop finished.
+      return formatAutoCleanReport(result, request, getColumnMetas(result.dataset));
+    },
+    [dataset, setFilters, logEvent, commitDataset],
+  );
 
   // One-press affordances in the chat. Kept to the single action that is
   // genuinely tedious to phrase and has exactly one sensible execution.
@@ -2118,7 +2091,7 @@ export function SoftDataWorkstation() {
         label: "Auto-clean dataset",
         prompt: "Go through the entire dataset and clean it until it's fully clean.",
         hint: dataset
-          ? `Repeatedly scan and fix the whole dataset until nothing is left to fix (up to ${AUTO_CLEAN_MAX_PASSES} passes). Applies every fix it finds, including removing duplicate rows and dropping empty or single-valued columns. This rewrites the dataset and can't be undone.`
+          ? `Repeatedly scan and fix the whole dataset until nothing is left to fix (up to ${AUTO_CLEAN_MAX_PASSES} passes). Applies every fix it finds, including removing duplicate rows, dropping empty or single-valued columns, filling missing values from each column's median or mode, and clamping outliers to the Tukey fences. This rewrites the dataset and can't be undone.`
           : undefined,
         disabledReason: dataset ? null : "Load a dataset first.",
         run: runAutoClean,
@@ -2652,7 +2625,10 @@ export function SoftDataWorkstation() {
         /\b(repeat|keep|carry on|again and again)\b.*\bclean/.test(t);
       if (wantsAutonomous) {
         if (!dataset) return "Load a dataset first, then I can clean it end to end.";
-        return runAutoClean();
+        // Hand the whole message through: matching on "clean the entire
+        // dataset" is what routes here, but the rest of the sentence is what
+        // the answer has to be honest about.
+        return runAutoClean(text);
       }
 
       if (!dataset) return "Load a dataset first, then ask me to clean it.";
