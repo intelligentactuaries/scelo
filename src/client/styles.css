@@ -62,11 +62,21 @@
 
   --shadow-1: 0 1px 2px rgba(24, 23, 21, 0.04);
   --shadow-2: 0 2px 8px rgba(24, 23, 21, 0.06);
+
+  /* Tell the browser which scheme its OWN chrome should follow. Everything
+     the stylesheet paints is themed by the tokens above, but the parts the
+     browser draws itself — the <select> dropdown list above all, scrollbar
+     tracks, the password-reveal eye — are not; they follow color-scheme.
+     This used to be pinned to `light` (by the meta in index.html and by
+     omission here), so in dark mode a dropdown opened as a WHITE list
+     with the select's inherited cream text on it: white on white. */
+  color-scheme: light;
 }
 
 /* Dark theme — warm-charcoal register, mirroring website_v2. Auto-applies
    whenever `<html data-theme="dark">` is set. */
 :root[data-theme="dark"] {
+  color-scheme: dark;
   --bg: #1B1815;
   --bg-2: #221E1A;
   --fg: #F1ECDF;               /* — 12.5:1 on --bg */
@@ -163,6 +173,21 @@ textarea:focus,
 input:focus,
 select:focus {
   border-color: var(--border-strong);
+}
+
+/* The dropdown list is painted by the browser from the <select>'s and each
+   <option>'s computed colours — and a `transparent` select background is
+   not a colour it can use, so it fell back to the platform default (white).
+   Give both an opaque, themed pair. --bg-2 is what the settings modal's
+   glass already resolves to, so the closed control looks unchanged. */
+select {
+  background: var(--bg-2);
+  color: var(--fg);
+}
+
+select option {
+  background: var(--bg-2);
+  color: var(--fg);
 }
 
 .muted {
