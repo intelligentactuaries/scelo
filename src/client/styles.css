@@ -5394,29 +5394,49 @@ body.is-resizing * {
   gap: 6px;
 }
 
+/* Transport buttons. The marks are inline SVG from Icons.tsx (one stroke,
+   one footprint — see the transport section there); the buttons are the
+   same square so play/pause and stop read as a pair, and the mark is
+   centred by the grid, not by a font's idea of a glyph box. */
 .forecast-playback-btn {
   width: 30px;
-  height: 26px;
+  height: 28px;
+  /* The global button rule pads 8px 14px — inside a 30×28 box that leaves
+     a content area of nothing at all, and the mark spilled from its
+     top-left corner (the old glyphs sat low and right for the same
+     reason). */
+  padding: 0;
   display: grid;
   place-items: center;
-  font-size: 11px;
-  line-height: 1;
-  color: var(--fg-2);
+  line-height: 0;
+  color: var(--fg);
   background: none;
   border: 1px solid var(--grid);
-  border-radius: 3px;
+  border-radius: 4px;
   cursor: pointer;
-  transition: border-color 200ms var(--forecast-easing), color 200ms var(--forecast-easing);
+  transition:
+    border-color 200ms var(--forecast-easing),
+    color 200ms var(--forecast-easing),
+    background 200ms var(--forecast-easing);
+}
+
+.forecast-playback-btn svg {
+  display: block;
 }
 
 .forecast-playback-btn:hover:not(:disabled),
 .forecast-playback-btn:focus-visible:not(:disabled) {
   border-color: var(--forecast-primary);
   color: var(--forecast-primary);
+  background: color-mix(in srgb, var(--forecast-primary) 10%, transparent);
 }
 
+/* Stop is disabled at rest (nothing to stop) — dimmed, not gone: still
+   visibly a button, so the pair reads as a transport rather than as one
+   button and a ghost. */
 .forecast-playback-btn:disabled {
-  opacity: 0.35;
+  color: var(--muted);
+  opacity: 0.55;
   cursor: default;
 }
 

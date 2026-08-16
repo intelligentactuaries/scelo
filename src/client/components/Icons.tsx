@@ -14,11 +14,16 @@ import type { ReactNode } from 'react';
 type IconProps = {
   size?: number;
   className?: string;
+  /** Stroke in viewBox units (default 1.5). Marks drawn small — a 14px
+   *  transport glyph — can ask for a touch more so they do not thin to a
+   *  hairline once scaled. */
+  strokeWidth?: number;
 };
 
 function Svg({
   size = 16,
   className,
+  strokeWidth = 1.5,
   children,
 }: IconProps & { children: ReactNode }) {
   return (
@@ -28,7 +33,7 @@ function Svg({
       viewBox="0 0 24 24"
       fill="none"
       stroke="currentColor"
-      strokeWidth={1.5}
+      strokeWidth={strokeWidth}
       strokeLinecap="round"
       strokeLinejoin="round"
       className={className}
@@ -154,3 +159,40 @@ export function ToolsIcon(p: IconProps) {
     </Svg>
   );
 }
+
+// ── Transport marks (forecast playback) ─────────────────────────────────
+// Play / pause / stop as one family: the same stroke, the same 14-unit
+// footprint on the 24-grid, the same round joins, so the three sit level
+// in a row of equal buttons. They replaced the text glyphs ▶ ❚❚ ■, which
+// came from whatever font the OS chose, at three different weights and
+// three different optical sizes.
+
+/** Play — the one directional triangle the recipe allows; drawn as an
+ *  outline like its siblings rather than a solid, so weight matches. */
+export function PlayIcon(p: IconProps) {
+  return (
+    <Svg strokeWidth={1.75} {...p}>
+      <path d="M7.5 5.2v13.6a.6.6 0 0 0 .92.5l10.7-6.8a.6.6 0 0 0 0-1L8.42 4.7a.6.6 0 0 0-.92.5Z" />
+    </Svg>
+  );
+}
+
+/** Pause — two bars, the same height as the play triangle. */
+export function PauseIcon(p: IconProps) {
+  return (
+    <Svg strokeWidth={1.75} {...p}>
+      <rect x="6" y="5" width="4.5" height="14" rx="1" />
+      <rect x="13.5" y="5" width="4.5" height="14" rx="1" />
+    </Svg>
+  );
+}
+
+/** Stop — a square on the same 14-unit footprint. */
+export function StopIcon(p: IconProps) {
+  return (
+    <Svg strokeWidth={1.75} {...p}>
+      <rect x="5.5" y="5.5" width="13" height="13" rx="1.5" />
+    </Svg>
+  );
+}
+
