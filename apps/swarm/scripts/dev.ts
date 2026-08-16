@@ -7,12 +7,20 @@
 // The commands are spawned DIRECTLY (no `bun run <script>` wrapper): on
 // Windows, killing the wrapper orphans the real process underneath, which
 // then squats the dev ports (vite holds 5190) and blocks the next start.
-// Vite runs under node, matching its bin shebang. PORT and the rest of the
-// environment pass through untouched.
+// Vite runs under node, matching its bin shebang. Its bin is resolved rather
+// than hardcoded as node_modules/vite/bin/vite.js because, as a workspace of
+// the Scelo repo, bun decides where vite lives (root node_modules, the
+// isolated .bun store, or a per-app link) — don't assume.
+// PORT and the rest of the environment pass through untouched.
+
+import { dirname, join } from "node:path";
+
+// vite's `exports` map hides bin/, so locate the package and step into it.
+const viteBin = join(dirname(Bun.resolveSync("vite/package.json", import.meta.dir)), "bin/vite.js");
 
 const specs: string[][] = [
   ["bun", "--watch", "src/server/index.ts"],
-  ["node", "node_modules/vite/bin/vite.js"],
+  ["node", viteBin],
 ];
 
 const procs = specs.map((cmd) =>
