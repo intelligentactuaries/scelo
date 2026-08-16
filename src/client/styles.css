@@ -1227,6 +1227,27 @@ code {
   align-items: end;
 }
 
+.claude-code-row {
+  display: grid;
+  grid-template-columns: 1fr 2fr auto;
+  gap: 10px;
+  align-items: end;
+}
+
+/* Grid items refuse to shrink below their content by default (min-width:
+   auto), which would let a long path push the columns apart. */
+.claude-code-row > * {
+  min-width: 0;
+}
+
+/* The binary's path can be long (nvm prefixes, AppData); one line,
+   ellipsised, full path on hover via title. */
+.claude-code-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .tier-grid {
   display: grid;
   grid-template-columns: 1fr 1fr 1fr;

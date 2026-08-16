@@ -1,3 +1,4 @@
+import type { ProvidersInfo } from '../../shared/types';
 import { SUBSET_PRESETS } from './ScenarioPanel';
 
 type SubsetProps = {
@@ -80,6 +81,27 @@ export function RunControls({
             : 'justify all council agents'}
         </button>
       )}
+    </div>
+  );
+}
+
+// The sidebar's on/off roster of providers. App renders it twice — the
+// accordion and the collapsed-rail flyout — which were two hand-copied
+// blocks until claude code arrived and would have had to be added to both.
+const KEYED = ['anthropic', 'openai', 'gemini', 'hf'] as const;
+
+export function ProviderList({ info }: { info: ProvidersInfo | null }) {
+  const row = (label: string, on: boolean) => (
+    <div key={label} className="provider-row">
+      <span>{label}</span>
+      <span className={on ? 'status-ok' : 'muted'}>{on ? 'on' : 'off'}</span>
+    </div>
+  );
+  return (
+    <div className="provider-list">
+      {KEYED.map((p) => row(p, !!info?.configured[p]))}
+      {row('claude code', !!info?.configured.claude_code)}
+      {row('ollama', !!info?.ollamaSelected)}
     </div>
   );
 }

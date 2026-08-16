@@ -15,7 +15,7 @@ A decision-support cockpit. The professor inputs a finance / investment scenario
 - **Frontend:** React 18 + Vite + TypeScript with **custom CSS only** (no Tailwind, no shadcn, no MUI, no styled-components).
 - **Charts:** Apache ECharts 5 (force layout).
 - **Backend:** single Bun server with route handlers + `bun:sqlite`.
-- **LLM providers:** local Ollama by default; user-supplied keys for Anthropic, OpenAI, Gemini, and Hugging Face are held in browser localStorage and pushed to the server in memory only — never written to disk, never logged.
+- **LLM providers:** local Ollama by default; a signed-in [Claude Code](https://claude.com/claude-code) CLI on the same machine is picked up automatically (no key — it spends the user's Claude plan); user-supplied keys for Anthropic, OpenAI, Gemini, and Hugging Face are held in browser localStorage and pushed to the server in memory only — never written to disk, never logged.
 
 ## Quick start
 
@@ -43,6 +43,7 @@ bun run build                    # outputs to dist/
 
 - Bun >= 1.3
 - (Recommended) [Ollama](https://ollama.com) running at `http://localhost:11434` with at least one instruction-tuned model. The router auto-picks the largest available, preferring `gemma3`, then `qwen2.5`, then `llama3.1`, `llama3.2`, `qwen2.5vl`, `gpt-oss`. A 7B-class model is the sweet spot for local council runs.
+- (Optional) [Claude Code](https://claude.com/claude-code) installed and signed in (`claude` on PATH or in `~/.local/bin`). Detected at boot and from the Settings modal's **re-detect** button; council and chat prefer it over Ollama when no cloud key is set.
 - (Optional) API keys for any of: Anthropic Claude, OpenAI, Google Gemini, Hugging Face — added through the Settings modal.
 
 ## Repository layout
@@ -67,6 +68,7 @@ src/
       router.ts              # LLMRouter + semaphores + cache
       cache.ts               # sha256(prompt+model) -> SQLite
       ollama.ts              # local provider (streaming)
+      claudeCode.ts          # the signed-in `claude` CLI, headless (-p), no key
       claude.ts openai.ts gemini.ts hf.ts
   client/
     main.tsx App.tsx styles.css

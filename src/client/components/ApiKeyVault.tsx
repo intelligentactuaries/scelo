@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { ProviderPrefs, ProvidersInfo } from '../../shared/types';
+import type { ProviderId, ProviderPrefs, ProvidersInfo } from '../../shared/types';
 import { api, loadKeys, saveKeys, savePrefs, type CloudProvider, type StoredKeys } from '../lib/api';
 import { LEGAL_JURISDICTIONS, type LegalJurisdiction } from '../../shared/constants';
 
@@ -137,6 +137,20 @@ export function ApiKeyVault({
     }
   }
 
+  async function redetectClaudeCode() {
+    setBusy(true);
+    setMsg(null);
+    try {
+      const next = await api.setProviders({ refreshClaudeCode: true });
+      onInfo(next);
+      setMsg(next.claudeCode.available ? 'claude code detected' : 'claude code not found');
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message : 'detect failed');
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function clearCache() {
     setBusy(true);
     setMsg(null);
@@ -150,13 +164,17 @@ export function ApiKeyVault({
     }
   }
 
-  async function testRoute(tier: 'council' | 'society' | 'chat') {
+  // A test routes by tier, the way a run does — or pins a provider by name.
+  // The pin exists for Claude Code: with a cloud key saved every tier
+  // resolves to that key, so no tier test could exercise the CLI even when
+  // it is installed and the user wants to check it.
+  async function testRoute(target: { tier: 'council' | 'society' | 'chat' } | { provider: ProviderId }) {
     setBusy(true);
     setMsg(null);
     setTestOut(null);
     try {
       const r = await api.test({
-        tier,
+        ...target,
         prompt: 'reply with exactly two words: hello world',
         fresh: true,
       });
@@ -226,6 +244,48 @@ export function ApiKeyVault({
           </section>
 
           <section className="modal-section">
+            <div className="panel-label">claude code</div>
+            <div className="muted small">
+              uses the Claude Code CLI already installed and signed in on this machine — no key,
+              no spend beyond your Claude plan. under auto, council and chat prefer it over ollama
+              when no cloud key is set; society stays local. a full council is hundreds of calls,
+              so on a Pro plan pin council to ollama if you hit the 5-hour limit.
+            </div>
+            <div className="claude-code-row">
+              <div>
+                <div className="muted small">status</div>
+                <div className={info?.claudeCode.available ? 'status-ok' : 'muted'}>
+                  {info?.claudeCode.available
+                    ? `installed · v${info.claudeCode.version ?? '?'}`
+                    : 'not found'}
+                </div>
+                {info?.claudeCode.available && info.claudeCode.bin && (
+                  <div className="muted small claude-code-path" title={info.claudeCode.bin}>
+                    {info.claudeCode.bin}
+                  </div>
+                )}
+                {!info?.claudeCode.available && info?.claudeCode.reason && (
+                  <div className="muted small">{info.claudeCode.reason}</div>
+                )}
+              </div>
+              <input
+                type="text"
+                placeholder="model override (e.g. opus, sonnet · blank = CLI default)"
+                value={prefs.models?.claude_code ?? ''}
+                onChange={(e) =>
+                  editPrefs((s) => ({
+                    ...s,
+                    models: { ...(s.models ?? {}), claude_code: e.target.value || undefined },
+                  }))
+                }
+              />
+              <button className="ghost-btn" onClick={redetectClaudeCode} disabled={busy}>
+                re-detect
+              </button>
+            </div>
+          </section>
+
+          <section className="modal-section">
             <div className="panel-label">ollama</div>
             <div className="ollama-row">
               <div>
@@ -272,6 +332,7 @@ export function ApiKeyVault({
                   >
                     <option value="auto">auto</option>
                     <option value="anthropic">anthropic</option>
+                    <option value="claude_code">claude code</option>
                     <option value="openai">openai</option>
                     <option value="gemini">gemini</option>
                     <option value="hf">huggingface</option>
@@ -318,7 +379,7 @@ export function ApiKeyVault({
             <div className="test-row">
               <button
                 className="ghost-btn"
-                onClick={() => testRoute('society')}
+                onClick={() => testRoute({ tier: 'society' })}
                 disabled={busy || dirty}
                 title={dirty ? 'save your changes first — this tests the saved settings' : undefined}
               >
@@ -326,11 +387,25 @@ export function ApiKeyVault({
               </button>
               <button
                 className="ghost-btn"
-                onClick={() => testRoute('council')}
+                onClick={() => testRoute({ tier: 'council' })}
                 disabled={busy || dirty}
                 title={dirty ? 'save your changes first — this tests the saved settings' : undefined}
               >
                 test council (cloud)
+              </button>
+              <button
+                className="ghost-btn"
+                onClick={() => testRoute({ provider: 'claude_code' })}
+                disabled={busy || dirty || !info?.claudeCode.available}
+                title={
+                  dirty
+                    ? 'save your changes first — this tests the saved settings'
+                    : info?.claudeCode.available
+                      ? 'one call through your signed-in Claude Code CLI — also proves the login'
+                      : 'claude code not detected'
+                }
+              >
+                test claude code
               </button>
               <button className="ghost-btn" onClick={clearCache} disabled={busy}>
                 clear cache
