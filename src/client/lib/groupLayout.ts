@@ -27,19 +27,18 @@ export type Cell = Group & {
 const GAP = 12;
 const LABEL_H = 24;
 const PAD = 16;
+/** Breathing room between a clump's outermost node and its hull's edge. */
+export const HULL_PAD = 15;
 
-/** Arrange `groups` into a grid of cells filling a `width`×`height` canvas,
- *  choosing a column count that roughly matches the canvas aspect ratio and
- *  centring any short final row. */
 /**
  * Region of the canvas the cells may occupy.
  *
  * The graph's axes span the full canvas, so anything laid out at the very edge
- * draws its label past the plot and gets clipped, and anything under a
- * floating legend is both hidden and unclickable — the legend is an absolutely
- * positioned sibling with a higher z-index, so it swallows the pointer.
- * Insetting the layout keeps the axes 1:1 with pixels while steering the cells
- * clear of both.
+ * draws its label past the plot and gets clipped. Insetting the layout keeps
+ * the axes 1:1 with pixels while steering the cells clear of the edge. (The
+ * legends used to float over the canvas too, and this inset was also how the
+ * grid dodged them; they now sit in a header band above the plot, so nothing
+ * but the edge needs dodging.)
  */
 export interface LayoutInsets {
   top?: number;
@@ -71,12 +70,45 @@ export function layoutCells(
   }));
 }
 
+/** The largest hull a cell of this size can hold: bounded by the narrower of
+ *  its width and its height less the label strip drawn above the disc. This
+ *  is what the grid is optimised for, and what the clumps are fitted to. */
+export function cellHullRadius(cellW: number, cellH: number): number {
+  return Math.min(cellW / 2, (cellH - LABEL_H) / 2) - HULL_PAD - 4;
+}
+
 function layoutCellsIn(groups: Group[], width: number, height: number): Cell[] {
   const n = groups.length;
   if (n === 0 || width <= 0 || height <= 0) return [];
-  const aspect = width / Math.max(height, 1);
-  let cols = Math.max(1, Math.round(Math.sqrt(n * aspect)));
-  cols = Math.min(cols, n);
+  // Pick the row/column split that gives each hull the most room AND fills
+  // the pane. The old heuristic (columns ≈ √(n·aspect)) chased square-ish
+  // cells, which for six clusters in a wide, short pane gave two rows of
+  // tiny cells when one row of six held discs half again as large. But
+  // maximising hull radius alone, with a hysteresis margin, backfired the
+  // other way: a single row that was fatter by a hair (a 636×286 pane
+  // scores 6×1 and 3×2 within 0.3px of each other) won and left the whole
+  // lower half of the pane empty. So score every split by hull radius
+  // *quantised* — differences under a few px don't matter to the eye — and
+  // break the resulting ties toward the split that fills the pane: fewest
+  // empty cells, then squarest cells.
+  let cols = n;
+  let bestKey: [number, number, number] = [-Infinity, -Infinity, -Infinity];
+  for (let r = 1; r <= n; r++) {
+    const c = Math.ceil(n / r);
+    const w = (width - GAP * (c + 1)) / c;
+    const h = (height - GAP * (r + 1)) / r;
+    const quantR = Math.round(cellHullRadius(w, h) / 3);
+    const emptyCells = r * c - n;
+    const cellAspect = w / Math.max(h, 1);
+    const squareness = -Math.max(cellAspect, 1 / cellAspect); // higher = squarer
+    const key: [number, number, number] = [quantR, -emptyCells, squareness];
+    if (key[0] > bestKey[0] ||
+        (key[0] === bestKey[0] && key[1] > bestKey[1]) ||
+        (key[0] === bestKey[0] && key[1] === bestKey[1] && key[2] > bestKey[2])) {
+      bestKey = key;
+      cols = c;
+    }
+  }
   const rows = Math.ceil(n / cols);
   const cellW = (width - GAP * (cols + 1)) / cols;
   const cellH = (height - GAP * (rows + 1)) / rows;
@@ -234,19 +266,43 @@ export function forceClusterLayout(
     }
   }
 
-  const pos = new Map<string, { x: number; y: number }>();
-  fnodes.forEach((n, i) => pos.set(n.id, { x: P[i].x, y: P[i].y }));
-
+  // Fit every clump inside its own cell. The forces above are constants — a
+  // 31-member clump settles at the same radius whether its cell is 300px or
+  // 120px tall — so in a short pane the discs outgrew their cells: they ran
+  // under the legends, off the bottom of the canvas, and INTO EACH OTHER,
+  // which drew disjoint clusters as an overlapping Venn chain. A cluster
+  // hull that intersects its neighbour is a lie about the data. Each clump
+  // is therefore re-centred on its cell (nudged down to leave the label
+  // strip clear) and, when it is too big, shrunk about that centre until
+  // hull + label sit inside the cell. Shrink only — a clump with room to
+  // spare keeps its organic spread.
   const groupCircle = new Map<string, { cx: number; cy: number; r: number }>();
   for (const c of cells) {
     const members = P.filter((p) => p.g === c.key);
     if (!members.length) { groupCircle.set(c.key, { cx: c.cx, cy: c.cy, r: 28 }); continue; }
     const cx = members.reduce((a, p) => a + p.x, 0) / members.length;
     const cy = members.reduce((a, p) => a + p.y, 0) / members.length;
-    let r = 0;
-    for (const p of members) r = Math.max(r, Math.hypot(p.x - cx, p.y - cy) + p.r);
-    groupCircle.set(c.key, { cx, cy, r: r + 15 });
+    // Spread (centre distances) and node radius are kept apart: only the
+    // spread scales, a node stays the size it is.
+    let dMax = 0;
+    let nR = 0;
+    for (const p of members) {
+      dMax = Math.max(dMax, Math.hypot(p.x - cx, p.y - cy));
+      nR = Math.max(nR, p.r);
+    }
+    const rMax = Math.max(12, cellHullRadius(c.x1 - c.x0, c.y1 - c.y0));
+    const k = dMax + nR > rMax ? Math.max(0, rMax - nR) / Math.max(dMax, 1e-6) : 1;
+    const tx = c.cx;
+    const ty = c.cy + LABEL_H / 2;
+    for (const p of members) {
+      p.x = tx + (p.x - cx) * k;
+      p.y = ty + (p.y - cy) * k;
+    }
+    groupCircle.set(c.key, { cx: tx, cy: ty, r: dMax * k + nR + HULL_PAD });
   }
+
+  const pos = new Map<string, { x: number; y: number }>();
+  fnodes.forEach((n, i) => pos.set(n.id, { x: P[i].x, y: P[i].y }));
   return { pos, groupCircle };
 }
 

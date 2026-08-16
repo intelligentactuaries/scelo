@@ -1329,11 +1329,40 @@ code {
   transition: width 200ms linear;
 }
 
+/* Chart anatomy for the graph panes: title and keys in a header band, plot
+   below it, in normal flow. Nothing floats over the plot. The keys used to
+   be glass cards absolutely positioned over the canvas, and the hull grid
+   was inset to dodge them; that held only while every clump stayed inside
+   its cell, and the moment one didn't (any short pane) the discs slid back
+   under the cards, labels and members hidden. */
+.graph-frame {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 0;
+  min-height: 0;
+  min-width: 0;
+}
+
+.graph-keys {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 22px;
+  padding: 10px 14px 6px;
+  font-size: 11px;
+  /* The title chip's explainer bubble hangs below the band, over the plot,
+     while hovered — the one thing allowed to, because it is asked for and
+     goes away. */
+  overflow: visible;
+  position: relative;
+  z-index: 3;
+}
+
 .graph-canvas {
-  position: absolute;
-  inset: 0;
+  position: relative;
+  flex: 1 1 0;
+  min-height: 0;
   width: 100%;
-  height: 100%;
 }
 
 /* Council tab places the force-graph on the left and the decision Sankey
@@ -1358,6 +1387,10 @@ code {
   flex: 1 1 0;
   min-width: 0;
   min-height: 0;
+  /* Column so the graph's frame (header band + plot) fills it top to
+     bottom; the RunStatus card is absolutely positioned and unaffected. */
+  display: flex;
+  flex-direction: column;
 }
 
 .council-stack-sankey {
@@ -1435,25 +1468,6 @@ code {
     aspect-ratio: 4 / 3;
     max-height: 58%;
     min-height: 220px;
-    /* Drop the positioned-ancestor role so the absolutely-positioned
-       legend inside escapes the centered group and anchors to .council-
-       stack (which is anchored at canvas top) instead of riding down. */
-    position: static;
-  }
-  /* The echarts container inside also uses position: absolute; inset: 0
-     to fill the graph container — without a positioned parent it would
-     escape too. Reflow it back into normal block flow at full size. */
-  .council-stack-graph .graph-canvas {
-    position: static;
-    width: 100%;
-    height: 100%;
-    display: block;
-  }
-  /* And anchor the legend at the very top of the canvas. */
-  .council-stack-graph .graph-legend {
-    top: 10px;
-    right: 14px;
-    left: auto;
   }
   .council-stack-sankey {
     flex: 0 0 auto;
@@ -1914,30 +1928,37 @@ input[type='range']:focus::-moz-range-thumb {
   padding: 4px 8px;
 }
 
+/* One row of the header band: a muted label, then the pips. In flow, no
+   card — the band sits on the pane's own ground with nothing under it to
+   frost, and a boxed key beside a boxed title beside boxed chips read as
+   three floating widgets rather than one chart's key. */
 .sentiment-key {
-  position: absolute;
-  left: 12px;
-  top: 12px;
-  /* Frosted glass — translucent bg-2 + blur so the canvas reads through on
-     both cream and charcoal backgrounds; inset highlight gives the glass edge. */
-  background: color-mix(in srgb, var(--bg-2) 78%, transparent);
-  -webkit-backdrop-filter: saturate(150%);
-  backdrop-filter: saturate(150%);
-  border: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
-  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.22), inset 0 1px 0 color-mix(in srgb, #fff 16%, transparent);
-  border-radius: var(--radius-lg);
-  padding: 8px 10px;
   display: flex;
-  flex-direction: column;
-  gap: 4px;
+  align-items: flex-start;
   font-size: 11px;
-  z-index: 5;
+  min-width: 0;
 }
 
-.sentiment-key-label {
+/* Row heads. Top-aligned to the first line of items so a key that wraps
+   reads as a hanging paragraph: label at the margin, every row of items
+   aligned under the first. */
+.sentiment-key-label,
+.graph-legend-label {
   letter-spacing: var(--track);
   text-transform: uppercase;
   color: var(--muted);
+  margin-right: 10px;
+  white-space: nowrap;
+  padding: 2px 0;
+  flex: none;
+}
+
+.graph-key-items {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 6px;
+  min-width: 0;
 }
 
 .sentiment-pip {
@@ -1947,7 +1968,9 @@ input[type='range']:focus::-moz-range-thumb {
   padding: 2px 4px;
   border-radius: 3px;
   letter-spacing: var(--track);
-  text-transform: uppercase;
+  /* Sentence case, like the cluster chips on the row beneath — the two keys
+     share a band now and should share a voice. */
+  text-transform: none;
   color: var(--fg);
   cursor: default;
   user-select: none;
@@ -1965,36 +1988,16 @@ input[type='range']:focus::-moz-range-thumb {
   border-radius: 50%;
 }
 
+/* The category key (professions / clusters): the other row of the header
+   band. Same in-flow, un-boxed treatment as the sentiment key. Wraps to as
+   many lines as the pane's width demands — the plot below simply starts
+   lower, which is the whole point: the key takes its room instead of
+   borrowing the plot's. */
 .graph-legend {
-  position: absolute;
-  top: 10px;
-  right: 14px;
-  /* Frosted glass — shared tokens so every floating container frosts the
-     same way; inset highlight = glass edge. */
-  background: var(--glass-bg);
-  -webkit-backdrop-filter: var(--glass-blur);
-  backdrop-filter: var(--glass-blur);
-  border: 1px solid var(--glass-border);
-  box-shadow: var(--glass-shadow), inset 0 1px 0 color-mix(in srgb, #fff 16%, transparent);
-  border-radius: 10px;
-  padding: 6px 8px;
-  font-size: 11px;
-  z-index: 5;
   display: flex;
-  gap: 4px;
-}
-
-.graph-legend-horizontal {
-  flex-direction: row;
-  flex-wrap: wrap;
-  max-width: 60%;
-  gap: 4px 14px;
-}
-
-.graph-legend-vertical {
-  flex-direction: column;
-  gap: 4px;
-  max-width: 320px;
+  align-items: flex-start;
+  font-size: 11px;
+  min-width: 0;
 }
 
 .graph-legend-item {
@@ -2043,20 +2046,25 @@ input[type='range']:focus::-moz-range-thumb {
 }
 
 
-/* Graph title chip — the floating name of a full-bleed graph canvas, glass
-   like the legends. It ALSO carries .graph-legend so the canvas layout's
-   legend measurement pads the hull grid below it automatically; this class
-   only has to move it to the LEFT edge (the base class pins right). */
+/* Graph title chip — the pane's name, first thing on the header band. It
+   used to float alone in the plot's top-left corner (and carried
+   .graph-legend so the hull grid would be inset past it); now it leads the
+   row the keys share, so title, keys and plot read as one chart. Sized to
+   sit on the same baseline as the key labels beside it. */
 .graph-title-chip {
-  right: auto;
-  left: 14px;
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
   font-size: 10px;
   letter-spacing: var(--track);
   text-transform: uppercase;
   color: var(--muted);
-  align-items: center;
-  gap: 7px;
-  /* The explainer bubble hangs BELOW the chip, over the canvas. */
+  white-space: nowrap;
+  /* A little more air after the title than between the keys — it names the
+     pane; they decode it. */
+  margin-right: 6px;
+  /* The explainer bubble hangs BELOW the chip, over the plot. */
   overflow: visible;
 }
 
@@ -2074,52 +2082,15 @@ input[type='range']:focus::-moz-range-thumb {
    the base rule caps ::after at 100% of the host, which for a shrink-wrapped
    chip meant a skinny ten-line bubble — and the base rule sits later in the
    file, so this needs the extra specificity, not just source order. */
-.graph-legend.graph-title-chip[data-tooltip]::after {
+.graph-keys .graph-title-chip[data-tooltip]::after {
   max-width: min(460px, 74vw);
 }
 
-/* The society tab's sentiment key also lives top-left — when a title chip is
-   present (rendered before the graph, so an earlier sibling), the key steps
-   down one row instead of overprinting it. */
-.graph-title-chip ~ .sentiment-key {
-  top: 48px;
-}
-
-/* While the reader is on the chip, its bubble must beat the sibling legends
-   (same z tier, later in the DOM) instead of sliding underneath them. */
+/* While the reader is on the chip, its bubble must beat the plot and the
+   keys beside it instead of sliding underneath them. */
 .graph-title-chip:hover,
 .graph-title-chip:focus-visible {
   z-index: 40;
-}
-
-/* The stacked-layout container query re-anchors `.council-stack-graph
-   .graph-legend` to the RIGHT edge at (0,2,0) specificity — which dragged
-   the title chip along and, with the base `left: 14px` still applying,
-   over-constrained it into a full-width empty pill. Match the specificity
-   and shrink-wrap so the chip is always a compact left-anchored pill. */
-.council-stack-graph .graph-title-chip {
-  left: 14px;
-  right: auto;
-  width: max-content;
-  max-width: min(60%, 340px);
-}
-
-/* Wide layout only: the society overlays huddle as ONE block in the top-left
-   corner — title chip, cluster legend right beside it, sentiment key
-   beneath — instead of the chip sitting alone while the cluster legend
-   floats orphaned at the far edge of the pane. (The council tab's
-   profession legend is horizontal and stays right-anchored; this targets
-   the vertical cluster legend the society tab uses.) Below 880px the
-   stacked-layout query above re-anchors everything right, unchanged. */
-@container canvas (width > 880px) {
-  .council-stack-graph .graph-legend.graph-legend-vertical {
-    /* Second row of the block, snug against the sentiment key's right edge
-       (the key is ~150px wide from a fixed label set) — chip above, key and
-       clusters side by side below, uniform ~10px gutters, no voids. */
-    top: 48px;
-    right: auto;
-    left: 172px;
-  }
 }
 
 /* ─── Justification panel ─────────────────────────────────────── */
@@ -5998,6 +5969,23 @@ body.is-resizing * {
 
 .chat-dock:not(.is-open) .chat-dock-trigger {
   pointer-events: auto;
+}
+
+/* On the dashboard tabs (council / society) the shut trigger gets a strip of
+   its own under the plots instead of hovering over them. Out of flow at the
+   shared lift it landed mid-Sankey in the stacked layout — "ask the swarm"
+   printed straight across the "Mid 40–69" bucket label — and only missed
+   the plots in the wide layout because the Sankey happens to be centred.
+   The plots end above the strip; the trigger sits inside it, bottom-right,
+   where a status-bar action belongs. Other tabs keep the lift: their
+   content scrolls, and they already reserve the same amount at the end. */
+.canvas-stack[data-dock="shut"] .council-stack {
+  padding-bottom: 46px;
+}
+
+.canvas-stack[data-dock="shut"][data-tab="council"] > .chat-dock,
+.canvas-stack[data-dock="shut"][data-tab="society"] > .chat-dock {
+  padding-bottom: 6px;
 }
 
 /* Open, the bubble needs the room the clearance was holding — and the full
