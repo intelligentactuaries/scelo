@@ -70,7 +70,8 @@ First run needs an internet connection. After that the IDE runs fully offline.
 
 - **Disk + time:** the bundled runtime is ~1 GB and the first build can take
   10–30 minutes (mostly R packages).
-- **Council / simulation features** use the separate swarm server — start it
-  with `PORT=3010 bun run dev` in the `swarms` checkout if you want them.
+- **Council / simulation features** use the swarm server (`apps/swarm` in this
+  repo, not part of the installer) — start it with `bun run dev:swarm` from the
+  repo root if you want them. Same command on Windows and macOS.
 - Everything else (soft data, cleaning, models, hard data, board pack) runs
   offline with no extra setup.

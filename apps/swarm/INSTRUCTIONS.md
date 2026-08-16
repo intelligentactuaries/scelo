@@ -22,13 +22,17 @@
 
 ## First-time setup
 
+The swarm lives in the Scelo repo at `apps/swarm`:
+
 ```bash
-git clone git@github.com:alidenewade/swarm-council.git
-cd swarm-council
-bun install
+git clone git@github.com:intelligentactuaries/scelo.git
+cd scelo
+bun install                      # the root workspace install covers apps/swarm
+bun run dev:swarm                # api :3010 + ui :5190, any OS
 ```
 
-Two processes run side by side. Open two terminals (or use `tmux`/`screen`):
+Or run the two processes side by side from `apps/swarm` (two terminals, or
+`tmux`/`screen`):
 
 ```bash
 # terminal 1 — API
@@ -47,12 +51,12 @@ The first server boot does three things:
 Look at the boot output:
 
 ```
-[swarm-council] api on http://localhost:3000
+[swarm-council] api on http://localhost:3010
 [swarm-council] ollama models: 4 (selected: qwen2.5:7b-instruct-q4_K_M)
 [swarm-council] canon: scholar (20 works)      # or: existing (N) / stub (0)
 ```
 
-Open `http://localhost:5180` in a browser. The header status cluster should show `api ok · ollama: <model>` and a canon count.
+Open `http://localhost:5190` in a browser. The header status cluster should show `api ok · ollama: <model>` and a canon count.
 
 ## Provider configuration
 
@@ -593,8 +597,8 @@ Expected most of the time — Google blocks scrapers. The server writes an empty
 ### Port already in use
 
 ```bash
-lsof -i:3000 -t | xargs -r kill        # API
-lsof -i:5180 -t | xargs -r kill        # UI
+lsof -i:3010 -t | xargs -r kill        # API
+lsof -i:5190 -t | xargs -r kill        # UI
 ```
 
 ### Cache poisoning a tuning loop

@@ -1,10 +1,8 @@
-// Swarm view — iframes the Scelo-integrated swarm app from its separate
-// PRIVATE companion repo (dev port 5190, api on 3010 per its
-// vite proxy). That fork adds Scelo surfaces (ForecastCanvas,
-// SimulationView, WmtrStrip, theme.ts) on top of the upstream
-// swarm-council app, so it's what we point at. The swarm is a SEPARATE
-// checkout — never bundled with Scelo — so we can't know where it
-// lives on the user's disk.
+// Swarm view — iframes the swarm app that lives in this repo at
+// apps/swarm (dev port 5190, api on 3010 per its vite proxy). It is
+// part of Scelo but is NOT (yet) bundled into the installer: it's a
+// Bun + Vite dev pair the user starts from a Scelo checkout with
+// `bun run dev:swarm`, so we can't assume it's up.
 // On mount we probe the server; if it isn't running we show a
 // copy-pasteable start command instead of a blank
 // ERR_CONNECTION_REFUSED iframe.
@@ -20,8 +18,8 @@ import { useEffect, useState } from "react";
 import { getLastSwarmRequest, subscribeOpenInSwarm, urlFor } from "../../lib/swarmBus";
 import { emitToast } from "../../lib/toastBus";
 
-// Scelo-integrated swarm fork's Vite dev URL — derived from swarmBus's
-// canonical constant so the probe, the iframe, and every surface that
+// The swarm's Vite dev URL — derived from swarmBus's canonical
+// constant so the probe, the iframe, and every surface that
 // advertises the port agree on one value.
 const SWARM_URL = urlFor({});
 const PROBE_TIMEOUT_MS = 800;
@@ -30,22 +28,17 @@ const PROBE_TIMEOUT_MS = 800;
 // under /scelo/; source: docs/docs/swarm/running.md).
 export const SWARM_DOCS_URL = "https://docs.intelligentactuaries.com/scelo/swarm/running/";
 
-/** True on Windows. userAgentData.platform ("Windows") is the modern
- *  signal; navigator.platform ("Win32"/"Win64") the legacy fallback.
- *  Anchored so "darwin"-style strings can't false-positive. */
-function isWindowsPlatform(): boolean {
-  if (typeof navigator === "undefined") return false;
-  const uaData = (navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData;
-  return /^win/i.test(uaData?.platform ?? navigator.platform ?? "");
-}
-
-/** Platform-aware start command for the swarm. PowerShell has no
- *  `VAR=x cmd` prefix syntax, hence the fork. The command deliberately
- *  has no `cd`: the swarm is a separate checkout whose location we
- *  can't know, so the surrounding copy tells the user to run it from
- *  there. Exported for SimulateScenarioModal's error hint and tests. */
-export function swarmStartCommand(windows: boolean = isWindowsPlatform()): string {
-  return windows ? "$env:PORT=3010; bun run dev" : "PORT=3010 bun run dev";
+/** The start command for the swarm — one string for every OS and
+ *  shell. It's a root script of the Scelo repo (`bun run dev:swarm` →
+ *  apps/swarm's cross-platform dev spawner), and the swarm's api
+ *  defaults to 3010, so there is no PORT= / $env:PORT prefix to get
+ *  wrong. Deliberately has no `cd`: we can't know where the user's
+ *  Scelo checkout is, so the surrounding copy says "from a Scelo
+ *  checkout". Exported for SimulateScenarioModal's error hint,
+ *  HardDataWorkstation, and tests. */
+export const SWARM_START_COMMAND = "bun run dev:swarm";
+export function swarmStartCommand(): string {
+  return SWARM_START_COMMAND;
 }
 
 type Probe = "probing" | "up" | "down";
@@ -130,13 +123,12 @@ function OfflineFallback() {
       <div className="max-w-sm space-y-3 text-center text-xs">
         <p className="text-fg">Swarm server isn't running.</p>
         <p className="text-fg-mute">
-          The Scelo-integrated swarm is a separate private companion app — it is not bundled with
-          Scelo, so run this from your own swarm checkout (ask the Intelligent Actuaries team for
-          access). It starts a Vite + Bun pair on{" "}
-          <span className="font-mono">localhost:5190</span> (api on{" "}
-          <span className="font-mono">3010</span>). The <span className="font-mono">PORT=3010</span>{" "}
-          is required — its default is 3000. Start it once and this panel will live-attach on the
-          next probe.
+          The swarm is part of Scelo (<span className="font-mono">apps/swarm</span> in the repo) but
+          is not bundled into the installer yet, so start it from a Scelo checkout — one{" "}
+          <span className="font-mono">bun install</span>, then the command below, on any OS. It
+          starts a Vite + Bun pair on <span className="font-mono">localhost:5190</span> (api on{" "}
+          <span className="font-mono">3010</span>). Start it once and this panel will live-attach on
+          the next probe.
         </p>
         <pre className="rounded border border-border bg-bg p-2 text-left font-mono text-[11px] text-fg">
           {startCmd}

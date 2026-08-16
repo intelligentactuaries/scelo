@@ -1,5 +1,10 @@
 # SWARM COUNCIL
 
+Part of [Scelo](../../README.md) — this is `apps/swarm`, the swarm the IDE's
+Hard Data workstation convenes and the **swarm** panel embeds. It runs as its
+own Bun + Vite pair (api **:3010**, ui **:5190**) and is not bundled into the
+installer; from the repo root, `bun run dev:swarm` starts it on any OS.
+
 A decision-support cockpit. The professor inputs a finance / investment scenario, two simulated populations deliberate, and the system surfaces multi-perspective input — consensus, dissent, and reasoning. **The system does not make decisions. It surfaces inputs so the professor can decide.**
 
 ## What the swarm does
@@ -20,15 +25,15 @@ A decision-support cockpit. The professor inputs a finance / investment scenario
 ## Quick start
 
 ```bash
-# install
-cd ~/projects/swarm-council
+# install — from the Scelo repo root; the workspace install covers this app
 bun install
 
-# in one terminal: start the API
-bun src/server/index.ts          # serves http://localhost:3000
+# start both (api on http://localhost:3010, ui on http://localhost:5190)
+bun run dev:swarm                # or, from apps/swarm: bun run dev
 
-# in another terminal: start the UI
-bun run dev:client               # serves http://localhost:5180
+# or run the two halves in separate terminals (from apps/swarm)
+bun src/server/index.ts          # api — http://localhost:3010 (PORT= overrides)
+bun run dev:client               # ui  — http://localhost:5190
 ```
 
 Open the UI, type or paste a scenario, press `Cmd+Enter` (or `Ctrl+Enter`).
@@ -80,7 +85,10 @@ data/                        # runtime SQLite + canon stub (gitignored)
 ## Documentation
 
 - [INSTRUCTIONS.md](./INSTRUCTIONS.md) — detailed walkthrough, provider setup, API reference, tuning, troubleshooting.
+- [RUN-SWARM-WINDOWS.md](./RUN-SWARM-WINDOWS.md) — running it next to the Windows IDE.
+- The user manual's [Running the swarm](../../docs/docs/swarm/running.md) page.
 
 ## License
 
-Private. All rights reserved.
+Scelo IDE Source-Available License v1.1 — the same licence as the rest of this
+repository. See the root [`LICENSE`](../../LICENSE).

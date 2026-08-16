@@ -1,14 +1,15 @@
 # Running the swarm on Windows (so the Scelo IDE's swarm tab works)
 
-The **Scelo IDE does not bundle the swarm.** Its `/swarm` view is just an
+The **Scelo IDE installer does not bundle the swarm.** Its `/swarm` view is just an
 `<iframe>` pointed at **`http://localhost:5190`** (`SwarmPanel.tsx` →
-`swarmBus.ts`). Every Scelo-specific surface lives in **this** app — the private
-`swarm-council` fork — and the IDE simply embeds whatever is served on that port.
+`swarmBus.ts`), and its council / simulation calls go to **`:3010`**. Every
+Scelo-specific surface lives in **this** app — `apps/swarm` of the Scelo repo —
+and the IDE simply embeds whatever is served on those ports.
 
 So if the Windows IDE is "missing tabs," it is almost never an IDE-build problem.
-It means this companion app is **not running on 5190**, or an **older / upstream**
-swarm is running there instead. Rebuilding the IDE `.exe` will not add these
-surfaces — they are never in it by design.
+It means this app is **not running on 5190**, or an **older / upstream**
+swarm-council is running there instead. Rebuilding the IDE `.exe` will not add
+these surfaces — they are never in it by design.
 
 ## The surfaces this app adds (what "the missing tabs" actually are)
 
@@ -27,50 +28,50 @@ machine.
 ## Run it on Windows
 
 This is the **dev** app (Vite + Bun), not a packaged build — you run it from a
-checkout, exactly like on Linux. It must serve **UI on 5190** and **API on
-`PORT=3010`** (its default is 3000, which the IDE does **not** probe).
+Scelo checkout, exactly like on Linux. It serves **UI on 5190** and **API on
+3010** by default, which is exactly what the IDE probes.
 
 ### 1. Prerequisites
 
-- **Git for Windows** (installs **Git Bash**) — https://git-scm.com/download/win
+- **Git for Windows** — https://git-scm.com/download/win
 - **Bun for Windows** ≥ 1.1 — PowerShell: `irm bun.sh/install.ps1 | iex`
-- This app is **Bun-only** — do not use Node / npm / pnpm / yarn.
-- Access to the private repo (ask the Intelligent Actuaries team).
+- **Node.js** (LTS) on PATH — https://nodejs.org. Install with **bun** only
+  (no npm / pnpm / yarn), but the dev spawner runs Vite under `node`, matching
+  Vite's own shebang.
 
 ### 2. Get the exact code
 
 ```powershell
-git clone git@github.com:intelligentactuaries/intelligentactuaries.git
-cd intelligentactuaries\swarms          # the swarm-council app lives here
+git clone git@github.com:intelligentactuaries/scelo.git
+cd scelo
 git checkout main                       # or the SHA running on the Linux box
-bun install
+bun install                             # the root install covers apps/swarm
 ```
 
-### 3. Start it on the right ports
+### 3. Start it
 
-⚠️ **PowerShell gotcha.** The `dev` script is
-`bun run dev:server & bun run dev:client`, and that `&` is **bash-only** — in
-PowerShell `&` is the call operator and won't background the client. Pick one:
-
-**Option A — Git Bash (simplest; identical to Linux):**
-
-```bash
-PORT=3010 bun run dev
-```
-
-**Option B — two PowerShell windows:**
+One command, from the repo root, in **PowerShell, cmd.exe or Git Bash** alike:
 
 ```powershell
-# window 1 — API on 3010
-$env:PORT=3010; bun run dev:server
-```
-```powershell
-# window 2 — UI on 5190 (no PORT needed; vite.config.ts pins 5190, strictPort)
-bun run dev:client
+bun run dev:swarm
 ```
 
-`PORT` is read once, in `src/server/index.ts` (`Number(process.env.PORT ?? 3000)`).
-The Vite client port is fixed at **5190** in `vite.config.ts`.
+There is no `PORT=3010` / `$env:PORT` prefix to get wrong any more: the API
+defaults to **3010** and the UI to **5190**. Under the hood `dev:swarm` runs
+`apps/swarm/scripts/dev.ts`, which spawns the Bun server and Vite as sibling
+processes (bun's Windows shell has no `&` background operator, so the two are
+spawned directly rather than chained), tears both down together, and mirrors the
+exit code.
+
+You'll know it's up when the window shows:
+
+```
+  ➜  Local:   http://localhost:5190/
+[swarm-council] api on http://localhost:3010
+```
+
+(`PORT` still overrides the API port — `$env:PORT=3011; bun run dev:swarm` —
+but then the IDE won't find it, so leave it alone.)
 
 ### 4. Verify from the IDE
 
@@ -198,8 +199,8 @@ click **locks** the selection.
 - **Server-free between runs, but the LLM calls are live** — the council/society
   need whatever provider the app is configured for; a run won't populate the
   graphs without it.
-- **`PORT` must be 3010.** The IDE probes `localhost:5190` (UI) whose Vite proxy
-  and the IDE's council client both expect the API on **3010**; the app's own
-  default is 3000, which nothing probes.
+- **The API must be on 3010.** The IDE probes `localhost:5190` (UI) whose Vite
+  proxy and the IDE's council client both expect the API on **3010** — which is
+  the default, so don't set `PORT`.
 - **Keep this checkout in sync with Linux.** The surfaces only match if the branch
   / commit matches the one running on the Linux box (`git rev-parse HEAD` on both).

@@ -40,7 +40,7 @@ describe("describeNetworkFailure", () => {
     const f = describeNetworkFailure(1024);
     expect(f.message).toContain(":3010");
     expect(f.message).toContain("is it running");
-    expect(f.hint).toContain("PORT=3010");
+    expect(f.hint).toContain("bun run dev:swarm");
     expect(f.hint).toContain("docs: swarm/running");
   });
 
