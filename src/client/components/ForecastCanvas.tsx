@@ -12,6 +12,7 @@ import type { Run, InterventionCluster, RunWmtr } from '../../shared/types';
 import { OUTCOME_COLOR, type Outcome } from '../../shared/wmtr';
 import { colorsForTheme } from '../../shared/constants';
 import { useTheme } from '../lib/theme';
+import { PauseIcon, PlayIcon, StopIcon } from './Icons';
 import { voiceFor } from '../lib/forecastVoice';
 import {
   InterventionRow,
@@ -584,7 +585,7 @@ function Playback({
           title={playing ? 'pause' : 'play the run year by year'}
           aria-label={playing ? 'pause' : 'play'}
         >
-          {playing ? '❚❚' : '▶'}
+          {playing ? <PauseIcon size={18} /> : <PlayIcon size={18} />}
         </button>
         <button
           type="button"
@@ -600,7 +601,7 @@ function Playback({
           title="stop and show the complete run"
           aria-label="stop"
         >
-          ■
+          <StopIcon size={18} />
         </button>
       </div>
       <input
