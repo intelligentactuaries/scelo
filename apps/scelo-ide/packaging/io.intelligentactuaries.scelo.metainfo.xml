@@ -37,7 +37,14 @@
     </p>
   </description>
 
-  <launchable type="desktop-id">io.intelligentactuaries.scelo.desktop</launchable>
+  <!--
+    Must name the .desktop file electron-builder actually installs, which is
+    derived from `executableName` — scelo-ide.desktop, NOT the component id.
+    (AppStream does not require the two to match; it requires this to resolve.)
+    Point it at a file that isn't there and the store silently falls back to
+    "Unknown publisher", which is the whole problem this file exists to fix.
+  -->
+  <launchable type="desktop-id">scelo-ide.desktop</launchable>
 
   <url type="homepage">https://intelligentactuaries.com/scelo</url>
   <url type="bugtracker">https://github.com/intelligentactuaries/scelo/issues</url>
@@ -60,7 +67,26 @@
   <!-- No objectionable content. -->
   <content_rating type="oars-1.1" />
 
+  <!--
+    Newest first — this is what stores show as "Last updated". Add an entry
+    here on every release, or the date goes stale and eventually reads as
+    abandoned. Dates are the release publication dates on GitHub.
+  -->
   <releases>
+    <release version="0.1.2" date="2026-08-14">
+      <description>
+        <p>
+          Autonomous soft-data cleaning with an audit trail, evidence-driven
+          model selection, the real Mack (1993) standard error, board-pack
+          reports, and the council deliberation overlay. Linux only.
+        </p>
+      </description>
+    </release>
+    <release version="0.1.1" date="2026-07-09">
+      <description>
+        <p>Multi-line R execution via the Rscript temp-file path. Windows only.</p>
+      </description>
+    </release>
     <release version="0.1.0" date="2026-06-26">
       <description>
         <p>First public build of the Scelo IDE.</p>

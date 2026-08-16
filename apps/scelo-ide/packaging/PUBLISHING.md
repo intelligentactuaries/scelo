@@ -10,7 +10,7 @@ There are two distinct problems, and they need different fixes:
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| "Unknown publisher / license / date" | no AppStream metadata in the package | the `metainfo.xml` in this folder (done) |
+| "Unknown publisher / license / date" | no AppStream metadata in the package | the `metainfo.xml` in this folder (written; ships from 0.1.3 — see below) |
 | "Potentially unsafe / third party" | not from a verified store, not signed | publish to a store / buy a signing cert (below) |
 
 ---
@@ -123,8 +123,20 @@ terminal need broad `--filesystem` / `--device` permissions). Steps:
 
 ## Summary
 
-- **Code (done):** AppStream `metainfo.xml` + `.desktop` + the snap target →
-  fixes "Unknown publisher/license/date" and wires the Snap path.
+- **Code (written; first ships in 0.1.3):** AppStream `metainfo.xml` +
+  `.desktop` + the snap target → fixes "Unknown publisher/license/date" and
+  wires the Snap path. Through 0.1.2 the metainfo was authored but never
+  installed by the build, and the `.desktop` was malformed, so shipped packages
+  still showed "Unknown" everywhere. Both fixed in `electron-builder.yml`;
+  **verify on the next Linux build** with:
+
+  ```bash
+  dpkg -c build/*.deb | grep -E "metainfo|\.desktop"
+  dpkg-deb --fsys-tarfile build/*.deb | tar -xO ./usr/share/applications/scelo-ide.desktop
+  ```
+
+  The desktop file must be single-line per key and must not contain
+  `entry=[object Object]`.
 - **Accounts + money (you):** a Snap Store / Flathub publisher account (free) to
   clear the Linux "third party" flag, and Windows/Apple signing certs (paid) to
   clear SmartScreen / Gatekeeper.

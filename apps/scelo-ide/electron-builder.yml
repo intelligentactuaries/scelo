@@ -79,17 +79,46 @@ linux:
     soft-data → tools → hard-data pipeline with a bundled Python and R
     runtime, the lifelib + chainladder + climada stack, and AI co-pilots
     scoped to each stage. Works fully offline once installed.
+  # FLAT map of desktop-entry keys, NOT `desktop: { entry: {...} }`.
+  #
+  # The nested `entry:` form is electron-builder 26+. On the 25.x we pin,
+  # `desktop` is a plain name→value map, so a nested block is written out
+  # verbatim as one line — the shipped 0.1.0 .desktop literally contains
+  # `entry=[object Object]`, and Name/Comment/Keywords below never applied.
+  # Comment then fell back to `description` above, which is four lines long;
+  # desktop-entry values must be single-line, so the file was malformed too.
+  #
+  # If electron-builder is ever bumped to 26, this has to become nested again.
   desktop:
-    entry:
-      Name: Scelo IDE
-      Comment: Actuarial workbench
-      Keywords: actuarial;data-science;python;r;reserving;mortality;capital
+    Name: Scelo IDE
+    Comment: Actuarial workbench with bundled Python and R
+    Keywords: actuarial;data-science;python;r;reserving;mortality;capital;
+    StartupWMClass: Scelo IDE
   target:
     - target: AppImage
       arch: [x64]
     - target: deb
       arch: [x64]
   icon: resources/icons
+
+# ─── deb ───────────────────────────────────────────────────────────────
+# Installs the AppStream metainfo alongside the app. Without it the Ubuntu
+# App Center has no publisher, license or release date to show and falls back
+# to "Unknown publisher / License unknown / Last updated Unknown" — which
+# reads as untrustworthy next to the third-party warning.
+#
+# The file existed in packaging/ but was never wired into the build (PUBLISHING
+# .md called it done); `dpkg -L scelo-ide | grep metainfo` on an installed
+# 0.1.0 returns nothing. electron-builder has no option for extra system paths
+# — extraResources lands inside the app dir — so this passes a source=dest pair
+# straight through to fpm, which is the documented escape hatch. Paths are
+# relative to this file's directory at build time.
+#
+# NOTE: needs a Linux build to verify; it could not be tested where it was
+# written. Check with: dpkg -c build/*.deb | grep metainfo
+deb:
+  fpm:
+    - "packaging/io.intelligentactuaries.scelo.metainfo.xml=/usr/share/metainfo/io.intelligentactuaries.scelo.metainfo.xml"
 
 # ─── Snap (verified-publisher distribution) ────────────────────────────
 # Not in the default linux targets above (snap needs snapcraft/snapd). Build
