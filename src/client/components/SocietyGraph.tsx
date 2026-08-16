@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import * as echarts from 'echarts/core';
 import { GraphChart } from 'echarts/charts';
 import { LegendComponent, TooltipComponent, GridComponent, GraphicComponent } from 'echarts/components';
@@ -29,6 +30,13 @@ type Props = {
    *  first thing on the row, ahead of the keys — so title, keys and plot
    *  stack as one chart anatomy instead of the title floating alone. */
   header?: ReactNode;
+  /** Where the header band renders. Omitted: at the top of the graph's own
+   *  frame. An element: portalled there (the App hands over a slot above
+   *  the graph+Sankey row so the band spans both — wide enough for the
+   *  cluster chips to sit three to a line). `null` means a host is on its
+   *  way but not mounted yet — render no band rather than flash it
+   *  in-frame for a frame. */
+  keysHost?: HTMLElement | null;
 };
 
 type ClusterChip = {
@@ -46,6 +54,7 @@ export function SocietyGraph({
   crossHighlight,
   onCrossHighlight,
   header,
+  keysHost,
 }: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const chartRef = useRef<echarts.ECharts | null>(null);
@@ -355,9 +364,9 @@ export function SocietyGraph({
   // to float over the plot as glass cards, and the hull grid was inset to
   // dodge them; whenever a clump outgrew its cell it slid back underneath,
   // and the c0 label ended up buried under the sentiment key. Whatever sits
-  // over a plot hides part of it; the fix is that nothing does.
-  return (
-    <div className="graph-frame">
+  // over a plot hides part of it; the fix is that nothing does. The band
+  // goes to the App's slot when one is given, else it heads this frame.
+  const keys = (
       <div className="graph-keys">
         {header}
         <div className="sentiment-key" onMouseLeave={onSentimentLeave}>
@@ -381,7 +390,7 @@ export function SocietyGraph({
           })}
           </span>
         </div>
-        <div className="graph-legend" onMouseLeave={onLegendLeave}>
+        <div className="graph-legend cluster-key" onMouseLeave={onLegendLeave}>
           <span className="graph-legend-label">clusters</span>
           <span className="graph-key-items">
           {clusterChips.map((c) => {
@@ -406,6 +415,10 @@ export function SocietyGraph({
           </span>
         </div>
       </div>
+  );
+  return (
+    <div className="graph-frame">
+      {keysHost === undefined ? keys : keysHost && createPortal(keys, keysHost)}
       <div ref={ref} className="graph-canvas" />
     </div>
   );

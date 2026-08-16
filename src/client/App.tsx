@@ -313,6 +313,13 @@ export function App() {
   const [inspectorWidth, setInspectorWidth] = useState<number>(() =>
     loadPanelWidth('swarm-council:inspector-width', 380),
   );
+  // The council/society graphs portal their header band (title chip +
+  // keys) into this slot, which sits ABOVE the graph+Sankey stack. Side by
+  // side, the band then spans both plots — the keys decode the Sankey's
+  // nodes as much as the graph's — and, at the full canvas width, six
+  // cluster chips fit three to a line instead of one. Stacked, the graph
+  // is first anyway, so the band lands in the same place it did.
+  const [keysHost, setKeysHost] = useState<HTMLDivElement | null>(null);
   // Sidebar-collapsed boolean. Persisted, defaults to open.
   // Desktop no longer has a way to open the accordion sidebar — the rail's
   // section list replaced it. Mobile keeps it, where a flyout beside a 44px
@@ -332,41 +339,32 @@ export function App() {
   }, [sidebarOpen]);
 
   // Decision sidebar — collapsible panel on the right that hosts the
-  // agent/group inspector. Default open so first-time users notice it;
-  // collapse state is sticky across reloads.
-  const [decisionOpen, setDecisionOpen] = useState<boolean>(() => {
-    try {
-      const v = localStorage.getItem('swarm-council:decision-open');
-      if (v === '0') return false;
-      if (v === '1') return true;
-    } catch {
-      /* ignore */
-    }
-    return true;
-  });
+  // agent/group inspector. Shut by default: the canvas gets the whole
+  // width until there is something to inspect, and picking an agent, a
+  // profession or a cluster opens it (see setSelectedAgentId & co.). The
+  // choice is sticky across reloads. The key carries a suffix because the
+  // panel used to default open and was persisted as such — an old '1'
+  // would have kept it open for everyone who ever loaded the page.
+  const [decisionOpen, setDecisionOpen] = useState<boolean>(() =>
+    loadPanelOpen('swarm-council:decision-open.v2', false),
+  );
   useEffect(() => {
     try {
-      localStorage.setItem('swarm-council:decision-open', decisionOpen ? '1' : '0');
+      localStorage.setItem('swarm-council:decision-open.v2', decisionOpen ? '1' : '0');
     } catch {
       /* ignore */
     }
   }, [decisionOpen]);
 
-  // Conversation panel — second right column. Default open so users see
-  // the chat surface after their first run; persisted across reloads.
-  const [conversationOpen, setConversationOpen] = useState<boolean>(() => {
-    try {
-      const v = localStorage.getItem('swarm-council:conversation-open');
-      if (v === '0') return false;
-      if (v === '1') return true;
-    } catch {
-      /* ignore */
-    }
-    return true;
-  });
+  // Conversation panel — second right column. Shut by default, like the
+  // decision sidebar; the "ask the swarm" trigger under the plots opens
+  // it, and the choice sticks. Same suffix, same reason.
+  const [conversationOpen, setConversationOpen] = useState<boolean>(() =>
+    loadPanelOpen('swarm-council:conversation-open.v2', false),
+  );
   useEffect(() => {
     try {
-      localStorage.setItem('swarm-council:conversation-open', conversationOpen ? '1' : '0');
+      localStorage.setItem('swarm-council:conversation-open.v2', conversationOpen ? '1' : '0');
     } catch {
       /* ignore */
     }
@@ -1438,11 +1436,14 @@ export function App() {
                     per-child, showed its live status card the whole time.
                     RunStatus is the piece that must always render. */}
                 {tab === 'council' && (
+                  <>
+                  <div className="graph-keys-slot" ref={setKeysHost} />
                   <div className="council-stack">
                     <div className="council-stack-graph">
                       {run && (
                         <CouncilGraph
                           run={run}
+                          keysHost={keysHost}
                           selectedAgentId={selectedAgentId}
                           onSelectAgent={setSelectedAgentId}
                           pinnedProfession={pinnedProfession}
@@ -1494,13 +1495,17 @@ export function App() {
                       </div>
                     )}
                   </div>
+                  </>
                 )}
                 {tab === 'society' && (
+                  <>
+                  <div className="graph-keys-slot" ref={setKeysHost} />
                   <div className="council-stack">
                     <div className="council-stack-graph">
                       {run && run.societyResults.length > 0 && (
                         <SocietyGraph
                           run={run}
+                          keysHost={keysHost}
                           pinned={societyPin}
                           onPinnedChange={setSocietyPin}
                           crossHighlight={crossHighlight}
@@ -1556,6 +1561,7 @@ export function App() {
                       </div>
                     )}
                   </div>
+                  </>
                 )}
                 {tab === 'synthesis' && run && (
                   <SynthesisView run={run} onSelectAgent={setSelectedAgentId} />
@@ -2045,4 +2051,16 @@ function loadPanelWidth(key: string, fallback: number): number {
   } catch {
     return fallback;
   }
+}
+
+/** A persisted open/shut flag ('1' / '0'); anything else is the fallback. */
+function loadPanelOpen(key: string, fallback: boolean): boolean {
+  try {
+    const v = localStorage.getItem(key);
+    if (v === '0') return false;
+    if (v === '1') return true;
+  } catch {
+    /* localStorage may be unavailable */
+  }
+  return fallback;
 }
