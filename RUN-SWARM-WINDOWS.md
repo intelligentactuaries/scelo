@@ -83,6 +83,23 @@ Open the Scelo IDE → `/swarm` and read the status badge (top-right of the pane
 
 The IDE re-probes every 5 s and live-attaches — **no IDE restart needed.**
 
+### 5. (Optional) Let it use your Claude Code login
+
+If Claude Code is installed and signed in on the Windows machine, the swarm
+uses it for council and chat with no API key (see INSTRUCTIONS.md → *Claude
+Code*). Two Windows-specific notes:
+
+- Prefer the **native installer** (`irm https://claude.ai/install.ps1 | iex`),
+  which puts a real `claude.exe` in `%USERPROFILE%\.local\bin`. An npm/bun
+  global install leaves only a `claude.cmd` shim; the server unwraps that to
+  `node …\cli.js` when `node` is on PATH, and otherwise reports it in the
+  settings modal rather than guessing.
+- The settings modal's **claude code** section shows what was found. If it says
+  *not found* but `claude --version` works in your terminal, the swarm was
+  started with a different PATH (e.g. from a service or another shell) — set
+  `SWARM_CLAUDE_BIN` to the full path, or restart it from a shell where
+  `claude` resolves, then press **re-detect**.
+
 ---
 
 ## How the swarm renders

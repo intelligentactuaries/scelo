@@ -5,6 +5,13 @@ import { callClaude } from './claude';
 import { callOpenAI } from './openai';
 import { callGemini } from './gemini';
 import { callHF } from './hf';
+import {
+  CLAUDE_CODE_DEFAULT_MODEL,
+  UNAVAILABLE as CLAUDE_CODE_UNAVAILABLE,
+  callClaudeCode,
+  detectClaudeCode,
+  type ClaudeCodeStatus,
+} from './claudeCode';
 
 export type Role = 'system' | 'user' | 'assistant';
 export interface Message {
@@ -12,8 +19,16 @@ export interface Message {
   content: string;
 }
 
+/** The providers that take an API key. */
 export type CloudProvider = 'anthropic' | 'openai' | 'gemini' | 'hf';
-export type Provider = CloudProvider | 'ollama';
+/** Everything the router can dispatch to. `claude_code` is keyless like
+ *  ollama but metered like the cloud — it spends the user's Claude plan. */
+export type Provider = CloudProvider | 'ollama' | 'claude_code';
+
+const CLOUD_ORDER: CloudProvider[] = ['anthropic', 'openai', 'gemini', 'hf'];
+function isCloud(p: Provider): p is CloudProvider {
+  return (CLOUD_ORDER as string[]).includes(p);
+}
 
 export interface ProviderCall {
   apiKey?: string;
@@ -30,6 +45,9 @@ const DEFAULT_MODELS: Record<Provider, string> = {
   gemini: 'gemini-2.0-flash',
   hf: 'meta-llama/Llama-3.1-8B-Instruct',
   ollama: 'qwen2.5:7b-instruct-q4_K_M',
+  // Not a model id: "inherit whatever the CLI is set to". A user's own
+  // /model choice is the right default for their own subscription.
+  claude_code: CLAUDE_CODE_DEFAULT_MODEL,
 };
 
 const DEFAULT_PREFS: ProviderPrefs = {
@@ -98,6 +116,9 @@ export interface RouteOpts {
 // as an error result and the run completes. Override via SWARM_LLM_TIMEOUT_MS.
 const DEFAULT_LLM_TIMEOUT_MS = Number(process.env.SWARM_LLM_TIMEOUT_MS) || 180_000;
 
+const NO_PROVIDER =
+  'no provider available — add a cloud key, sign in to Claude Code, or install an ollama instruction model';
+
 function withTimeout<T>(p: Promise<T>, ms: number, onTimeout: () => void): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const timer = setTimeout(() => {
@@ -117,16 +138,24 @@ function withTimeout<T>(p: Promise<T>, ms: number, onTimeout: () => void): Promi
   });
 }
 
+// Every Claude Code call is a fresh CLI process — measured at ~350 MB peak
+// RSS and ~2.4 s for a trivial prompt — so its concurrency is its own knob,
+// separate from the cloud pool: 4 in flight is ~1.4 GB, which a laptop
+// running ollama beside the swarm can absorb. Raise it on a bigger box.
+const CLAUDE_CODE_CONCURRENCY = Number(process.env.SWARM_CLAUDE_CODE_CONCURRENCY) || 4;
+
 class LLMRouter {
   private keys: Partial<Record<CloudProvider, string>> = {};
   private prefs: ProviderPrefs = { ...DEFAULT_PREFS };
   private ollamaAvailable: string[] = [];
   private ollamaSelected: string | null = null;
+  private claudeCode: ClaudeCodeStatus = CLAUDE_CODE_UNAVAILABLE;
   private cloudSem = new Semaphore(8);
   private ollamaSem = new Semaphore(32);
+  private claudeCodeSem = new Semaphore(CLAUDE_CODE_CONCURRENCY);
 
   async init(): Promise<void> {
-    await this.refreshOllama();
+    await Promise.all([this.refreshOllama(), this.refreshClaudeCode()]);
   }
 
   async refreshOllama(): Promise<void> {
@@ -136,6 +165,10 @@ class LLMRouter {
       overridden && this.ollamaAvailable.includes(overridden)
         ? overridden
         : pickOllamaModel(this.ollamaAvailable);
+  }
+
+  async refreshClaudeCode(): Promise<void> {
+    this.claudeCode = await detectClaudeCode();
   }
 
   setKey(provider: CloudProvider, key: string | null | undefined): void {
@@ -148,10 +181,15 @@ class LLMRouter {
   }
 
   setPrefs(prefs: Partial<ProviderPrefs>): void {
+    // `models` is replaced, not merged. The vault sends the whole map on
+    // every save and clears an override by leaving its key out (JSON drops
+    // an `undefined` field), so a merge here made overrides un-clearable:
+    // the field emptied in the form, then re-filled from the server's echo,
+    // and only a server restart forgot the model.
     this.prefs = {
       ...this.prefs,
       ...prefs,
-      models: { ...this.prefs.models, ...(prefs.models ?? {}) },
+      models: prefs.models ?? this.prefs.models,
     };
     // refresh in case ollama model override changed
     this.refreshOllama();
@@ -164,9 +202,16 @@ class LLMRouter {
         openai: !!this.keys.openai,
         gemini: !!this.keys.gemini,
         hf: !!this.keys.hf,
+        claude_code: this.claudeCode.available,
       },
       ollamaModels: this.ollamaAvailable,
       ollamaSelected: this.ollamaSelected,
+      claudeCode: {
+        available: this.claudeCode.available,
+        version: this.claudeCode.version,
+        bin: this.claudeCode.bin,
+        reason: this.claudeCode.reason,
+      },
       prefs: this.prefs,
       // What each tier will ACTUALLY use, resolved through the same
       // selectProvider the run takes. The header used to hardcode the ollama
@@ -192,8 +237,15 @@ class LLMRouter {
   }
 
   private firstCloud(): CloudProvider | null {
-    const order: CloudProvider[] = ['anthropic', 'openai', 'gemini', 'hf'];
-    return order.find((p) => this.keys[p]) ?? null;
+    return CLOUD_ORDER.find((p) => this.keys[p]) ?? null;
+  }
+
+  private claudeCodeIfAvailable(): 'claude_code' | null {
+    return this.claudeCode.available ? 'claude_code' : null;
+  }
+
+  private ollamaIfLoaded(): 'ollama' | null {
+    return this.ollamaSelected ? 'ollama' : null;
   }
 
   selectProvider(tier: Tier): Provider | null {
@@ -204,20 +256,27 @@ class LLMRouter {
           ? this.prefs.societyProvider
           : this.prefs.chatProvider;
     if (pref !== 'auto') {
-      if (pref === 'ollama') return this.ollamaSelected ? 'ollama' : null;
+      if (pref === 'ollama') return this.ollamaIfLoaded();
+      if (pref === 'claude_code') return this.claudeCodeIfAvailable();
       return this.keys[pref] ? pref : null;
     }
     // 'auto' routes by tier COST, because the tiers differ by ~50x in call
     // volume and a single policy can't serve both:
     //
     //   council (12–192 calls/run) and chat (1 call/message) → a configured
-    //     cloud key when there is one. Deliberating agents and chat are where
-    //     answer quality is felt, and the volume is small enough to pay for.
+    //     cloud key when there is one, else a signed-in Claude Code, else
+    //     ollama. Deliberating agents and chat are where answer quality is
+    //     felt, and the volume is small enough to pay for. Claude Code sits
+    //     between the two because it is metered like the cloud (it draws on
+    //     the user's Claude plan) but was never an explicit act the way
+    //     pasting a key is — merely having the CLI installed must not
+    //     outrank a key someone deliberately connected.
     //
     //   society (1000 agents/run by default, one call each) → stays local
     //     whenever a model is loaded. Sending it to a metered API turns one
     //     ordinary run into ~1000 billed calls, which is not what anyone
-    //     means by "auto".
+    //     means by "auto". Claude Code is the last resort here for the same
+    //     reason, and because each of those calls is a fresh CLI process.
     //
     // Either tier still falls back to whatever else exists, and an explicit
     // provider above overrides all of this. (History: 'auto' was once
@@ -225,8 +284,43 @@ class LLMRouter {
     // even with a local model loaded; the fix made everything local-first,
     // which then made a deliberately connected cloud key look ignored. This
     // splits the difference along the axis that actually matters — spend.)
-    if (tier === 'society') return this.ollamaSelected ? 'ollama' : this.firstCloud();
-    return this.firstCloud() ?? (this.ollamaSelected ? 'ollama' : null);
+    if (tier === 'society') {
+      return this.ollamaIfLoaded() ?? this.firstCloud() ?? this.claudeCodeIfAvailable();
+    }
+    return this.firstCloud() ?? this.claudeCodeIfAvailable() ?? this.ollamaIfLoaded();
+  }
+
+  private semFor(provider: Provider): Semaphore {
+    if (provider === 'ollama') return this.ollamaSem;
+    if (provider === 'claude_code') return this.claudeCodeSem;
+    return this.cloudSem;
+  }
+
+  private callFor(provider: Provider, messages: Message[], opts: RouteOpts): ProviderCall {
+    return {
+      apiKey: isCloud(provider) ? this.keys[provider] : undefined,
+      model: this.modelFor(provider),
+      messages,
+      temperature: opts.temperature,
+      maxTokens: opts.maxTokens,
+    };
+  }
+
+  private dispatch(provider: Provider, c: ProviderCall): Promise<string> {
+    switch (provider) {
+      case 'ollama':
+        return callOllama(c);
+      case 'claude_code':
+        return callClaudeCode(c, this.claudeCode);
+      case 'anthropic':
+        return callClaude(c);
+      case 'openai':
+        return callOpenAI(c);
+      case 'gemini':
+        return callGemini(c);
+      case 'hf':
+        return callHF(c);
+    }
   }
 
   async route(messages: Message[], tier: Tier, opts: RouteOpts = {}): Promise<string> {
@@ -240,11 +334,7 @@ class LLMRouter {
     opts: RouteOpts = {},
   ): Promise<{ text: string; provider: Provider; model: string; cached: boolean }> {
     const provider = opts.provider ?? this.selectProvider(tier);
-    if (!provider) {
-      throw new Error(
-        'no provider available — add a cloud key or install an ollama instruction model',
-      );
-    }
+    if (!provider) throw new Error(NO_PROVIDER);
     const model = this.modelFor(provider);
     const key = cacheKey({
       provider,
@@ -256,23 +346,18 @@ class LLMRouter {
       const cached = readCache(key);
       if (cached !== null) return { text: cached, provider, model, cached: true };
     }
-    const call: ProviderCall = {
-      apiKey: provider === 'ollama' ? undefined : this.keys[provider as CloudProvider],
-      model,
-      messages,
-      temperature: opts.temperature,
-      maxTokens: opts.maxTokens,
-    };
-    const sem = provider === 'ollama' ? this.ollamaSem : this.cloudSem;
+    const call = this.callFor(provider, messages, opts);
+    const sem = this.semFor(provider);
     const timeoutMs = opts.timeoutMs ?? DEFAULT_LLM_TIMEOUT_MS;
     const result = await sem.run(() => {
       // Start the timeout AFTER acquiring the semaphore so queue time doesn't
       // count against it. The AbortController cancels the underlying fetch
-      // (Ollama honours c.signal); withTimeout also rejects so a provider that
-      // ignores the signal still can't hang the run.
+      // (Ollama honours c.signal; Claude Code kills its CLI process);
+      // withTimeout also rejects so a provider that ignores the signal still
+      // can't hang the run.
       const ac = new AbortController();
       const signal = opts.signal ? AbortSignal.any([opts.signal, ac.signal]) : ac.signal;
-      return withTimeout(dispatch(provider, { ...call, signal }), timeoutMs, () => ac.abort());
+      return withTimeout(this.dispatch(provider, { ...call, signal }), timeoutMs, () => ac.abort());
     });
     writeCache(key, provider, model, result);
     return { text: result, provider, model, cached: false };
@@ -288,11 +373,7 @@ class LLMRouter {
     opts: RouteOpts = {},
   ): AsyncGenerator<string, { provider: Provider; model: string; cached: boolean; full: string }> {
     const provider = opts.provider ?? this.selectProvider(tier);
-    if (!provider) {
-      throw new Error(
-        'no provider available — add a cloud key or install an ollama instruction model',
-      );
-    }
+    if (!provider) throw new Error(NO_PROVIDER);
     const model = this.modelFor(provider);
     const key = cacheKey({
       provider,
@@ -307,14 +388,8 @@ class LLMRouter {
         return { provider, model, cached: true, full: cached };
       }
     }
-    const call: ProviderCall = {
-      apiKey: provider === 'ollama' ? undefined : this.keys[provider as CloudProvider],
-      model,
-      messages,
-      temperature: opts.temperature,
-      maxTokens: opts.maxTokens,
-    };
-    const sem = provider === 'ollama' ? this.ollamaSem : this.cloudSem;
+    const call = this.callFor(provider, messages, opts);
+    const sem = this.semFor(provider);
     let acc = '';
     await sem.acquire();
     try {
@@ -324,8 +399,9 @@ class LLMRouter {
           yield piece;
         }
       } else {
-        // cloud providers don't stream in v1 — single chunk emission
-        const full = await dispatch(provider, call);
+        // cloud providers (and the Claude Code CLI) don't stream in v1 —
+        // single chunk emission
+        const full = await this.dispatch(provider, call);
         acc = full;
         yield acc;
       }
@@ -334,21 +410,6 @@ class LLMRouter {
     }
     writeCache(key, provider, model, acc);
     return { provider, model, cached: false, full: acc };
-  }
-}
-
-function dispatch(provider: Provider, c: ProviderCall): Promise<string> {
-  switch (provider) {
-    case 'ollama':
-      return callOllama(c);
-    case 'anthropic':
-      return callClaude(c);
-    case 'openai':
-      return callOpenAI(c);
-    case 'gemini':
-      return callGemini(c);
-    case 'hf':
-      return callHF(c);
   }
 }
 

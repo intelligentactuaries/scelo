@@ -73,6 +73,15 @@ Keys are saved to **browser localStorage** and POSTed to the local server, which
 
 The server redacts any string matching `sk-...` or `Bearer ...` from upstream error responses before sending them back, so a 401 from OpenAI doesn't leak the partial key in the error.
 
+### Claude Code
+
+No key: the server shells out to the **Claude Code CLI already installed and signed in on this machine** (`claude -p`, headless), so runs draw on your Claude plan rather than a metered API. Detected at boot — `claude` on `PATH` or in the usual install spots (`~/.local/bin`, `~/.claude/local`, Homebrew, npm/bun globals; on Windows also `%APPDATA%\npm`) — and again from the **re-detect** button. The section shows the version and path it found, or why it didn't (an npm `.cmd` shim it can't launch, a broken install). Detection proves the install, not the login: press **test claude code** once — a signed-out CLI answers with an explicit "not signed in" message.
+
+- **model override** — blank inherits the CLI's own default (whatever `/model` is set to); or an alias such as `opus`, `sonnet`, `haiku`, or a full model id.
+- Each call is a fresh CLI process (~350 MB, ~2–4 s), run at most `SWARM_CLAUDE_CODE_CONCURRENCY` at a time (default 4). Runs neutral: no MCP servers (`--strict-mcp-config`), no built-in tools, no session files, no project CLAUDE.md — a council persona wants none of that.
+- Override the binary with `SWARM_CLAUDE_BIN=/path/to/claude` (the IDE's `SCELO_CLAUDE_BIN` is honoured too).
+- A full 192-agent council is ~600 calls. On a Pro plan that can exhaust the 5-hour window mid-run (agents then report errors); pin **council** to ollama, or use a smaller subset.
+
 ### Ollama
 
 Local-only, no auth. The selector shows every model `ollama list` returns; "auto" picks per the preference order. Use the **refresh** button after pulling a new model with `ollama pull <name>`.
@@ -81,15 +90,15 @@ Local-only, no auth. The selector shows every model `ollama list` returns; "auto
 
 Three tiers, three dropdowns:
 
-- **council** — used for the 192-agent deliberation. Auto = first available cloud key, else Ollama.
-- **society** — used for the 1000-agent population. Auto = Ollama (cheap and fast locally), else first cloud key.
-- **chat** — used for the chatbot. Auto = first available cloud key, else Ollama.
+- **council** — used for the 192-agent deliberation. Auto = first available cloud key, else Claude Code, else Ollama.
+- **society** — used for the 1000-agent population. Auto = Ollama (cheap and fast locally), else first cloud key, else Claude Code.
+- **chat** — used for the chatbot. Auto = first available cloud key, else Claude Code, else Ollama.
 
-You can force a specific provider per tier (e.g. council on Claude, society on Ollama, chat on Gemini).
+Claude Code sits between the keys and Ollama on purpose: it is metered like the cloud (your plan), but merely having the CLI installed is not the deliberate act that pasting a key is, so a connected key still wins. You can force a specific provider per tier (e.g. council on Claude Code, society on Ollama, chat on Gemini).
 
 ### Test buttons
 
-Sends a tiny "hello world" prompt through the router on the selected tier, shows provider/model/elapsed-ms. Useful sanity check after adding a key.
+Sends a tiny "hello world" prompt through the router on the selected tier, shows provider/model/elapsed-ms. Useful sanity check after adding a key. **test claude code** pins the provider instead of routing by tier, so it exercises the CLI even when a cloud key would otherwise take every tier — and doubles as the sign-in check.
 
 ### Clear cache
 

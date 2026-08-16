@@ -4,6 +4,7 @@ import type {
   GroupJustificationResponse,
   Intervention,
   JustificationResponse,
+  ProviderId,
   ProviderPrefs,
   ProvidersInfo,
   Run,
@@ -95,6 +96,7 @@ export const api = {
     keys?: Partial<Record<CloudProvider, string | null>>;
     prefs?: Partial<ProviderPrefs>;
     refreshOllama?: boolean;
+    refreshClaudeCode?: boolean;
   }) =>
     jfetch<ProvidersInfo>('/api/providers', {
       method: 'POST',
@@ -103,7 +105,7 @@ export const api = {
     }),
   test: (body: {
     tier?: 'council' | 'society' | 'chat';
-    provider?: 'anthropic' | 'openai' | 'gemini' | 'hf' | 'ollama';
+    provider?: ProviderId;
     prompt: string;
     system?: string;
     fresh?: boolean;

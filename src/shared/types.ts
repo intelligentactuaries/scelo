@@ -194,11 +194,16 @@ export interface SocietyParams {
   financialLiteracy: number;
 }
 
+/** Every provider the router can dispatch to. The four keyed cloud
+ *  providers, local ollama, and `claude_code` — the signed-in Claude Code
+ *  CLI on this machine, keyless but drawing on the user's Claude plan. */
+export type ProviderId = 'anthropic' | 'openai' | 'gemini' | 'hf' | 'ollama' | 'claude_code';
+
 export interface ProviderPrefs {
-  councilProvider: 'auto' | 'anthropic' | 'openai' | 'gemini' | 'hf' | 'ollama';
-  societyProvider: 'auto' | 'anthropic' | 'openai' | 'gemini' | 'hf' | 'ollama';
-  chatProvider: 'auto' | 'anthropic' | 'openai' | 'gemini' | 'hf' | 'ollama';
-  models?: Partial<Record<'anthropic' | 'openai' | 'gemini' | 'hf' | 'ollama', string>>;
+  councilProvider: 'auto' | ProviderId;
+  societyProvider: 'auto' | ProviderId;
+  chatProvider: 'auto' | ProviderId;
+  models?: Partial<Record<ProviderId, string>>;
 }
 
 export interface RunSummary {
@@ -333,9 +338,14 @@ export interface GroupJustificationResponse {
 }
 
 export interface ProvidersInfo {
-  configured: { anthropic: boolean; openai: boolean; gemini: boolean; hf: boolean };
+  /** Keyed providers: a key is held. claude_code: the CLI was found and
+   *  answers `--version` (install proven; sign-in shows on the first call). */
+  configured: { anthropic: boolean; openai: boolean; gemini: boolean; hf: boolean; claude_code: boolean };
   ollamaModels: string[];
   ollamaSelected: string | null;
+  /** What detection found, for the settings modal — where it is, which
+   *  version, and if unavailable, why in a sentence the user can act on. */
+  claudeCode: { available: boolean; version: string | null; bin: string | null; reason: string | null };
   prefs: ProviderPrefs;
   /**
    * The provider + model each tier resolves to right now, straight from the

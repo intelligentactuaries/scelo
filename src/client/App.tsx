@@ -48,7 +48,7 @@ import {
   FlagIcon,
   ServerIcon,
 } from './components/Icons';
-import { SubsetSelector, RunControls } from './components/SidebarControls';
+import { SubsetSelector, RunControls, ProviderList } from './components/SidebarControls';
 import {
   SocietyParamsPanel,
   SocietyParamsSliders,
@@ -747,7 +747,8 @@ export function App() {
     !info.configured.anthropic &&
     !info.configured.openai &&
     !info.configured.gemini &&
-    !info.configured.hf;
+    !info.configured.hf &&
+    !info.configured.claude_code;
 
   const agentInspectorVisible = !!selectedAgentId && selectedAgentId.startsWith('c-');
   const groupInspectorVisible = !agentInspectorVisible && !!pinnedProfession && !!run;
@@ -874,24 +875,7 @@ export function App() {
           </>
         );
       case 'providers':
-        return (
-          <div className="provider-list">
-            {(['anthropic', 'openai', 'gemini', 'hf'] as const).map((p) => (
-              <div key={p} className="provider-row">
-                <span>{p}</span>
-                <span className={info?.configured[p] ? 'status-ok' : 'muted'}>
-                  {info?.configured[p] ? 'on' : 'off'}
-                </span>
-              </div>
-            ))}
-            <div className="provider-row">
-              <span>ollama</span>
-              <span className={info?.ollamaSelected ? 'status-ok' : 'muted'}>
-                {info?.ollamaSelected ? 'on' : 'off'}
-              </span>
-            </div>
-          </div>
-        );
+        return <ProviderList info={info} />;
       default:
         return null;
     }
@@ -1018,6 +1002,8 @@ export function App() {
                     (['anthropic', 'openai', 'gemini', 'hf'] as const)
                       .filter((p) => info.configured[p])
                       .join(', ') || 'none'
+                  } · claude code: ${
+                    info.claudeCode.available ? `v${info.claudeCode.version ?? '?'}` : 'not found'
                   } · council preference: ${info.prefs.councilProvider}`
                 : 'resolving provider…'
             }
@@ -1073,7 +1059,7 @@ export function App() {
               <section className="panel">
                 <div className="panel-label status-warn">no provider available</div>
                 <div className="muted small">
-                  start ollama or add a cloud key to run the swarm.
+                  start ollama, add a cloud key, or sign in to Claude Code to run the swarm.
                 </div>
                 <button className="ghost-btn" onClick={() => setVaultOpen(true)}>
                   open settings ⌘,
@@ -1165,22 +1151,7 @@ export function App() {
               defaultOpen={false}
               icon={<ServerIcon />}
             >
-              <div className="provider-list">
-                {(['anthropic', 'openai', 'gemini', 'hf'] as const).map((p) => (
-                  <div key={p} className="provider-row">
-                    <span>{p}</span>
-                    <span className={info?.configured[p] ? 'status-ok' : 'muted'}>
-                      {info?.configured[p] ? 'on' : 'off'}
-                    </span>
-                  </div>
-                ))}
-                <div className="provider-row">
-                  <span>ollama</span>
-                  <span className={info?.ollamaSelected ? 'status-ok' : 'muted'}>
-                    {info?.ollamaSelected ? 'on' : 'off'}
-                  </span>
-                </div>
-              </div>
+              <ProviderList info={info} />
             </AccordionSection>
           {(progress.length > 0 || society) && (
             <section className="panel">
@@ -1970,7 +1941,7 @@ function EmptyState({
     return (
       <div className="empty-state">
         <div className="empty-headline">no provider available</div>
-        <div className="muted small">add a cloud key or start ollama to begin.</div>
+        <div className="muted small">add a cloud key, sign in to Claude Code, or start ollama to begin.</div>
         <button className="ghost-btn" onClick={onOpenSettings}>
           open settings ⌘,
         </button>

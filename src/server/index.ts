@@ -104,6 +104,8 @@ interface ProvidersUpdate {
   keys?: Partial<Record<'anthropic' | 'openai' | 'gemini' | 'hf', string | null>>;
   prefs?: Parameters<typeof router.setPrefs>[0];
   refreshOllama?: boolean;
+  /** Re-run Claude Code detection — after installing or signing in. */
+  refreshClaudeCode?: boolean;
 }
 
 route('POST', '/api/providers', async ({ req }) => {
@@ -111,6 +113,7 @@ route('POST', '/api/providers', async ({ req }) => {
   if (body.keys) router.setKeys(body.keys);
   if (body.prefs) router.setPrefs(body.prefs);
   if (body.refreshOllama) await router.refreshOllama();
+  if (body.refreshClaudeCode) await router.refreshClaudeCode();
   return json(router.info());
 });
 
@@ -133,7 +136,7 @@ route('POST', '/api/test', async ({ req }) => {
     const provider = body.provider ?? router.selectProvider(tier);
     if (!provider) {
       return json(
-        { error: 'no provider available — add an api key or start ollama' },
+        { error: 'no provider available — add an api key, sign in to Claude Code, or start ollama' },
         { status: 503 },
       );
     }
@@ -1244,4 +1247,9 @@ const info = router.info();
 console.log(`[swarm-council] api on http://localhost:${server.port}`);
 console.log(
   `[swarm-council] ollama models: ${info.ollamaModels.length} (selected: ${info.ollamaSelected ?? 'none'})`,
+);
+console.log(
+  info.claudeCode.available
+    ? `[swarm-council] claude code: v${info.claudeCode.version ?? '?'} at ${info.claudeCode.bin}`
+    : `[swarm-council] claude code: not found${info.claudeCode.bin ? ` (${info.claudeCode.reason})` : ''}`,
 );
