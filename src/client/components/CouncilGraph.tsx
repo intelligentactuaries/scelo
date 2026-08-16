@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import * as echarts from 'echarts/core';
 import { GraphChart } from 'echarts/charts';
 import { LegendComponent, TooltipComponent, TitleComponent, GridComponent, GraphicComponent } from 'echarts/components';
@@ -37,6 +38,12 @@ type Props = {
   /** The pane's title chip, rendered at the head of the graph's own header
    *  band so title, key and plot stack as one chart. */
   header?: ReactNode;
+  /** Where the header band renders. Omitted: at the top of the graph's own
+   *  frame. An element: portalled there (the App hands over a slot above
+   *  the graph+Sankey row so the band spans both). `null` means a host is
+   *  on its way but not mounted yet — render no band rather than flash it
+   *  in-frame for a frame. */
+  keysHost?: HTMLElement | null;
 };
 
 export function CouncilGraph({
@@ -48,6 +55,7 @@ export function CouncilGraph({
   crossHighlight,
   onCrossHighlight,
   header,
+  keysHost,
 }: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const chartRef = useRef<echarts.ECharts | null>(null);
@@ -351,9 +359,9 @@ export function CouncilGraph({
   );
 
   // Title, key, plot — in normal flow, top to bottom, so nothing sits over
-  // the plot (see SocietyGraph for why that mattered).
-  return (
-    <div className="graph-frame">
+  // the plot (see SocietyGraph for why that mattered). The band goes to
+  // the App's slot when one is given, else it heads this frame.
+  const keys = (
       <div className="graph-keys">
         {header}
         <div className="graph-legend" onMouseLeave={onLegendLeave}>
@@ -381,6 +389,10 @@ export function CouncilGraph({
           </span>
         </div>
       </div>
+  );
+  return (
+    <div className="graph-frame">
+      {keysHost === undefined ? keys : keysHost && createPortal(keys, keysHost)}
       <div ref={ref} className="graph-canvas" />
     </div>
   );

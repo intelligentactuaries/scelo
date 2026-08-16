@@ -1334,7 +1334,21 @@ code {
    be glass cards absolutely positioned over the canvas, and the hull grid
    was inset to dodge them; that held only while every clump stayed inside
    its cell, and the moment one didn't (any short pane) the discs slid back
-   under the cards, labels and members hidden. */
+   under the cards, labels and members hidden.
+
+   The band itself renders into `.graph-keys-slot`, which the App places
+   ABOVE the graph+Sankey stack (the graph portals it there). Side by side,
+   the band therefore spans both plots — the keys decode the Sankey's nodes
+   too — and at the full canvas width six cluster chips sit three to a line
+   rather than one under the other, which is what a 560px graph column
+   forced. Stacked, the graph is first anyway, so the band lands where it
+   did. */
+.graph-keys-slot {
+  flex: none;
+  position: relative;
+  z-index: 3;
+}
+
 .graph-frame {
   display: flex;
   flex-direction: column;
@@ -1998,6 +2012,21 @@ input[type='range']:focus::-moz-range-thumb {
   align-items: flex-start;
   font-size: 11px;
   min-width: 0;
+}
+
+/* The society cluster key: six chips of ~250px each (k = 6, descriptor
+   clipped at 44 chars). Left to flex-wrap they break wherever the band's
+   width says — five and one at 1500px, which reads as an afterthought.
+   Once the canvas is wide enough for three abreast, they go on a fixed
+   three-column grid instead: two even rows for six clusters, columns
+   aligned so it reads as a small table. Below that width the grid would
+   overflow (three chips ≈ 800px), so it stays a wrap. */
+@container canvas (min-width: 1000px) {
+  .cluster-key .graph-key-items {
+    display: grid;
+    grid-template-columns: repeat(3, max-content);
+    column-gap: 18px;
+  }
 }
 
 .graph-legend-item {
