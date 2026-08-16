@@ -42,7 +42,7 @@ checkout, exactly like on Linux. It must serve **UI on 5190** and **API on
 ```powershell
 git clone git@github.com:intelligentactuaries/intelligentactuaries.git
 cd intelligentactuaries\swarms          # the swarm-council app lives here
-git checkout feat/swarm-graph-grouping  # or the SHA running on the Linux box
+git checkout main                       # or the SHA running on the Linux box
 bun install
 ```
 
