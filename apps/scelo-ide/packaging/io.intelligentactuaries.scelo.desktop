@@ -7,5 +7,5 @@ Icon=io.intelligentactuaries.scelo
 Terminal=false
 Categories=Development;Science;
 Keywords=actuarial;data-science;python;r;reserving;mortality;capital;
-StartupWMClass=Scelo IDE
+StartupWMClass=@ia/scelo-ide
 StartupNotify=true
