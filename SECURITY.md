@@ -43,13 +43,13 @@ The following surfaces are in scope for security reports:
 - **Sample workspace scaffolds** shipped under
   `apps/scelo-ide/templates/`.
 - **The Scelo brain layer** under `apps/web/src/components/Scelo/`.
+- **The swarm** (council + society simulator) under `apps/swarm/`.
 
 The following are explicitly **out of scope** for this repository:
 
 - The third-party bundled runtimes (Python 3.13, R 4.3, Ollama,
   ripgrep, Pyright, R languageserver, Monaco) — please report
   upstream.
-- The swarm-council app (separate repository).
 - The wider Intelligent Actuaries monorepo (separate repository, with
   its own [`SECURITY.md`](https://github.com/intelligentactuaries/intelligentactuaries/blob/main/SECURITY.md)).
 

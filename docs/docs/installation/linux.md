@@ -9,6 +9,12 @@ one to use: it is the only verified, auto-updating path.
     Ubuntu 22.04's system libraries — this applies to all three install
     methods below, including the AppImage.
 
+    The **apt** repository is published for two Ubuntu codenames only —
+    `jammy` (22.04) and `noble` (24.04). Any other codename resolves to a
+    valid but *empty* index, so `apt update` succeeds and then `apt install`
+    reports "Unable to locate package". On 24.10+, or on Debian, either pin
+    the suite to `noble` (see the manual tab) or use the `.deb` below.
+
 ## 1. apt (verified + auto-updating) — recommended
 
 This adds Scelo's **GPG-signed apt repository**, so the package is
@@ -20,6 +26,15 @@ cryptographically verified and future versions arrive through normal
     ```bash
     curl -1sLf 'https://dl.cloudsmith.io/public/intelligentactuaries/scelo/setup.deb.sh' | sudo -E bash
     sudo apt install scelo-ide
+    ```
+
+    That works as-is on **22.04 and 24.04**, whose codenames are the two we
+    publish. The script otherwise configures whatever codename your OS reports,
+    which for 24.10+ or Debian is an empty index — pin it instead:
+
+    ```bash
+    curl -1sLf 'https://dl.cloudsmith.io/public/intelligentactuaries/scelo/setup.deb.sh' \
+      | sudo -E distro=ubuntu codename=noble bash
     ```
 
 === "Manual (no script run as root)"
@@ -35,24 +50,33 @@ cryptographically verified and future versions arrive through normal
     curl -fsSL https://dl.cloudsmith.io/public/intelligentactuaries/scelo/gpg.key \
       | sudo tee /etc/apt/keyrings/scelo.asc >/dev/null
 
-    # 2 · the repo, in deb822 format
+    # 2 · pick the suite we publish to: jammy for a 22.04 base, else noble
     . /etc/os-release
+    case "$VERSION_CODENAME" in
+      jammy) SUITE=jammy ;;
+      *)     SUITE=noble ;;
+    esac
+
+    # 3 · the repo, in deb822 format
     sudo tee /etc/apt/sources.list.d/scelo.sources >/dev/null <<EOF
     Types: deb
     URIs: https://dl.cloudsmith.io/public/intelligentactuaries/scelo/deb/ubuntu
-    Suites: ${VERSION_CODENAME}
+    Suites: $SUITE
     Components: main
     Architectures: amd64
     Signed-By: /etc/apt/keyrings/scelo.asc
     EOF
 
-    # 3 · install
+    # 4 · install
     sudo apt update && sudo apt install scelo-ide
     ```
 
-    `Suites` is read from `/etc/os-release` rather than hardcoded, so the same
-    block is correct on 22.04, 24.04 and later. To remove the repo later,
-    delete those two files.
+    `Suites` is deliberately **not** `$VERSION_CODENAME` verbatim. The repo
+    carries `jammy` and `noble`; asking for any other codename gets you a
+    signed, valid, *empty* index — `apt update` looks fine and the install then
+    fails with "Unable to locate package". Falling back to `noble` is right for
+    24.04 and later, whose system libraries satisfy the package. To remove the
+    repo later, delete those two files.
 
     Verify the key you installed matches ours:
 

@@ -79,11 +79,11 @@ product name **Scelo IDE**).
 
 ## Run the swarm
 
-The swarm is its own server, not bundled:
+The swarm lives in this repo (`apps/swarm`) and is installed by the root
+`bun install`, but it is its own server, not bundled into the installer:
 
 ```bash
-cd swarms
-PORT=3010 bun run dev
+bun run dev:swarm
 ```
 
 See [Running the swarm](swarm/running.md).

@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 168 168" width="512" height="512" role="img">
+ <title>Hamster</title>
+ <g transform="translate(-256 -216)">
+  <circle cx="302" cy="262" r="19" fill="#C9A05C"/>
+  <circle cx="378" cy="262" r="19" fill="#C9A05C"/>
+  <circle cx="340" cy="300" r="56" fill="#E7C382"/>
+  <circle cx="319" cy="296" r="9" fill="#3B3229"/>
+  <circle cx="361" cy="296" r="9" fill="#3B3229"/>
+ </g>
+</svg>

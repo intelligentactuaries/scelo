@@ -18,15 +18,17 @@
     "packages/*",
     "apps/web",
     "apps/scelo-ide",
-    "apps/web-online"
+    "apps/web-online",
+    "apps/swarm"
   ],
   "scripts": {
     "dev": "bun run --cwd apps/scelo-ide dev",
     "dev:web": "bun run --cwd apps/web dev",
+    "dev:swarm": "bun run --cwd apps/swarm dev",
     "web:online": "bun run --cwd apps/web build && bun run --cwd apps/web-online start",
     "build": "bun run --cwd apps/scelo-ide build",
-    "check": "bun run --cwd apps/web check && bun run --cwd apps/scelo-ide build:main",
-    "test": "bun run --cwd apps/web test",
+    "check": "bun run --cwd apps/web check && bun run --cwd apps/scelo-ide build:main && bun run --cwd apps/swarm typecheck",
+    "test": "bun run --cwd apps/web test && bun run --cwd apps/swarm test",
     "ide:dist:linux": "bun run --cwd apps/scelo-ide dist:linux",
     "ide:dist:mac": "bun run --cwd apps/scelo-ide dist:mac",
     "ide:dist:win": "bun run --cwd apps/scelo-ide dist:win"

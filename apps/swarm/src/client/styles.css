@@ -1,0 +1,6384 @@
+:root {
+  /* ─── Light theme — aligned with the public site (website_v2 cream/ink) ─
+     Token NAMES stay the same as before so the 3000+ downstream rules
+     need no edits; only the VALUES change. Anthropic-warm-cream /
+     warm-charcoal register, half-step off so this stays a sibling of
+     the website rather than a clone. Lifted from
+     website_v2/src/styles/theme.css. */
+  --bg: #E8E4D8;               /* cream nudged toward warm-greige */
+  --bg-2: #F2EEE2;             /* lighter cream — inset panels / hover */
+  --fg: #181715;               /* warm near-black          — 12.2:1 on --bg */
+  /* Text ramp re-cut for WCAG AA: --muted was #8C8476 at 2.5:1, i.e. below
+     the 4.5:1 floor and the single biggest legibility complaint. Tiers are
+     >=10 ΔL* apart so fg / fg-2 / muted still read as a hierarchy. Values
+     match Scelo's theme.css so the iframed swarm and its host agree. */
+  --fg-2: #45423D;             /* warm muted secondary text —  6.8:1 */
+  --muted: #605A51;            /* warm dim                  —  4.7:1 */
+  --grid: rgba(24, 23, 21, 0.10); /* hairline rules */
+  --border: #CDC7B8;           /* warm tan border */
+  --border-strong: #181715;    /* dark outline on focused inputs / Run Swarm */
+
+  /* Status / semantic accents — punchy forest-green primary takes over
+     from the old red accent. Reds re-aimed at error / adversarial. */
+  /* Semantics deepened to clear 4.5:1 as TEXT on cream (they double as
+     fills, where the darker tone only helps the --bg text sitting on them). */
+  --consensus: #26714C;        /* forest green (semantic: shipped)     — 4.7:1 */
+  --dissent: #8E5823;          /* clay-orange (semantic: in progress)  — 4.6:1 */
+  --adversarial: #B43939;      /*                                      — 4.6:1 */
+  --accent: #26714C;           /* primary brand cue — forest green */
+  --accent-soft: rgba(38, 113, 76, 0.12);
+  --link: #345DCB;             /* informational links                  — 4.6:1 */
+
+  --radius: 2px;               /* sharp — matches the website's 2px corners */
+  --radius-lg: 4px;
+  --radius-pill: 999px;        /* pill chrome reserved for primary actions */
+  --track: 0.04em;             /* SN Pro is geometric — less tracking than mono */
+
+  /* WMTR identity tokens. Defined at :root, NOT on .wmtr-strip: the
+     intervention row (and the preview link) render OUTSIDE the strip, and a
+     var() that resolves to nothing there turned the apply-&-re-simulate CTA
+     into bg-coloured text on a transparent fill — invisible until its
+     hardcoded hover colour kicked in. --consensus is theme-aware, so this
+     follows the dark override automatically. */
+  --wmtr-primary: var(--consensus);
+  --wmtr-easing: cubic-bezier(0.16, 1, 0.3, 1);
+
+  /* Liquid-glass recipe — one set of tokens so every floating container
+     (flyouts, status cards, legends, panels, chips) frosts the same way. */
+  --glass-bg: color-mix(in srgb, var(--bg-2) 72%, transparent);
+  /* Content panels (flyouts, docks, modals) need more body behind text than
+     a hover chip does — same glass, a heavier pour. */
+  --glass-bg-strong: color-mix(in srgb, var(--bg-2) 88%, transparent);
+  --glass-border: color-mix(in srgb, var(--border) 82%, transparent);
+  --glass-blur: blur(14px) saturate(140%);
+  --glass-shadow: 0 8px 28px rgba(24, 23, 21, 0.14);
+
+  /* Type stack. SN Pro everywhere — both proportional and "mono" surfaces.
+     Tabular alignment in numeric blocks is handled by
+     `font-variant-numeric: tabular-nums` on the elements that need it. */
+  --font: 'SN Pro', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+          Helvetica, Arial, sans-serif;
+  --mono: var(--font);
+
+  --shadow-1: 0 1px 2px rgba(24, 23, 21, 0.04);
+  --shadow-2: 0 2px 8px rgba(24, 23, 21, 0.06);
+
+  /* Tell the browser which scheme its OWN chrome should follow. Everything
+     the stylesheet paints is themed by the tokens above, but the parts the
+     browser draws itself — the <select> dropdown list above all, scrollbar
+     tracks, the password-reveal eye — are not; they follow color-scheme.
+     This used to be pinned to `light` (by the meta in index.html and by
+     omission here), so in dark mode a dropdown opened as a WHITE list
+     with the select's inherited cream text on it: white on white. */
+  color-scheme: light;
+}
+
+/* Dark theme — warm-charcoal register, mirroring website_v2. Auto-applies
+   whenever `<html data-theme="dark">` is set. */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #1B1815;
+  --bg-2: #221E1A;
+  --fg: #F1ECDF;               /* — 12.5:1 on --bg */
+  /* Mirror of the light ramp. --muted was #746C60 at 2.9:1 on the raised
+     --bg-2 surface: a dark warm grey on warm charcoal, effectively invisible. */
+  --fg-2: #BEB8AD;             /* —  7.5:1 */
+  --muted: #978F82;            /* —  4.6:1 */
+  --grid: rgba(241, 236, 223, 0.12);
+  --border: #423A31;
+  --border-strong: #F1ECDF;
+
+  --consensus: #82D7AF;
+  --dissent: #EBB46E;
+  --adversarial: #E66E6E;
+  --accent: #82D7AF;
+  --accent-soft: rgba(130, 215, 175, 0.14);
+  --link: #82A0E6;
+
+  /* Glass on charcoal needs a deeper shadow to separate from the ground. */
+  --glass-shadow: 0 10px 32px rgba(0, 0, 0, 0.38);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font);
+  font-size: 13px;
+  line-height: 1.5;
+  font-weight: 400;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+button,
+input,
+textarea,
+select {
+  font-family: inherit;
+  font-size: inherit;
+  color: inherit;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);   /* pill-shaped by default */
+  padding: 8px 14px;
+  outline: none;
+  transition: border-color 140ms ease, background 140ms ease, color 140ms ease;
+}
+
+button {
+  cursor: pointer;
+  letter-spacing: var(--track);
+  /* SN Pro reads better in sentence case than ALL CAPS — opt back in
+     selectively via .panel-label / .small-caps */
+  text-transform: none;
+  font-weight: 500;
+}
+
+button:hover:not(:disabled) {
+  border-color: var(--border-strong);
+  color: var(--fg);
+  background: var(--bg-2);
+}
+
+button:disabled {
+  color: var(--muted);
+  border-color: var(--grid);
+  cursor: not-allowed;
+}
+
+textarea,
+input {
+  border-radius: var(--radius-lg);    /* square-pill, less round than buttons */
+  padding: 10px 14px;
+}
+
+textarea {
+  resize: vertical;
+  min-height: 96px;
+  width: 100%;
+}
+
+textarea:focus,
+input:focus,
+select:focus {
+  border-color: var(--border-strong);
+}
+
+/* The dropdown list is painted by the browser from the <select>'s and each
+   <option>'s computed colours — and a `transparent` select background is
+   not a colour it can use, so it fell back to the platform default (white).
+   Give both an opaque, themed pair. --bg-2 is what the settings modal's
+   glass already resolves to, so the closed control looks unchanged. */
+select {
+  background: var(--bg-2);
+  color: var(--fg);
+}
+
+select option {
+  background: var(--bg-2);
+  color: var(--fg);
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.small {
+  font-size: 11px;
+}
+
+.status-ok {
+  color: var(--consensus);
+}
+
+.status-warn {
+  color: var(--dissent);
+}
+
+.status-err {
+  color: var(--adversarial);
+}
+
+.num {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.app-shell {
+  display: grid;
+  /* topbar now hosts the tabs — bumped from 40 → 44 to give the tab
+     buttons enough vertical room without being cramped. */
+  grid-template-rows: 44px 1fr auto;
+  height: 100vh;
+}
+
+.topbar {
+  display: grid;
+  /* wordmark · spacer · status cluster · 32px reservation.
+     The tab strip became the pet rail and moved down beside the canvas, so
+     the middle column is now just breathing room. */
+  grid-template-columns: auto 1fr auto 32px;
+  align-items: stretch;
+  padding: 0 14px 0 18px;
+  border-bottom: 1px solid var(--grid);
+  gap: 14px;
+  min-height: 44px;
+}
+
+.topbar .wordmark {
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+}
+
+.topbar .tabs {
+  border-bottom: none;
+  padding: 0;
+  align-self: stretch;
+}
+
+.topbar .status-cluster {
+  align-self: center;
+}
+
+/* ─── Left rail: thin vertical column under the header, claude.ai-style.
+       Always visible. Hosts the PanelLeft toggle for now; ready to grow
+       with quick-action icons later. */
+
+.left-rail {
+  position: relative;            /* anchor for the absolute .rail-flyout */
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding-top: 12px;
+  gap: 8px;
+  background: var(--bg-2);
+}
+
+.left-rail .sidebar-toggle {
+  width: 32px;
+  height: 32px;
+  border: none;
+  background: transparent;
+  color: var(--fg-2);
+  border-radius: 8px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.left-rail .sidebar-toggle:hover {
+  background: var(--bg);
+  color: var(--fg);
+  border: none;
+}
+
+/* When the sidebar is collapsed, the rail also shows the section icons
+   as quick-access buttons. Click an icon to expand the sidebar AND open
+   that section. Visual treatment identical to the toggle for cohesion. */
+.left-rail-divider {
+  width: 18px;
+  height: 1px;
+  background: var(--grid);
+  margin: 4px 0 2px;
+}
+
+.rail-icon-btn {
+  position: relative;
+  width: 32px;
+  height: 32px;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  border-radius: 8px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background 140ms ease, color 140ms ease;
+}
+
+.rail-icon-btn:hover {
+  background: var(--bg);
+  color: var(--fg);
+  border: none;
+}
+
+/* Highlighted state when this section's flyout is currently open. */
+.rail-icon-btn.is-active {
+  background: var(--bg);
+  color: var(--fg);
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+
+/* Hover tooltip — uses the data-tooltip attribute, sits to the right of
+   the icon with a small offset and a tail-less dark bubble for contrast. */
+.rail-icon-btn[data-tooltip]::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  left: calc(100% + 8px);
+  top: 50%;
+  transform: translateY(-50%);
+  /* liquid-glass-dark */
+  background: rgba(20, 22, 28, 0.58);
+  /* The glass bubble is always dark in BOTH themes, so its text must be a fixed
+     light cream. Previously var(--bg) made it invisible in dark mode (--bg is
+     dark there). */
+  color: #f1ecdf;
+  -webkit-backdrop-filter: blur(7px) saturate(130%);
+  backdrop-filter: blur(7px) saturate(130%);
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  box-shadow:
+    0 8px 22px rgba(0, 0, 0, 0.22),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+  padding: 4px 10px;
+  border-radius: 6px;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 120ms ease 140ms;
+  z-index: 20;
+}
+
+.rail-icon-btn:hover[data-tooltip]::after,
+.rail-icon-btn:focus-visible[data-tooltip]::after {
+  opacity: 1;
+}
+
+/* Suppress the tooltip when the section's flyout is already open — the
+   panel title duplicates the label. */
+.rail-icon-btn.is-active[data-tooltip]::after {
+  display: none;
+}
+
+/* ─── Rail flyout — single-section popover next to the rail ──────── */
+
+.rail-flyout {
+  position: absolute;
+  /* Just past the icon it belongs to. The old 44px was the width of the
+     column the tools used to live in; inside the rail the icons start at 0,
+     so that pushed the panel out into the canvas. */
+  left: 42px;
+  width: 320px;
+  max-height: calc(100vh - 88px);
+  /* Theme-aware glass — shared tokens (strong pour: this panel carries
+     sliders and copy, so it needs more body than a hover chip). */
+  background: var(--glass-bg-strong);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--glass-shadow);
+  border-radius: 12px;
+  z-index: 12;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  /* `top` is set inline from JS to match the clicked icon's y-offset. */
+}
+
+.rail-flyout-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--grid);
+}
+
+.rail-flyout-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 500;
+  font-size: 13px;
+  color: var(--fg);
+}
+
+.rail-flyout-body {
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow-y: auto;
+}
+
+.wordmark {
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.scenario-title {
+  text-align: center;
+  letter-spacing: var(--track);
+  text-transform: uppercase;
+}
+
+.status-cluster {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: flex-end;
+  letter-spacing: var(--track);
+  text-transform: uppercase;
+}
+
+.ghost-btn {
+  padding: 4px 8px;
+  font-size: 11px;
+}
+
+.body {
+  display: grid;
+  /* grid-template-columns is set inline from App.tsx so the sidebar and inspector
+     widths can be dragged. Fallback here for SSR / initial paint. */
+  grid-template-columns: 320px 6px 1fr;
+  min-height: 0;
+}
+
+.sidebar {
+  /* claude.ai-style: subtle tint instead of a hairline border. The
+     accordion section pills paint their own borders so the panel
+     still reads as structured without a wrapper rule. */
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  background: var(--bg-2);
+  padding-top: 14px;
+}
+
+.panel {
+  padding: 14px;
+  border-bottom: 1px solid var(--grid);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.panel-label {
+  font-size: 11px;
+  letter-spacing: var(--track);
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+/* ── Simulation in-progress panel ──────────────────────────────────────────
+   Quiet, minimal progress for the /api/simulate request: elapsed timer +
+   pipeline phases that walk forward with a soft pulse on the active step. */
+.sim-progress {
+  max-width: 460px;
+  margin: 32px 0 0 2px;
+  animation: simFade 0.45s ease both;
+}
+@keyframes simFade {
+  from { opacity: 0; transform: translateY(5px); }
+  to { opacity: 1; transform: none; }
+}
+.sim-progress-phases {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.sim-phase {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  font-size: 12.5px;
+  transition: opacity 0.45s ease;
+}
+.sim-phase-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  border: 1px solid var(--border);
+  background: transparent;
+  transition: background 0.45s ease, border-color 0.45s ease;
+}
+.sim-phase-label {
+  color: var(--fg-2);
+  transition: color 0.45s ease;
+}
+.sim-phase-hint {
+  margin-left: auto;
+  font-size: 10.5px;
+  color: var(--muted);
+  opacity: 0.75;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+}
+.sim-phase.is-pending {
+  opacity: 0.4;
+}
+.sim-phase.is-done .sim-phase-dot {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.sim-phase.is-done .sim-phase-label {
+  color: var(--fg-2);
+}
+.sim-phase.is-active .sim-phase-label {
+  color: var(--fg);
+}
+.sim-phase.is-active .sim-phase-dot {
+  background: var(--accent);
+  border-color: var(--accent);
+  animation: simPulse 1.35s ease-in-out infinite;
+}
+@keyframes simPulse {
+  0%, 100% { box-shadow: 0 0 0 0 var(--accent-soft); }
+  50% { box-shadow: 0 0 0 5px var(--accent-soft); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sim-phase.is-active .sim-phase-dot { animation: none; }
+}
+
+.scenario-input {
+  background: var(--bg);
+  border-color: var(--border);
+}
+
+.primary-btn {
+  background: var(--fg);
+  color: var(--bg);
+  border-color: var(--fg);
+  font-weight: 600;
+}
+
+.primary-btn:hover:not(:disabled) {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--bg);
+}
+
+.primary-btn:disabled {
+  background: transparent;
+  color: var(--muted);
+  border-color: var(--grid);
+}
+
+:root {
+  /* How far the shut composer sits off the bottom. Shared so the scrolling
+     tabs can reserve the same amount and let their last row clear it. */
+  --dock-lift: clamp(72px, 14vh, 190px);
+}
+
+.canvas {
+  /* Rail beside the content. `minmax(0, 1fr)` on the stack, not `1fr`: a
+     grid child's default min-width is auto, so a wide chart inside would
+     otherwise push the column past the viewport instead of scrolling. */
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  min-height: 0;
+}
+
+.canvas-stack {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  /* Containing block for the shut chat dock, which floats over the canvas
+     rather than sitting in this column — see .chat-dock. */
+  position: relative;
+}
+
+.tabs {
+  display: flex;
+  border-bottom: 1px solid var(--grid);
+  padding: 0 14px;
+  gap: 0;
+}
+
+.tab {
+  border: none;
+  border-bottom: 1px solid transparent;
+  border-radius: 0;
+  padding: 10px 14px;
+  color: var(--muted);
+  letter-spacing: var(--track);
+  text-transform: uppercase;
+}
+
+.tab:hover:not(:disabled) {
+  color: var(--fg);
+  border-bottom-color: var(--border);
+}
+
+.tab.active {
+  color: var(--fg);
+  border-bottom-color: var(--accent);
+}
+
+.canvas-body {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  position: relative;
+  /* Flex-column so an upstream block (eg. the WMTR strip) pushes the
+     council-stack down instead of being overlaid by it. The absolutely
+     positioned progress bar + rerun badge are unaffected. */
+  display: flex;
+  flex-direction: column;
+  /* Container queries below (.council-stack) react to the canvas's own
+     width so opening the right panels can flip the layout to stacked
+     without the viewport itself having to shrink. */
+  container-type: inline-size;
+  container-name: canvas;
+}
+
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  gap: 8px;
+}
+
+.empty-headline {
+  letter-spacing: var(--track);
+  text-transform: uppercase;
+}
+
+.bottom-drawer {
+  border-top: 1px solid var(--grid);
+  background: var(--bg);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.bottom-drawer.collapsed {
+  height: 36px;
+}
+
+.bottom-drawer.open {
+  height: 260px;
+}
+
+.drawer-handle {
+  padding: 10px 14px;
+  letter-spacing: var(--track);
+  text-transform: uppercase;
+  color: var(--muted);
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  text-align: left;
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 14px;
+  flex: 0 0 36px;
+}
+
+.drawer-handle:hover {
+  color: var(--fg);
+}
+
+.chat-body {
+  display: grid;
+  grid-template-rows: 1fr auto;
+  flex: 1;
+  min-height: 0;
+  border-top: 1px solid var(--grid);
+}
+
+.chat-scroller {
+  overflow-y: auto;
+  padding: 10px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  font-size: 12px;
+}
+
+.chat-empty {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.chat-samples {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.chat-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border-left: 2px solid var(--grid);
+  padding-left: 10px;
+}
+
+.chat-row.user {
+  border-left-color: var(--accent);
+}
+
+.chat-row.assistant {
+  border-left-color: var(--consensus);
+}
+
+.chat-author {
+  font-size: 10px;
+  letter-spacing: var(--track);
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.chat-content {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 13px;
+  color: var(--fg);
+  line-height: 1.55;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Assistant messages: rendered Markdown produces real block elements,
+   so we drop pre-wrap (which would double the line-breaks from <p>/<li>)
+   and define structural typography below. */
+.chat-content.chat-content-md {
+  white-space: normal;
+}
+
+.chat-md-h3 {
+  margin: 10px 0 4px;
+  font-size: 13.5px;
+  font-weight: 600;
+  letter-spacing: 0;
+  color: var(--fg);
+}
+
+.chat-md-h3:first-child { margin-top: 0; }
+
+.chat-md-h4 {
+  margin: 8px 0 2px;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0;
+  color: var(--fg-2);
+}
+
+.chat-md-h4:first-child { margin-top: 0; }
+
+.chat-md-p {
+  margin: 0 0 6px;
+}
+
+.chat-md-p:last-child { margin-bottom: 0; }
+
+.chat-md-list {
+  margin: 4px 0 8px;
+  padding-left: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.chat-md-list:last-child { margin-bottom: 0; }
+
+.chat-md-list-nested {
+  margin: 2px 0 0;
+  padding-left: 16px;
+  list-style: circle;
+}
+
+.chat-md-quote {
+  margin: 4px 0 6px;
+  padding: 4px 10px;
+  border-left: 2px solid var(--accent);
+  background: rgba(0, 0, 0, 0.03);
+  border-radius: 0 4px 4px 0;
+  color: var(--fg-2);
+  font-style: italic;
+}
+
+.chat-md-quote:last-child { margin-bottom: 0; }
+
+.chat-content.chat-content-md strong {
+  font-weight: 600;
+  color: var(--fg);
+}
+
+.chat-content.chat-content-md em {
+  font-style: italic;
+}
+
+.chat-content.chat-content-md code {
+  font-family: ui-monospace, SFMono-Regular, 'JetBrains Mono', Menlo, Consolas, monospace;
+  font-size: 12px;
+  background: rgba(0, 0, 0, 0.05);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+
+.chat-md-pre {
+  margin: 6px 0 8px;
+  padding: 8px 10px;
+  background: rgba(0, 0, 0, 0.05);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-family: ui-monospace, SFMono-Regular, 'JetBrains Mono', Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-x: auto;
+  white-space: pre;
+}
+
+.chat-input-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  padding: 8px 14px;
+  border-top: 1px solid var(--grid);
+}
+
+.chat-input {
+  min-height: 36px;
+  max-height: 120px;
+  resize: vertical;
+  font-size: 12px;
+}
+
+.canon-scroll {
+  position: absolute;
+  inset: 0;
+  overflow-y: auto;
+  padding: 18px 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.canon-headline {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.canon-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.canon-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.canon-row {
+  border: 1px solid var(--grid);
+  border-radius: var(--radius);
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.canon-row-head {
+  display: grid;
+  grid-template-columns: 1fr 90px auto;
+  gap: 6px;
+}
+
+.canon-title,
+.canon-year,
+.canon-url,
+.canon-takeaway,
+.canon-abstract,
+.canon-import-textarea {
+  font-family: var(--mono);
+  font-size: 12px;
+  background: var(--bg-2);
+  color: var(--fg);
+  border: 1px solid var(--grid);
+  border-radius: var(--radius);
+  padding: 6px 8px;
+  width: 100%;
+}
+
+.canon-year {
+  text-align: right;
+}
+
+.canon-takeaway,
+.canon-abstract,
+.canon-import-textarea {
+  resize: vertical;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.canon-takeaway {
+  color: var(--consensus);
+}
+
+.import-controls {
+  display: flex;
+  gap: 10px;
+  align-items: end;
+  flex-wrap: wrap;
+}
+
+.import-controls label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.import-controls select {
+  font-family: var(--mono);
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 4px 8px;
+}
+
+code {
+  background: var(--bg-2);
+  padding: 1px 5px;
+  border-radius: var(--radius);
+  border: 1px solid var(--grid);
+}
+
+.canvas-progress-bar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: var(--grid);
+  z-index: 6;
+}
+
+.canvas-progress-fill {
+  height: 100%;
+  background: var(--accent);
+  transition: width 240ms ease-out;
+}
+
+/* Floating re-run badge: shown when a previous run is still on-screen and
+   we're streaming a new one. Sits top-centre of the canvas, doesn't block
+   pointer events, and surfaces per-round progress without forcing the user
+   back to the empty state. */
+.rerun-badge {
+  position: absolute;
+  top: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 7;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  border-radius: var(--radius-pill);
+  background: var(--glass-bg-strong);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--glass-shadow);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  font-size: 12px;
+  color: var(--fg);
+  pointer-events: none;
+  max-width: calc(100% - 28px);
+}
+
+.rerun-badge-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 0 rgba(0, 0, 0, 0);
+  animation: rerun-pulse 1.4s ease-in-out infinite;
+  flex: 0 0 auto;
+}
+
+@keyframes rerun-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%      { opacity: 0.45; transform: scale(0.78); }
+}
+
+.rerun-badge-label {
+  font-weight: 500;
+  letter-spacing: 0;
+  white-space: nowrap;
+}
+
+.rerun-badge-progress {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.rerun-badge-chip {
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+  color: var(--muted);
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+}
+
+.help-modal {
+  width: min(440px, 90vw);
+}
+
+.shortcuts-table {
+  border-collapse: collapse;
+  font-size: 12px;
+  width: 100%;
+}
+
+.shortcuts-table td {
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--grid);
+}
+
+.shortcuts-table tr:last-child td {
+  border-bottom: none;
+}
+
+.shortcut-key {
+  font-family: var(--mono);
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--accent);
+  white-space: nowrap;
+  width: 90px;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--bg);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--grid);
+  border-radius: var(--radius);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--border);
+}
+
+.provider-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.provider-row {
+  display: flex;
+  justify-content: space-between;
+  letter-spacing: var(--track);
+  text-transform: uppercase;
+  font-size: 11px;
+  border-bottom: 1px dashed var(--grid);
+  padding: 4px 0;
+}
+
+.test-out {
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  border: 1px solid var(--grid);
+  border-radius: var(--radius);
+  background: var(--bg-2);
+  color: var(--fg);
+  font-size: 11px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-width: 520px;
+  text-align: left;
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  /* Theme-aware dim — bg-2 tint reads as a soft wash on both themes. */
+  background: color-mix(in srgb, var(--bg) 35%, transparent);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 50;
+}
+
+.modal {
+  width: min(720px, 92vw);
+  max-height: 88vh;
+  /* Theme-aware glass — shared tokens, same pour as the popover family. */
+  background: var(--glass-bg-strong);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--glass-shadow);
+  border-radius: 14px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.modal-header,
+.modal-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--grid);
+}
+
+.modal-footer {
+  border-bottom: none;
+  border-top: 1px solid var(--grid);
+  gap: 10px;
+}
+
+/* The footer's status message is conditional, so under the shared
+   `justify-content: space-between` the lone save button sat against the LEFT
+   edge until a message rendered and became the first child — then the button
+   jumped 631px to the right. Same button, two resting places, which reads as
+   a second save button appearing after you press the first. Anchor it right
+   whether or not anything sits beside it. */
+.modal-footer .primary-btn {
+  margin-left: auto;
+}
+
+.modal-body {
+  padding: 14px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.modal-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.key-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.key-row {
+  display: grid;
+  /* Not 1fr 1fr: the two fields hold very different content. The key field
+     shows a short prefix ("sk-ant-…") or a masked value, while the override
+     field carries a full model id — "model override (e.g.
+     meta-llama/Llama-3.1-8B-Instruct)" needs 319px and was being cut at 303.
+     minmax(0, …) so a long value shrinks the track rather than widening the
+     card past the modal. */
+  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr);
+  grid-template-rows: auto auto;
+  gap: 6px;
+  border: 1px solid var(--grid);
+  border-radius: var(--radius);
+  padding: 8px;
+}
+
+.key-row .key-label {
+  grid-column: 1 / span 2;
+  display: flex;
+  justify-content: space-between;
+  letter-spacing: var(--track);
+  text-transform: uppercase;
+  font-size: 11px;
+}
+
+.ollama-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr 2fr auto;
+  gap: 10px;
+  align-items: end;
+}
+
+.claude-code-row {
+  display: grid;
+  grid-template-columns: 1fr 2fr auto;
+  gap: 10px;
+  align-items: end;
+}
+
+/* Grid items refuse to shrink below their content by default (min-width:
+   auto), which would let a long path push the columns apart. */
+.claude-code-row > * {
+  min-width: 0;
+}
+
+/* The binary's path can be long (nvm prefixes, AppData); one line,
+   ellipsised, full path on hover via title. */
+.claude-code-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tier-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 10px;
+}
+
+.tier-grid select {
+  width: 100%;
+}
+
+.test-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.subset-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: space-between;
+}
+
+.subset-pills {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.pill {
+  padding: 2px 8px;
+  font-size: 11px;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  border-radius: var(--radius);
+}
+
+.pill.active {
+  color: var(--fg);
+  border-color: var(--fg);
+}
+
+.checkbox-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  font-size: 11px;
+  color: var(--muted);
+  letter-spacing: var(--track);
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.checkbox-row input {
+  accent-color: var(--accent);
+  width: 12px;
+  height: 12px;
+  padding: 0;
+}
+
+.prog-row {
+  display: grid;
+  grid-template-columns: 24px 1fr 56px auto;
+  gap: 6px;
+  align-items: center;
+  margin-bottom: 4px;
+}
+
+.prog-track {
+  height: 3px;
+  background: var(--grid);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.prog-fill {
+  height: 100%;
+  background: var(--accent);
+  transition: width 200ms linear;
+}
+
+/* Chart anatomy for the graph panes: title and keys in a header band, plot
+   below it, in normal flow. Nothing floats over the plot. The keys used to
+   be glass cards absolutely positioned over the canvas, and the hull grid
+   was inset to dodge them; that held only while every clump stayed inside
+   its cell, and the moment one didn't (any short pane) the discs slid back
+   under the cards, labels and members hidden.
+
+   The band itself renders into `.graph-keys-slot`, which the App places
+   ABOVE the graph+Sankey stack (the graph portals it there). Side by side,
+   the band therefore spans both plots — the keys decode the Sankey's nodes
+   too — and at the full canvas width six cluster chips sit three to a line
+   rather than one under the other, which is what a 560px graph column
+   forced. Stacked, the graph is first anyway, so the band lands where it
+   did. */
+.graph-keys-slot {
+  flex: none;
+  position: relative;
+  z-index: 3;
+}
+
+.graph-frame {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 0;
+  min-height: 0;
+  min-width: 0;
+}
+
+.graph-keys {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 22px;
+  padding: 10px 14px 6px;
+  font-size: 11px;
+  /* The title chip's explainer bubble hangs below the band, over the plot,
+     while hovered — the one thing allowed to, because it is asked for and
+     goes away. */
+  overflow: visible;
+  position: relative;
+  z-index: 3;
+}
+
+.graph-canvas {
+  position: relative;
+  flex: 1 1 0;
+  min-height: 0;
+  width: 100%;
+}
+
+/* Council tab places the force-graph on the left and the decision Sankey
+   on the right (50/50). Both stop above the chat dock so the dock sits
+   cleanly below them — mirrors the reference UI mockup.
+   Wrapped in a relatively-positioned container that takes the remaining
+   flex space; columns size themselves via `flex: 1 1 0`. */
+.council-stack {
+  /* In-flow inside the now-flex-column .canvas-body so any block above
+     (eg. the WMTR strip) pushes the stack down rather than being overlaid
+     by it. `flex: 1 1 0` fills the remaining vertical room. */
+  position: relative;
+  flex: 1 1 0;
+  display: flex;
+  flex-direction: row;
+  min-width: 0;
+  min-height: 0;
+}
+
+.council-stack-graph {
+  position: relative;
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 0;
+  /* Column so the graph's frame (header band + plot) fills it top to
+     bottom; the RunStatus card is absolutely positioned and unaffected. */
+  display: flex;
+  flex-direction: column;
+}
+
+.council-stack-sankey {
+  position: relative;
+  flex: 1 1 0;
+  /* Landscape lock: the panel's height is derived from its width via
+     aspect-ratio, and `align-self: center` opts out of flex cross-axis
+     stretch so empty space sits above/below the panel rather than
+     forcing it tall. Result: W > H at every viewport width. */
+  align-self: center;
+  aspect-ratio: 16 / 9;
+  max-height: 100%;
+  border-left: 1px solid var(--grid);
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.council-stack-sankey-label {
+  position: absolute;
+  top: 8px;
+  left: 14px;
+  z-index: 2;
+  font-size: 10px;
+  letter-spacing: var(--track);
+  text-transform: uppercase;
+  color: var(--muted);
+  pointer-events: none;
+}
+
+.decision-sankey-canvas {
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
+}
+
+/* Narrow viewports: collapse to a stacked layout so neither the graph
+   nor the Sankey ends up too cramped to read. The Sankey still keeps a
+   landscape aspect ratio against the full canvas width. */
+@media (max-width: 980px) {
+  .council-stack {
+    flex-direction: column;
+    bottom: 0;
+  }
+  .council-stack-sankey {
+    flex: 0 0 auto;
+    align-self: stretch;
+    aspect-ratio: 16 / 9;
+    max-height: 40%;
+    border-left: none;
+    border-top: 1px solid var(--grid);
+  }
+}
+
+/* Narrow canvas (independent of viewport): the right-side panels can
+   eat enough horizontal space that even on a wide screen the side-by-
+   side graph + Sankey becomes unreadable. Below 880px of canvas width
+   the stack flips to a column with the graph on top and the Sankey
+   below — used by both Council and Society tabs (same class).
+   Both children are sized by aspect-ratio against the canvas width and
+   pinned to the top with a small gap so they sit visually together
+   rather than getting pushed to opposite ends by flex stretch. */
+@container canvas (max-width: 880px) {
+  .council-stack {
+    flex-direction: column;
+    justify-content: center;
+    gap: 6px;
+    bottom: 0;
+  }
+  .council-stack-graph {
+    flex: 0 1 auto;
+    align-self: stretch;
+    aspect-ratio: 4 / 3;
+    max-height: 58%;
+    min-height: 220px;
+  }
+  .council-stack-sankey {
+    flex: 0 0 auto;
+    align-self: stretch;
+    aspect-ratio: 16 / 9;
+    max-height: 42%;
+    border-left: none;
+    border-top: 1px solid var(--grid);
+  }
+}
+
+.inspector {
+  /* width is driven by the parent grid-template-columns (dragged via ResizeHandle) */
+  min-width: 0;
+  border-left: 1px solid var(--grid);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--bg);
+}
+
+.inspector-header {
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--grid);
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.agent-tag {
+  padding-left: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.agent-id {
+  letter-spacing: var(--track);
+  text-transform: uppercase;
+  font-size: 11px;
+  color: var(--fg);
+}
+
+.inspector-vote {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--grid);
+}
+
+.inspector-vote > div:last-child {
+  grid-column: 1 / span 2;
+}
+
+.big-num {
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.inspector-body {
+  padding: 12px 14px;
+  overflow-y: auto;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.round-block {
+  border: 1px solid var(--grid);
+  border-radius: var(--radius);
+  padding: 10px;
+}
+
+.round-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 6px;
+  letter-spacing: var(--track);
+  text-transform: uppercase;
+  font-size: 11px;
+}
+
+.round-content {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--fg);
+}
+
+/* recommended_intervention card — replaces the raw JSON the model emits with
+   a compact, legible pill + rationale. */
+.round-intervention {
+  margin-top: 10px;
+  padding: 9px 11px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--accent-soft);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.round-intervention-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+.round-intervention-arrow {
+  font-weight: 700;
+  line-height: 1;
+}
+.round-intervention-arrow.is-up {
+  color: var(--accent);
+}
+.round-intervention-arrow.is-down {
+  color: var(--error, #d9534f);
+}
+.round-intervention-param {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-weight: 600;
+  color: var(--fg);
+}
+.round-intervention-mag {
+  font-size: 10px;
+  letter-spacing: var(--track);
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.round-intervention-why {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--fg-2);
+  font-style: italic;
+}
+
+.synthesis-scroll {
+  position: absolute;
+  inset: 0;
+  overflow-y: auto;
+  padding: 18px 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+
+.syn-note {
+  border-left: 2px solid var(--accent);
+  padding-left: 10px;
+}
+
+.syn-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.syn-legend {
+  display: flex;
+  gap: 18px;
+  flex-wrap: wrap;
+}
+
+.syn-legend i {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  margin-right: 6px;
+  vertical-align: middle;
+}
+
+.syn-metric {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 14px;
+  border-top: 1px dashed var(--grid);
+  padding-top: 10px;
+}
+
+/* .syn-table inherits the unified modern-table styling defined below
+   alongside .justify-table — see "Modern shared table" rules. */
+
+.syn-risks {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.syn-risk {
+  display: grid;
+  grid-template-columns: 36px 1fr;
+  gap: 10px;
+  align-items: center;
+  padding: 6px 0;
+  border-bottom: 1px dashed var(--grid);
+}
+
+.count-pill {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 2px 0;
+  text-align: center;
+  font-size: 11px;
+}
+
+.dissent-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.dissent-row {
+  display: grid;
+  grid-template-columns: 140px 80px 56px 1fr;
+  gap: 10px;
+  align-items: center;
+  padding: 8px 10px;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--grid);
+  border-radius: 0;
+  color: var(--fg);
+  text-align: left;
+  text-transform: none;
+  letter-spacing: 0;
+  cursor: pointer;
+  font-size: 11px;
+}
+
+.dissent-row:hover {
+  background: var(--bg-2);
+  color: var(--accent);
+  border-color: var(--border);
+}
+
+.dissent-risk {
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.society-params {
+  gap: 12px;
+}
+
+.sliders-block,
+.mix-block {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.mix-block {
+  border-top: 1px dashed var(--grid);
+  padding-top: 8px;
+  margin-top: 2px;
+}
+
+.mix-label {
+  font-size: 11px;
+  letter-spacing: var(--track);
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+/* Label column widths are measured against the longest label each variant
+   actually carries at the sidebar's 256px row width: "risk tolerance" needs
+   96px here, "self-employed" 92px in the dense mixes. Sliders keep 96px and
+   108px respectively, which stays comfortably draggable. */
+.slider-row {
+  display: grid;
+  grid-template-columns: 100px 1fr 44px;
+  align-items: center;
+  gap: 8px;
+}
+
+.slider-row.dense {
+  /* 96 rather than the measured 92: "self-employed" renders at 92.x, so an
+     exact-fit column tips it onto a second line over a fraction of a pixel. */
+  grid-template-columns: 96px 1fr 40px;
+  font-size: 11px;
+}
+
+.slider-label {
+  font-size: 11px;
+  color: var(--muted);
+  letter-spacing: var(--track);
+  text-transform: uppercase;
+  /* Wrap rather than ellipsise. These are the control's only names, so
+     clipping one ("FINANCIAL LIT…", "SELF-EMPL…") hides what the slider
+     does. Wrapping also degrades gracefully for labels longer than any
+     column width chosen today — the row grows a line instead of silently
+     truncating, which is what the fixed width + ellipsis did. */
+  overflow-wrap: break-word;
+  line-height: 1.25;
+}
+
+.slider-readout {
+  font-size: 11px;
+  text-align: right;
+  color: var(--fg);
+}
+
+/* The readout is click-to-edit. It has to keep looking like a plain number
+   in the resting state — the button reset below strips the global button
+   chrome (pill border, padding, 500 weight) that would otherwise make every
+   slider row look like it ended in a button. The affordance is carried by
+   the hover underline and the cursor, not by a box. */
+.editable-number {
+  appearance: none;
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  font-size: 11px;
+  font-weight: inherit;
+  letter-spacing: inherit;
+  text-transform: none;
+  color: var(--fg);
+  cursor: text;
+  border-radius: 2px;
+  text-decoration: underline dotted transparent;
+  text-underline-offset: 3px;
+  transition: text-decoration-color 120ms ease, background 120ms ease;
+}
+
+.editable-number:hover,
+.editable-number:focus-visible {
+  text-decoration-color: var(--muted);
+  background: none;
+  border: none;
+  color: var(--fg);
+}
+
+.editable-number:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Editing state — same box metrics as the button so nothing shifts when it
+   swaps in. Sized to content by default; the two contexts below opt into
+   the widths their layouts need. */
+.editable-number-input {
+  width: auto;
+  min-width: 0;
+  appearance: none;
+  background: var(--bg-2);
+  border: 1px solid var(--accent);
+  border-radius: 2px;
+  padding: 1px 3px;
+  font: inherit;
+  font-size: 11px;
+  color: var(--fg);
+  outline: none;
+}
+
+/* Society-params rows: fill the fixed-width readout cell, right-aligned to
+   match the static numbers above and below it. */
+.slider-row .editable-number,
+.slider-row .editable-number-input {
+  width: 100%;
+  text-align: right;
+}
+
+/* Simulation controls: the readout sits INLINE inside the label line
+   ("population · 45.00M"), so it must stay content-sized. The element
+   selector is deliberate — `.simulation-control input[type="text"]` above
+   is more specific than `.editable-number-input` alone and would otherwise
+   turn this into the full-width padded box used for the drugs field. */
+.simulation-control input.editable-number-input {
+  display: inline;
+  width: 11ch;
+  padding: 0 3px;
+  font-family: var(--font);
+  text-align: left;
+  text-transform: none;
+}
+
+/* The value should read as data against the muted uppercase label. */
+.panel-label .editable-number {
+  color: var(--fg);
+  text-transform: none;
+}
+
+input[type='range'] {
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+  width: 100%;
+  height: 14px;
+  padding: 0;
+  border: none;
+}
+
+input[type='range']::-webkit-slider-runnable-track {
+  height: 1px;
+  background: var(--border);
+  border: none;
+}
+
+input[type='range']::-moz-range-track {
+  height: 1px;
+  background: var(--border);
+  border: none;
+}
+
+input[type='range']::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 9px;
+  height: 9px;
+  border-radius: var(--radius);
+  background: var(--fg);
+  border: none;
+  margin-top: -4px;
+  cursor: ew-resize;
+}
+
+input[type='range']::-moz-range-thumb {
+  width: 9px;
+  height: 9px;
+  border-radius: var(--radius);
+  background: var(--fg);
+  border: none;
+  cursor: ew-resize;
+}
+
+input[type='range']:focus::-webkit-slider-thumb {
+  background: var(--accent);
+}
+
+input[type='range']:focus::-moz-range-thumb {
+  background: var(--accent);
+}
+
+.culture-row {
+  display: grid;
+  grid-template-columns: 92px 1fr;
+  gap: 8px;
+  align-items: center;
+  border-top: 1px dashed var(--grid);
+  padding-top: 8px;
+  margin-top: 2px;
+}
+
+.culture-row input {
+  width: 100%;
+  padding: 4px 8px;
+}
+
+/* One row of the header band: a muted label, then the pips. In flow, no
+   card — the band sits on the pane's own ground with nothing under it to
+   frost, and a boxed key beside a boxed title beside boxed chips read as
+   three floating widgets rather than one chart's key. */
+.sentiment-key {
+  display: flex;
+  align-items: flex-start;
+  font-size: 11px;
+  min-width: 0;
+}
+
+/* Row heads. Top-aligned to the first line of items so a key that wraps
+   reads as a hanging paragraph: label at the margin, every row of items
+   aligned under the first. */
+.sentiment-key-label,
+.graph-legend-label {
+  letter-spacing: var(--track);
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-right: 10px;
+  white-space: nowrap;
+  padding: 2px 0;
+  flex: none;
+}
+
+.graph-key-items {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 6px;
+  min-width: 0;
+}
+
+.sentiment-pip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 4px;
+  border-radius: 3px;
+  letter-spacing: var(--track);
+  /* Sentence case, like the cluster chips on the row beneath — the two keys
+     share a band now and should share a voice. */
+  text-transform: none;
+  color: var(--fg);
+  cursor: default;
+  user-select: none;
+  transition: background 80ms ease;
+}
+
+.sentiment-pip:hover {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+.sentiment-pip i {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+/* The category key (professions / clusters): the other row of the header
+   band. Same in-flow, un-boxed treatment as the sentiment key. Wraps to as
+   many lines as the pane's width demands — the plot below simply starts
+   lower, which is the whole point: the key takes its room instead of
+   borrowing the plot's. */
+.graph-legend {
+  display: flex;
+  align-items: flex-start;
+  font-size: 11px;
+  min-width: 0;
+}
+
+/* The society cluster key: six chips of ~250px each (k = 6, descriptor
+   clipped at 44 chars). Left to flex-wrap they break wherever the band's
+   width says — five and one at 1500px, which reads as an afterthought.
+   Once the canvas is wide enough for three abreast, they go on a fixed
+   three-column grid instead: two even rows for six clusters, columns
+   aligned so it reads as a small table. Below that width the grid would
+   overflow (three chips ≈ 800px), so it stays a wrap. */
+@container canvas (min-width: 1000px) {
+  .cluster-key .graph-key-items {
+    display: grid;
+    grid-template-columns: repeat(3, max-content);
+    column-gap: 18px;
+  }
+}
+
+.graph-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 4px;
+  border-radius: 3px;
+  letter-spacing: var(--track);
+  color: var(--fg);
+  cursor: default;
+  user-select: none;
+  white-space: nowrap;
+  transition: background 80ms ease;
+}
+
+.graph-legend-item:hover {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+.graph-legend-item i {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: 0 0 8px;
+}
+
+.graph-legend-item-label {
+  text-transform: none;
+  font-family: var(--font);
+}
+
+/* Non-interactive decode line at the tail of the legend — names the node
+   encodings (size, ring) so the graph never asks to be guessed at. */
+.graph-legend-note {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 4px;
+  color: var(--muted);
+  white-space: nowrap;
+  letter-spacing: var(--track);
+  border-left: 1px solid var(--glass-border);
+  padding-left: 12px;
+  margin-left: 2px;
+}
+
+
+/* Graph title chip — the pane's name, first thing on the header band. It
+   used to float alone in the plot's top-left corner (and carried
+   .graph-legend so the hull grid would be inset past it); now it leads the
+   row the keys share, so title, keys and plot read as one chart. Sized to
+   sit on the same baseline as the key labels beside it. */
+.graph-title-chip {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 10px;
+  letter-spacing: var(--track);
+  text-transform: uppercase;
+  color: var(--muted);
+  white-space: nowrap;
+  /* A little more air after the title than between the keys — it names the
+     pane; they decode it. */
+  margin-right: 6px;
+  /* The explainer bubble hangs BELOW the chip, over the plot. */
+  overflow: visible;
+}
+
+.graph-title-chip::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  flex: none;
+}
+
+/* The bubble inherits .explained-title's ::after; left-anchor it to the chip
+   and let it grow wide enough to read comfortably. Double-class selector:
+   the base rule caps ::after at 100% of the host, which for a shrink-wrapped
+   chip meant a skinny ten-line bubble — and the base rule sits later in the
+   file, so this needs the extra specificity, not just source order. */
+.graph-keys .graph-title-chip[data-tooltip]::after {
+  max-width: min(460px, 74vw);
+}
+
+/* While the reader is on the chip, its bubble must beat the plot and the
+   keys beside it instead of sliding underneath them. */
+.graph-title-chip:hover,
+.graph-title-chip:focus-visible {
+  z-index: 40;
+}
+
+/* ─── Justification panel ─────────────────────────────────────── */
+
+.justify-block {
+  margin-top: 18px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--grid);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.justify-header {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--muted);
+  letter-spacing: var(--track);
+  text-transform: uppercase;
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.justify-rule {
+  color: var(--border);
+  font-family: var(--font);
+}
+
+.justify-cta {
+  align-self: flex-start;
+}
+
+.justify-loading {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.justify-error {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: flex-start;
+}
+
+.justify-view {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.justify-framework {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.justify-framework-label {
+  letter-spacing: var(--track);
+  text-transform: uppercase;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.justify-framework-value {
+  color: var(--fg);
+  font-size: 13px;
+}
+
+.justify-citations,
+.justify-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* Formulas wrapper — modern-table chrome (rounded outer frame, single
+   line, horizontal dividers between formulas, no per-row border). */
+.justify-formulas {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.justify-formulas .panel-label {
+  margin-bottom: 2px;
+}
+
+.justify-formulas-table {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+/* Modern shared table — rounded outer frame, horizontal-only dividers,
+   muted small-caps header, generous row padding. Both .justify-table
+   and .syn-table inherit this look. */
+
+.justify-table,
+.syn-table {
+  width: 100%;
+  border-collapse: separate;     /* needed for outer border-radius */
+  border-spacing: 0;
+  font-size: 12px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;              /* clip header corners to the radius */
+}
+
+.justify-table th,
+.justify-table td,
+.syn-table th,
+.syn-table td {
+  padding: 12px 16px;
+  text-align: left;
+  vertical-align: middle;
+  border: none;
+  border-bottom: 1px solid var(--grid);
+}
+
+.justify-table tr:last-child td,
+.syn-table tr:last-child td {
+  border-bottom: none;
+}
+
+.justify-table th,
+.syn-table th {
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  color: var(--muted);
+  background: transparent;
+  padding-top: 14px;
+  padding-bottom: 14px;
+}
+
+/* The justify table sometimes lays out a wide "relevance" cell — let
+   that column flex so the others stay tight. */
+.justify-table td:last-child,
+.justify-table th:last-child {
+  width: 100%;
+}
+
+.justify-formula {
+  /* lives inside .justify-formulas-table now — single bottom divider
+     instead of a full border, drops on the last child. */
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--grid);
+  background: transparent;
+}
+
+.justify-formula:last-child {
+  border-bottom: none;
+}
+
+.justify-formula-name {
+  text-transform: uppercase;
+  letter-spacing: var(--track);
+}
+
+.justify-formula-applied {
+  color: var(--muted);
+}
+
+.math-block {
+  display: block;
+  font-size: 13px;
+  color: var(--fg);
+}
+
+.math-block .katex-display {
+  margin: 0;
+  text-align: left;
+}
+
+.math-block .katex { color: var(--fg); }
+
+.justify-body-text {
+  color: var(--fg);
+  font-size: 12px;
+  line-height: 1.55;
+  max-width: 72ch;
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.justify-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.justify-all-btn {
+  align-self: stretch;
+  text-align: center;
+  letter-spacing: var(--track);
+}
+
+.jur-row {
+  display: grid;
+  grid-template-columns: 1fr 200px;
+  gap: 10px;
+  align-items: center;
+}
+
+.round-keyrisk {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 0;
+  border-top: 1px dashed var(--grid);
+}
+
+.graph-legend-item,
+.sentiment-pip {
+  cursor: pointer;
+}
+
+.graph-legend-item.is-pinned,
+.sentiment-pip.is-pinned {
+  background: var(--accent-soft);
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.graph-legend-item.is-pinned:hover,
+.sentiment-pip.is-pinned:hover {
+  background: var(--accent-soft);
+  filter: brightness(0.95);
+}
+
+/* Cross-highlight glow: when any selection is active, the legend entries whose
+   group is part of it brighten, and the rest fade — so a Sankey / graph / legend
+   selection lights up the matching legend entries and vice versa. */
+.graph-legend-item.is-active,
+.sentiment-pip.is-active {
+  background: color-mix(in srgb, var(--fg) 13%, transparent);
+  font-weight: 600;
+}
+.graph-legend-item.is-muted,
+.sentiment-pip.is-muted {
+  opacity: 0.3;
+}
+.graph-legend-item.is-muted:hover,
+.sentiment-pip.is-muted:hover {
+  opacity: 0.6;
+}
+
+.resize-handle {
+  width: 6px;
+  background: transparent;
+  cursor: col-resize;
+  user-select: none;
+  touch-action: none;
+  position: relative;
+  transition: background 120ms linear;
+}
+
+/* Only paint the handle while the user is actually hovering / dragging,
+   so when at rest there's no visible vertical line separating the
+   sidebar from the canvas. */
+.resize-handle:hover,
+.resize-handle.is-active {
+  background: var(--accent);
+}
+
+/* widen the actual hit-target without enlarging the visible bar */
+.resize-handle::after {
+  content: '';
+  position: absolute;
+  inset: 0 -3px;
+}
+
+body.is-resizing {
+  cursor: col-resize !important;
+  user-select: none;
+}
+body.is-resizing * {
+  cursor: col-resize !important;
+  user-select: none !important;
+}
+
+.group-dist {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0 2px;
+}
+
+/* .group-members / .group-member-row removed — GroupInspector members
+   are rendered as a real <table className="syn-table"> now, so they
+   inherit the modern-table chrome. */
+
+.justify-formula.is-unverified {
+  /* amber rail down the left side of the row inside the shared outer
+     frame — uses box-shadow so it doesn't fight the border-bottom. */
+  box-shadow: inset 3px 0 0 var(--dissent);
+  padding-left: 19px;
+}
+
+.justify-formula-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.justify-formula-warning {
+  color: var(--dissent);
+  letter-spacing: var(--track);
+  text-transform: uppercase;
+  border: 1px solid var(--dissent);
+  padding: 1px 6px;
+  border-radius: 2px;
+  white-space: nowrap;
+  cursor: help;
+}
+
+.notation-key {
+  margin-top: 8px;
+  border-top: 1px dashed var(--grid);
+  padding-top: 8px;
+}
+
+.notation-key-toggle {
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  padding: 4px 0;
+  color: var(--muted);
+  letter-spacing: var(--track);
+  text-transform: uppercase;
+  font-size: 11px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.notation-key-toggle:hover {
+  color: var(--fg);
+  border-color: transparent;
+}
+
+.notation-key-arrow {
+  font-family: var(--font);
+  display: inline-block;
+  width: 12px;
+}
+
+.notation-key-count {
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+/* Notation-key table — same modern table chrome, slightly tighter
+   padding since it's a reference list rather than a primary surface. */
+.notation-key-table {
+  margin-top: 6px;
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 11px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.notation-key-table td {
+  padding: 10px 14px;
+  vertical-align: middle;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--grid);
+}
+
+.notation-key-table tr:last-child td {
+  border-bottom: none;
+}
+
+.notation-key-sym {
+  width: 1%;
+  white-space: nowrap;
+  font-size: 13px;
+}
+
+.notation-key-sym .math-inline .katex {
+  font-size: 1em;
+  color: var(--fg);
+}
+
+.notation-key-meaning {
+  color: var(--fg);
+}
+
+/* ─── Sidebar collapse + accordion sections (Phase 2) ─────────────── */
+
+.sidebar {
+  background: color-mix(in srgb, var(--bg-2) 58%, transparent);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+}
+
+/* Sticky re-run footer — pinned to the bottom of the scrolling sidebar so
+   any adjustment in the sliders / mixes above can be applied without
+   scrolling back to the scenario card. */
+.sidebar-rerun {
+  position: sticky;
+  bottom: 0;
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 14px 14px;
+  background: var(--bg-2);
+  border-top: 1px solid var(--grid);
+  box-shadow: 0 -8px 12px -10px rgba(0, 0, 0, 0.08);
+  z-index: 2;
+}
+
+.sidebar-rerun-btn {
+  width: 100%;
+  padding: 10px 14px;
+}
+
+.sidebar-rerun-hint {
+  text-align: center;
+  line-height: 1.3;
+}
+
+.sidebar-collapsed {
+  /* zero-width placeholder — the topbar toggle owns the open/close
+     affordance now, so the collapsed sidebar truly hides. */
+  width: 0;
+  height: 0;
+  padding: 0;
+  margin: 0;
+  overflow: hidden;
+}
+
+.sidebar-head {
+  display: flex;
+  justify-content: flex-end;
+  padding: 10px 12px 0;
+}
+
+.sidebar-toggle {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--fg);
+  font-size: 14px;
+  line-height: 1;
+}
+
+.sidebar-toggle:hover {
+  background: var(--bg-2);
+  border-color: var(--border-strong);
+}
+
+.accordion-section {
+  margin: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg);
+  /* Clips the body to the rounded corners. Only safe alongside the
+     flex-shrink rule below — see there. */
+  overflow: hidden;
+  /* The sidebar is a flex column, so these sections are flex items and
+     default to flex-shrink: 1. With several sections open their content
+     exceeds the viewport, and instead of the sidebar scrolling, every
+     section was squeezed and `overflow: hidden` silently ate the remainder
+     — the last row of each mix, the subset buttons, the final provider.
+     Worse, because they shrank to fit, the sidebar's scrollHeight never
+     exceeded its clientHeight, so `overflow-y: auto` produced no scrollbar
+     and the clipped rows were unreachable rather than merely off-screen.
+     Holding their natural height is what lets the sidebar actually scroll. */
+  flex-shrink: 0;
+}
+
+.accordion-section.is-open {
+  background: var(--bg);
+}
+
+.accordion-header {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  text-align: left;
+  color: var(--fg);
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+  cursor: pointer;
+}
+
+.accordion-header:hover {
+  background: var(--bg-2);
+  border-color: transparent;
+}
+
+.accordion-section.is-open .accordion-header {
+  border-bottom: 1px solid var(--grid);
+}
+
+.accordion-title {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.accordion-icon {
+  display: inline-flex;
+  align-items: center;
+  color: var(--muted);
+  width: 16px;
+}
+
+.accordion-section.is-open .accordion-icon {
+  color: var(--fg);
+}
+
+.accordion-meta {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 10px;
+  color: var(--muted);
+}
+
+.accordion-summary {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.accordion-caret {
+  font-family: var(--mono);
+  font-size: 14px;
+  color: var(--muted);
+  width: 14px;
+  text-align: center;
+}
+
+.accordion-body {
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* Inside an accordion we don't want the nested .panel (ScenarioPanel) to
+   double its visual chrome. Strip its border + padding when nested. */
+.accordion-body > .panel {
+  border: none;
+  padding: 0;
+}
+
+/* ─── Phase 3: centered greeting/scenario heading ──────────────────────── */
+
+.center-heading-wrap {
+  display: flex;
+  justify-content: center;
+  /* tight top padding when the heading sits at the top of the canvas
+     (run state). For the empty state, the heading is rendered inside
+     .canvas-empty-stage and inherits the stage's gap instead. */
+  padding: 18px 32px 4px;
+}
+
+.canvas-empty-stage .center-heading-wrap {
+  /* inside the stage, the gap on canvas-empty-stage owns spacing */
+  padding: 0;
+}
+
+.center-heading {
+  margin: 0;
+  color: var(--accent);
+  font-family: var(--font);
+  font-weight: 600;
+  font-size: 22px;
+  line-height: 1.3;
+  letter-spacing: -0.01em;
+  text-align: center;
+  max-width: 820px;
+}
+
+/* ─── Post-run scenario summary chip ──────────────────────────────────
+ *  Charcoal text in a thin pill, smaller than the empty-state greeting.
+ *  Reads as quiet metadata sitting above the graph / synthesis content
+ *  rather than competing for attention with the canvas itself. */
+.scenario-summary-chip {
+  position: relative;                 /* anchor for the hover tooltip */
+  display: inline-block;
+  margin: 0;
+  padding: 6px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--bg);
+  color: var(--fg-2);                 /* charcoal — #2a2a2a */
+  font-family: var(--font);
+  font-weight: 500;
+  font-size: 13px;
+  line-height: 1.4;
+  letter-spacing: 0;
+  text-align: center;
+  max-width: 720px;
+  cursor: help;
+}
+
+/* Hover tooltip — shows the full scenario text below the chip. Suppresses
+   the native browser `title` tooltip from competing by way of a 200ms
+   reveal delay (long enough that the native one won't have fired yet). */
+.scenario-summary-chip[data-tooltip]::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  top: calc(100% + 10px);
+  left: 50%;
+  transform: translateX(-50%);
+  /* liquid-glass-dark */
+  background: rgba(20, 22, 28, 0.58);
+  /* The glass bubble is always dark in BOTH themes, so its text must be a fixed
+     light cream. Previously var(--bg) made it invisible in dark mode (--bg is
+     dark there). */
+  color: #f1ecdf;
+  -webkit-backdrop-filter: blur(7px) saturate(130%);
+  backdrop-filter: blur(7px) saturate(130%);
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  box-shadow:
+    0 10px 28px rgba(0, 0, 0, 0.22),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.55;
+  letter-spacing: 0;
+  text-transform: none;
+  padding: 10px 14px;
+  border-radius: 10px;
+  white-space: normal;
+  width: max-content;
+  max-width: 560px;
+  min-width: 260px;
+  text-align: left;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 140ms ease 200ms;
+  z-index: 25;
+}
+
+.scenario-summary-chip:hover[data-tooltip]::after,
+.scenario-summary-chip:focus-visible[data-tooltip]::after {
+  opacity: 1;
+}
+
+/* ─── Dominant-stance pill (sits next to the scenario chip) ───────────── */
+
+.scenario-heading-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  max-width: 100%;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+/* Edit / new scenario, beside the chip they act on. */
+.scenario-heading-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* The refine bar, centred under the heading. min-width: 0 on the card lets
+   its textarea shrink rather than pushing the cancel button off the row. */
+.scenario-edit-bar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 0 18px 10px;
+}
+
+.scenario-edit-bar .scenario-card {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 760px;
+}
+
+.stance-dominant-pill {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--bg);
+  color: var(--fg-2);
+  font-family: var(--font);
+  font-weight: 500;
+  font-size: 12px;
+  line-height: 1.2;
+  cursor: help;
+  outline: none;
+}
+
+.stance-dominant-pill:focus-visible {
+  border-color: var(--border-strong);
+  box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.06);
+}
+
+.stance-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+}
+
+.stance-pill-label {
+  letter-spacing: 0;
+}
+
+.stance-pill-pct {
+  font-weight: 600;
+}
+
+/* Hover popup — full distribution with chart + percentages. */
+.stance-popup {
+  position: absolute;
+  top: calc(100% + 10px);
+  left: 50%;
+  transform: translateX(-50%);
+  /* Wider than the bare distribution needed: it now carries a sentence or
+     two explaining the verdict, and 240px broke those into ragged slivers. */
+  width: 300px;
+  background: rgba(20, 22, 28, 0.62);
+  /* This bubble is dark in BOTH themes, so its text is a fixed light cream —
+     the same rule the scenario chip's bubble already carries. var(--bg) only
+     looked right in the light theme; in the dark one it resolved to
+     rgb(27,24,21) on an rgba(20,22,28,.62) glass, i.e. black on black. */
+  color: #f1ecdf;
+  -webkit-backdrop-filter: blur(8px) saturate(135%);
+  backdrop-filter: blur(8px) saturate(135%);
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  box-shadow:
+    0 10px 28px rgba(0, 0, 0, 0.22),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  padding: 10px 12px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 140ms ease 120ms;
+  z-index: 26;
+}
+
+.stance-dominant-pill:hover .stance-popup,
+.stance-dominant-pill:focus-visible .stance-popup {
+  opacity: 1;
+}
+
+/* Explanation of the dominant stance, under the distribution it explains. */
+.stance-popup-why {
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+  padding-top: 7px;
+  margin-top: 2px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.stance-popup-line {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.45;
+  opacity: 0.9;
+}
+
+/* The agents' own wording, marked as quoted rather than asserted. */
+.stance-popup-line em {
+  font-style: normal;
+  opacity: 0.78;
+}
+
+.stance-popup-risks {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.stance-popup-risks li {
+  padding-left: 9px;
+  position: relative;
+}
+
+.stance-popup-risks li::before {
+  content: '·';
+  position: absolute;
+  left: 0;
+  opacity: 0.55;
+}
+
+.stance-popup-title {
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  opacity: 0.78;
+}
+
+.stance-popup-bar {
+  display: flex;
+  height: 10px;
+  border-radius: 6px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.stance-popup-seg {
+  height: 100%;
+}
+
+.stance-popup-legend {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.stance-popup-row {
+  display: grid;
+  grid-template-columns: 10px 1fr auto;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.stance-popup-row i {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+
+.stance-popup-val {
+  font-weight: 600;
+}
+
+/* ─── Phase 3: scenario card (empty-state body) ───────────────────────── */
+
+.canvas-empty-stage {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  padding: 0 32px;
+  gap: 16px;
+}
+
+.scenario-card {
+  width: 100%;
+  max-width: 720px;
+  border: 1px solid var(--border-strong);
+  border-radius: 20px;
+  background: var(--glass-bg-strong);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  padding: 18px 18px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  box-shadow: var(--glass-shadow);
+}
+
+.scenario-card-input {
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  padding: 4px 4px 0;
+  font-family: var(--font);
+  font-size: 14px;
+  line-height: 1.5;
+  resize: none;
+  min-height: 110px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.scenario-card-input:focus {
+  border: none;
+}
+
+.scenario-card-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-top: 1px dashed var(--grid);
+  padding-top: 10px;
+}
+
+.pill-btn {
+  border-radius: var(--radius-pill);
+  padding: 8px 18px;
+  background: var(--fg);
+  color: var(--bg);
+  border-color: var(--fg);
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.pill-btn:hover:not(:disabled) {
+  background: var(--fg);
+  border-color: var(--fg);
+  color: var(--bg);
+  filter: brightness(1.1);
+}
+
+.pill-btn:disabled {
+  background: transparent;
+  color: var(--muted);
+  border-color: var(--border);
+}
+
+.canvas-empty-progress {
+  margin-top: 4px;
+}
+
+/* Example-scenario chips under the empty-state ScenarioCard. Click any chip
+   to populate the textarea with the preset prompt. */
+.scenario-presets {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  max-width: 720px;
+  margin-top: 2px;
+}
+
+.scenario-preset-chip {
+  font-family: var(--font);
+  font-size: 12px;
+  line-height: 1.2;
+  padding: 7px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--bg);
+  color: var(--fg);
+  cursor: pointer;
+  transition: border-color 120ms ease, background 120ms ease, color 120ms ease;
+}
+
+.scenario-preset-chip:hover:not(:disabled) {
+  border-color: var(--fg);
+  background: var(--fg);
+  color: var(--bg);
+}
+
+.scenario-preset-chip:disabled {
+  color: var(--muted);
+  border-color: var(--border);
+  cursor: not-allowed;
+}
+
+/* The chosen preset stays lit. Same inversion as hover, so the selected chip
+   and the one under the cursor read as the same "on" state rather than two
+   competing highlights. Placed after :disabled and repeated for it, so the
+   selection stays visible while a run is in flight and the row is locked. */
+.scenario-preset-chip.is-active,
+.scenario-preset-chip.is-active:disabled {
+  border-color: var(--fg);
+  background: var(--fg);
+  color: var(--bg);
+  cursor: default;
+}
+
+/* ─── Phase 3: BottomBar — chat / refine pill input ───────────────────── */
+
+.canvas {
+  position: relative;
+}
+
+.bottom-bar {
+  border-top: 1px solid var(--grid);
+  padding: 10px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: var(--bg);
+}
+
+.bottom-bar-history {
+  max-height: 240px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background: var(--bg);
+}
+
+.bottom-bar-history-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.bottom-bar-scroller {
+  overflow-y: auto;
+  max-height: 200px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.bottom-bar-samples {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.bottom-bar-input-row {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  padding: 4px 4px 4px 6px;
+  background: var(--bg);
+}
+
+.bottom-bar-input-row:focus-within {
+  border-color: var(--border-strong);
+}
+
+.bottom-bar-mode {
+  display: inline-flex;
+  align-items: center;
+  background: var(--bg-2);
+  border-radius: var(--radius-pill);
+  padding: 2px;
+}
+
+.mode-btn {
+  border: none;
+  background: transparent;
+  padding: 4px 12px;
+  border-radius: var(--radius-pill);
+  font-size: 12px;
+  color: var(--muted);
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.mode-btn.is-active {
+  background: var(--bg);
+  color: var(--fg);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+}
+
+.bottom-bar-input {
+  flex: 1;
+  border: none;
+  background: transparent;
+  font-family: var(--font);
+  font-size: 14px;
+  padding: 8px 10px;
+  min-height: 38px;
+  resize: none;
+}
+
+.bottom-bar-input:focus {
+  border: none;
+}
+
+/* ─── Phase 4: decision-sidebar handle (right edge label) ─────────── */
+
+.decision-handle {
+  border-left: 1px solid var(--grid);
+  background: var(--bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px 0;
+}
+
+.decision-handle-label {
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+  color: var(--muted);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+/* ─── Decision sidebar — collapsible panel on the right ───────────── */
+
+.decision-panel {
+  border-left: 1px solid var(--grid);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  /* Glass column — tinted, not opaque, so the shell reads as one material. */
+  background: color-mix(in srgb, var(--bg-2) 58%, transparent);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+}
+
+.decision-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--grid);
+}
+
+.decision-panel-title {
+  font-weight: 500;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.decision-panel-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.decision-panel-body > .inspector,
+.decision-panel-body > aside {
+  border-left: none;
+  flex: 1;
+}
+
+.decision-handle-btn {
+  /* the existing .decision-handle layout still applies; this adds button
+     affordances and hover state on top */
+  background: var(--bg);
+  cursor: pointer;
+  border: none;
+  border-left: 1px solid var(--grid);
+  padding: 16px 0;
+}
+
+.decision-handle-btn:hover {
+  background: var(--bg-2);
+}
+
+.decision-handle-btn:hover .decision-handle-label {
+  color: var(--fg);
+}
+
+/* ─── Conversation panel — second right column (chat) ─────────────── */
+
+.conversation-panel {
+  border-left: 1px solid var(--grid);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--bg);
+}
+
+.conversation-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--grid);
+}
+
+.conversation-panel-title {
+  font-weight: 500;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.conversation-panel-sub {
+  padding: 6px 14px 4px;
+  border-bottom: 1px solid var(--grid);
+}
+
+.conversation-panel-scroller {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.conversation-panel-samples {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: flex-start;
+}
+
+.conversation-panel-samples .pill {
+  font-size: 12px;
+  text-align: left;
+  white-space: normal;
+  line-height: 1.35;
+  max-width: 100%;
+}
+
+.conversation-panel-mode-row {
+  display: flex;
+  align-items: center;
+  padding: 8px 14px 0;
+  background: var(--bg);
+}
+
+.conversation-panel-input-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  padding: 8px 14px 12px;
+  background: var(--bg);
+}
+
+.conversation-panel-input {
+  min-height: 40px;
+  max-height: 200px;
+  resize: none;
+  overflow-y: auto;
+  font-size: 13px;
+  line-height: 1.45;
+  border-radius: var(--radius);
+  padding: 8px 10px;
+}
+
+.conversation-panel-input:focus {
+  border-color: var(--border-strong);
+}
+
+.decision-empty {
+  padding: 18px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.decision-empty-hints {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.decision-empty-hints li {
+  margin-bottom: 4px;
+}
+
+/* ─── Phase 6: unified scenario / chat card — dropped state ───────── */
+
+.canvas-body {
+  /* allow the dropped card to absolutely-position over the canvas content */
+  position: relative;
+}
+
+.scenario-card-dock {
+  position: absolute;
+  left: 50%;
+  bottom: 18px;
+  transform: translateX(-50%);
+  width: min(820px, calc(100% - 32px));
+  z-index: 4;
+  pointer-events: none;
+}
+
+/* The chat dock keeps its default centred position. Because the council-
+   stack ends at `bottom: 180px`, the dock has clear space below both the
+   force-graph and the Sankey — matching the reference UI mockup. */
+
+.scenario-card-dock > .scenario-card {
+  pointer-events: auto;
+}
+
+.scenario-card--dropped {
+  padding: 8px 10px 8px 10px;
+  border-radius: 22px;
+  /* Theme-aware glass — sits over whatever's behind (graph, etc.) */
+  background: color-mix(in srgb, var(--bg-2) 90%, transparent);
+  -webkit-backdrop-filter: blur(8px) saturate(140%);
+  backdrop-filter: blur(8px) saturate(140%);
+  border: 1px solid var(--border);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.18);
+  gap: 6px;
+}
+
+.scenario-card--dropped .scenario-card-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.scenario-card-row-input {
+  flex: 1;
+  border: none;
+  background: transparent;
+  font-family: var(--font);
+  font-size: 14px;
+  padding: 8px 10px;
+  min-height: 34px;
+  /* The row auto-grows to fit a scenario opened for editing, then scrolls
+     rather than pushing the re-forecast button out of reach. */
+  max-height: 132px;
+  overflow-y: auto;
+  resize: none;
+  border-radius: 0;
+}
+
+.scenario-card-row-input:focus {
+  border: none;
+}
+
+.scenario-card-samples {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 4px 6px 0;
+}
+
+.scenario-card-history {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 8px 10px;
+  background: var(--bg);
+}
+
+.scenario-card-history-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.scenario-card-scroller {
+  overflow-y: auto;
+  max-height: 220px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* `.bottom-bar-mode` / `.mode-btn` were defined in Phase 3; the dropped card
+   re-uses them verbatim so the chat/refine pill chrome stays identical. */
+
+/* ─── Society inspector — member cards ──────────────────────────────
+   Two-line card so the reaction text can wrap freely instead of being
+   horizontally clipped by a narrow grid cell. */
+
+.society-members {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 320px;
+  overflow-y: auto;
+  margin-top: 4px;
+}
+
+.society-member-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 8px;
+  border-bottom: 1px dashed var(--grid);
+}
+
+.society-member-card:last-child {
+  border-bottom: none;
+}
+
+.society-member-meta {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.society-member-reaction {
+  position: relative;
+  color: var(--fg);
+  line-height: 1.45;
+  word-wrap: break-word;
+}
+
+/* When the reaction was clipped, data-tooltip carries the full text.
+   Reveal it as a dark bubble above the clipped line on hover. */
+.society-member-reaction[data-tooltip] {
+  cursor: help;
+}
+
+.society-member-reaction[data-tooltip]::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  /* liquid-glass-dark */
+  background: rgba(20, 22, 28, 0.58);
+  /* The glass bubble is always dark in BOTH themes, so its text must be a fixed
+     light cream. Previously var(--bg) made it invisible in dark mode (--bg is
+     dark there). */
+  color: #f1ecdf;
+  -webkit-backdrop-filter: blur(7px) saturate(130%);
+  backdrop-filter: blur(7px) saturate(130%);
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  box-shadow:
+    0 8px 22px rgba(0, 0, 0, 0.22),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.5;
+  padding: 8px 12px;
+  border-radius: 8px;
+  white-space: normal;
+  width: max-content;
+  max-width: 360px;
+  text-align: left;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 140ms ease 180ms;
+  z-index: 30;
+}
+
+.society-member-reaction:hover[data-tooltip]::after,
+.society-member-reaction:focus-visible[data-tooltip]::after {
+  opacity: 1;
+}
+
+/* ─── Liquid Glass utility ──────────────────────────────────────────
+ *
+ *  A pair of reusable frosted-glass surfaces inspired by the Apple
+ *  liquid-glass design language. Two variants:
+ *
+ *  .liquid-glass        — light surface, sits on whatever's behind it
+ *                         (canvas, graph). Used for popovers, legends.
+ *  .liquid-glass-dark   — dark surface for tooltips that need to read
+ *                         as a clear contrast over the page content.
+ *
+ *  Both rely on backdrop-filter blur + saturate. -webkit- prefix
+ *  retained for Safari.
+ */
+
+.liquid-glass {
+  /* Theme-aware glass — tints with the current bg-2 token so the
+     surface reads on both cream and warm-charcoal backgrounds. */
+  background: color-mix(in srgb, var(--bg-2) 88%, transparent);
+  -webkit-backdrop-filter: blur(8px) saturate(140%);
+  backdrop-filter: blur(8px) saturate(140%);
+  border: 1px solid var(--border);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.18);
+}
+
+.liquid-glass-dark {
+  /* The dark tooltips stay dark for high-contrast reading, but pick up
+     the same blur + saturated glass-edge highlights as the light
+     variant, so they feel like one design family. */
+  background: rgba(20, 22, 28, 0.58);
+  /* The glass bubble is always dark in BOTH themes, so its text must be a fixed
+     light cream. Previously var(--bg) made it invisible in dark mode (--bg is
+     dark there). */
+  color: #f1ecdf;
+  -webkit-backdrop-filter: blur(7px) saturate(130%);
+  backdrop-filter: blur(7px) saturate(130%);
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  box-shadow:
+    0 8px 28px rgba(0, 0, 0, 0.22),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+/* ─── Stance pill — rounded chip inside table cells ──────────────────
+ *  Lets stance values (support / oppose / abstain) read like the
+ *  Admin / Editor / Active / Inactive pills in the modern-table
+ *  reference. Picks up colour from the .status-ok / .status-err /
+ *  .muted modifier classes already in the project.
+ */
+.stance-pill {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: var(--radius-pill);
+  border: 1px solid currentColor;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: capitalize;
+  line-height: 1.5;
+  background: transparent;
+}
+
+/* ──────────────────────────────────────────────────────────────────
+   Mobile shell (≤820px viewport)
+
+   The desktop layout is a 4-or-5-column CSS grid with side rails and
+   three resizable panels. None of that survives in a phone width, so
+   below 820px we:
+
+   - Collapse `.body` to a flex column (canvas takes the full screen).
+   - Hide the left rail and all resize handles.
+   - Make the three side panels (sidebar / decision / conversation)
+     into off-canvas overlays: sidebar slides in from the left, the
+     decision panel slides up as a bottom sheet, the conversation panel
+     slides up as a near-full-height bottom sheet.
+   - Reserve room at the bottom for `.mobile-nav` (56px) which hosts
+     the three pill buttons that open each overlay.
+   - Compact the topbar so the wordmark + tab strip + settings fit on
+     one line on a 360px-wide phone.
+   ────────────────────────────────────────────────────────────────── */
+
+@media (max-width: 820px) {
+  /* Layout: single column, room for the bottom nav. */
+  .body {
+    display: flex !important;
+    flex-direction: column;
+    padding-bottom: 56px;          /* mobile-nav reserved height */
+    min-height: 0;
+  }
+
+  /* Hide desktop-only chrome. */
+  .left-rail,
+  .resize-handle,
+  .rail-flyout,
+  .decision-handle,
+  .decision-handle-btn {
+    display: none !important;
+  }
+
+  /* Topbar: two rows on phones — row 1 is brand + actions, row 2 is the
+     horizontally-scrollable tab strip. The desktop 4-column grid
+     (auto · 1fr · auto · 32px) can't fit 4 tab names plus a wordmark on
+     a 360px screen, so we re-do the grid as named areas. */
+  .topbar {
+    grid-template-columns: 1fr auto !important;
+    grid-template-areas:
+      "wordmark actions"
+      "tabs     tabs"     !important;
+    padding: 8px 10px 0;
+    gap: 4px 10px;
+    min-height: 0;
+    row-gap: 4px;
+  }
+  .topbar .wordmark { grid-area: wordmark; }
+  .topbar .tabs     { grid-area: tabs; }
+  .topbar .status-cluster { grid-area: actions; }
+
+  .wordmark {
+    font-size: 13px;
+    letter-spacing: 0.08em;
+    white-space: nowrap;
+  }
+
+  /* Status cluster: keep help + settings, drop the api/ollama/canon
+     telemetry text. Tighten the buttons so they read as icons. */
+  .topbar .status-cluster {
+    gap: 6px;
+    align-self: center;
+  }
+  .topbar .status-cluster .muted,
+  .topbar .status-cluster .status-ok,
+  .topbar .status-cluster .status-warn {
+    display: none;
+  }
+  .topbar .status-cluster .ghost-btn {
+    padding: 6px 10px;
+    font-size: 12px;
+    min-width: 32px;
+    min-height: 32px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  /* Tab strip: horizontal scroll, no scrollbar chrome. Tabs themselves
+     shrink so they read as a row of pills rather than the desktop's
+     underlined typographic tabs. */
+  .topbar .tabs {
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+    padding: 0;
+    border-bottom: none;
+    gap: 2px;
+    /* Hint to the browser that this row is the touch target for
+       swipe-scroll; otherwise iOS will fight us. */
+    -webkit-overflow-scrolling: touch;
+  }
+  .topbar .tabs::-webkit-scrollbar {
+    display: none;
+  }
+  .topbar .tab {
+    flex: 0 0 auto;
+    padding: 6px 10px;
+    font-size: 11.5px;
+    letter-spacing: 0.04em;
+    border-bottom-width: 2px;
+  }
+  .topbar .tab.active {
+    border-bottom-color: var(--accent);
+  }
+
+  /* Canvas fills the remaining vertical space. */
+  .canvas {
+    min-height: 0;
+    flex: 1;
+  }
+
+  /* Sidebar → left slide-in drawer. */
+  .sidebar {
+    position: fixed;
+    top: 56px;                     /* below topbar */
+    left: 0;
+    bottom: 56px;                  /* above mobile-nav */
+    width: min(86vw, 360px);
+    z-index: 30;
+    transform: translateX(-105%);
+    transition: transform 240ms cubic-bezier(0.2, 0.8, 0.2, 1);
+    box-shadow: var(--glass-shadow);
+    border-right: 1px solid var(--glass-border);
+    background: var(--glass-bg-strong);
+    -webkit-backdrop-filter: var(--glass-blur);
+    backdrop-filter: var(--glass-blur);
+    overflow-y: auto;
+  }
+  .sidebar.is-open-mobile {
+    transform: translateX(0);
+  }
+
+  /* Decision panel → bottom sheet at ~70vh. */
+  .decision-panel {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 56px;                  /* above mobile-nav */
+    height: 70vh;
+    z-index: 30;
+    transform: translateY(105%);
+    transition: transform 240ms cubic-bezier(0.2, 0.8, 0.2, 1);
+    box-shadow: var(--glass-shadow);
+    border-top: 1px solid var(--glass-border);
+    border-left: none;
+    border-radius: 14px 14px 0 0;
+    background: var(--glass-bg-strong);
+    -webkit-backdrop-filter: var(--glass-blur);
+    backdrop-filter: var(--glass-blur);
+    overflow: hidden;              /* clip child content to rounded corners */
+  }
+  .decision-panel.is-open-mobile {
+    transform: translateY(0);
+  }
+
+  /* Conversation panel → bottom sheet, slightly taller (chat needs
+     room to breathe). */
+  .conversation-panel {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 56px;
+    height: 82vh;
+    z-index: 30;
+    transform: translateY(105%);
+    transition: transform 240ms cubic-bezier(0.2, 0.8, 0.2, 1);
+    box-shadow: 0 -6px 24px rgba(0, 0, 0, 0.12);
+    border-top: 1px solid var(--grid);
+    border-left: none;
+    border-radius: 14px 14px 0 0;
+    background: var(--bg);
+    overflow: hidden;              /* clip child content to rounded corners */
+  }
+  .conversation-panel.is-open-mobile {
+    transform: translateY(0);
+  }
+
+  /* Scrim while any panel is open. */
+  .mobile-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.32);
+    backdrop-filter: blur(2px);
+    -webkit-backdrop-filter: blur(2px);
+    z-index: 28;
+    animation: mobile-fade-in 180ms ease-out;
+  }
+
+  @keyframes mobile-fade-in {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+  }
+
+  /* Bottom mobile nav. */
+  .mobile-nav {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 56px;
+    z-index: 35;
+    display: flex;
+    align-items: stretch;
+    background: var(--bg);
+    border-top: 1px solid var(--grid);
+    box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.04);
+    padding: 0 8px;
+    /* Respect device safe-area inset (notched phones, gesture bar). */
+    padding-bottom: env(safe-area-inset-bottom, 0);
+    height: calc(56px + env(safe-area-inset-bottom, 0px));
+  }
+
+  .mobile-nav-btn {
+    flex: 1 1 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    background: transparent;
+    border: none;
+    color: var(--muted);
+    padding: 6px 0;
+    cursor: pointer;
+    border-radius: 0;
+    letter-spacing: 0;
+    text-transform: none;
+  }
+  .mobile-nav-btn.is-active {
+    color: var(--fg);
+  }
+  .mobile-nav-btn.is-active .mobile-nav-icon {
+    color: var(--accent);
+  }
+
+  .mobile-nav-icon {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 24px;
+  }
+
+  .mobile-nav-label {
+    font-size: 10.5px;
+    line-height: 1;
+    letter-spacing: 0.02em;
+  }
+
+  .mobile-nav-badge {
+    position: absolute;
+    top: -4px;
+    right: -8px;
+    min-width: 16px;
+    height: 16px;
+    border-radius: 999px;
+    background: var(--accent);
+    color: white;
+    font-size: 9.5px;
+    font-weight: 600;
+    padding: 0 4px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  /* Centered scenario card (empty state) — phone-friendly width. */
+  .canvas-empty-stage {
+    padding: 24px 16px 88px;       /* extra bottom so nav doesn't cover content */
+  }
+  .scenario-card {
+    width: min(100%, 560px);
+  }
+  .scenario-presets {
+    max-width: 100%;
+    flex-wrap: wrap;
+  }
+
+  /* Center heading: smaller chip / shorter tagline. */
+  .center-heading-wrap {
+    padding: 10px 12px 6px;
+  }
+  .center-heading {
+    font-size: 15px;
+  }
+  .scenario-summary-chip {
+    font-size: 12.5px;
+    max-width: 100%;
+  }
+
+  /* Make the conversation-panel-mode-row tabs (chat/refine) sit on
+     their own row at the top of the sheet rather than crammed into
+     the input row. The base layout already places them above the
+     input — just make sure they have breathing room. */
+  .conversation-panel-mode-row {
+    padding: 12px 14px 4px;
+  }
+
+  /* Tab strip in the topbar — shrink the pills a touch so they fit. */
+  .topbar .view-tabs {
+    font-size: 12px;
+    gap: 4px;
+  }
+  .topbar .view-tabs button {
+    padding: 6px 10px;
+  }
+}
+
+/* Hide the mobile nav on desktop so it doesn't bleed through if the
+   class is rendered at viewport widths above 820px (e.g. during a
+   resize, before the React subscription fires). */
+@media (min-width: 821px) {
+  .mobile-nav,
+  .mobile-backdrop {
+    display: none !important;
+  }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   WMTR strip — sibling section of the swarm shell. Identity is carried in
+   the data layer (forest-green ECharts series, JetBrains Mono chart labels,
+   25–75 band, cubic-bezier mount easing). The container itself blends with
+   the swarm: same surface as the rest of the canvas, hairline dividers
+   matching `.council-stack-sankey-label` rhythm, mono section header.
+   ───────────────────────────────────────────────────────────────────────── */
+
+.wmtr-strip {
+  /* Forest-green primary kept ONLY for the inline dot and re-simulate CTA.
+     Everything else uses swarm tokens (`var(--bg)`, `var(--fg)`, `var(--muted)`,
+     `var(--grid)`) so the strip stops floating between two white surfaces.
+     --wmtr-primary / --wmtr-easing now live at :root — wmtr-* classes render
+     outside this strip too (ForecastCanvas's intervention row), and a locally
+     scoped token left those orphans resolving var() to nothing. */
+  background: transparent;
+  color: var(--fg);
+  border: none;
+  border-top: 1px solid var(--grid);
+  border-bottom: 1px solid var(--grid);
+  border-radius: 0;
+  padding: 14px 16px 16px;
+  margin: 0 0 14px 0;
+  font-family: var(--font);
+  animation: wmtr-strip-in 520ms var(--wmtr-easing) both;
+}
+
+@keyframes wmtr-strip-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.wmtr-strip-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding-bottom: 10px;
+}
+
+.wmtr-strip-eyebrow {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 14px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+/* Section header — same treatment as `.council-stack-sankey-label`
+   (font-size 10–11px, --track letter-spacing, uppercase, --muted). The
+   only color accent is the leading forest-green dot. */
+.wmtr-mono-eyebrow {
+  font-family: var(--font);
+  font-size: 11px;
+  letter-spacing: var(--track);
+  text-transform: uppercase;
+  color: var(--muted);
+  position: relative;
+  padding-left: 12px;
+}
+
+.wmtr-mono-eyebrow::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--wmtr-primary);
+}
+
+/* Shock pill — no fill, hairline border in the swarm grid color, mono
+   label so it reads as inline data, not as decoration. */
+.wmtr-strip-pill {
+  font-family: var(--font);
+  font-size: 10.5px;
+  letter-spacing: var(--track);
+  text-transform: uppercase;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid var(--grid);
+  padding: 1px 7px;
+  border-radius: 999px;
+}
+
+.wmtr-strip-pill[data-shock='severe']   { color: var(--adversarial); border-color: rgba(210,58,58,0.35); }
+.wmtr-strip-pill[data-shock='moderate'] { color: var(--dissent); border-color: rgba(196,122,0,0.35); }
+.wmtr-strip-pill[data-shock='mild']     { color: var(--wmtr-primary); border-color: color-mix(in srgb, var(--wmtr-primary) 35%, transparent); }
+
+.wmtr-strip-meta {
+  font-family: var(--font);
+  font-size: 11px;
+  letter-spacing: var(--track);
+  color: var(--muted);
+}
+
+.wmtr-strip-dom {
+  font-family: var(--font);
+  font-size: 11px;
+  letter-spacing: var(--track);
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.wmtr-strip-dom strong {
+  color: var(--fg);
+  font-weight: 600;
+  margin-left: 4px;
+}
+
+.wmtr-strip-grid {
+  display: grid;
+  /* Auto-fit responds to the strip's actual width, not the viewport — so
+     when the canvas is squeezed by the side panels the grid collapses
+     gracefully (2-col → 1-col) without needing viewport media queries.
+     180 px is small enough that two charts sit side-by-side even when
+     both right panels are open. */
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.wmtr-panel {
+  background: transparent;
+  border: none;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.wmtr-panel-head {
+  font-family: var(--font);
+  font-size: 10px;
+  letter-spacing: var(--track);
+  text-transform: uppercase;
+  color: var(--muted);
+  padding: 2px 2px 6px;
+}
+
+.wmtr-panel-body {
+  padding: 0;
+}
+
+.wmtr-chart {
+  width: 100%;
+}
+
+.wmtr-strip-foot {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 14px;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--grid);
+}
+
+.wmtr-strip-foot-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.wmtr-foot-label {
+  font-family: var(--font);
+  font-size: 10px;
+  letter-spacing: var(--track);
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.wmtr-foot-value {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--fg);
+  font-variant-numeric: tabular-nums;
+}
+
+.wmtr-foot-value em {
+  font-style: normal;
+  color: var(--muted);
+  font-weight: 400;
+  font-size: 12px;
+  margin-left: 4px;
+}
+
+.wmtr-foot-numeric {
+  font-variant-numeric: tabular-nums;
+  font-size: 13.5px;
+}
+
+/* ─── intervention row ───────────────────────────────────────────────── */
+
+.wmtr-intervene {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--grid);
+}
+
+.wmtr-intervene-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.wmtr-intervene-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 10px 0 8px;
+}
+
+.wmtr-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  padding: 4px 10px;
+  font-family: var(--font);
+  font-size: 11.5px;
+  color: var(--fg);
+  cursor: pointer;
+  transition: border-color 200ms var(--wmtr-easing), background 200ms var(--wmtr-easing);
+}
+
+.wmtr-chip:hover {
+  border-color: var(--wmtr-primary);
+  background: color-mix(in srgb, var(--wmtr-primary) 6%, transparent);
+}
+
+.wmtr-chip.is-active {
+  border-color: var(--wmtr-primary);
+  background: color-mix(in srgb, var(--wmtr-primary) 12%, transparent);
+  color: var(--fg);
+}
+
+.wmtr-chip-count {
+  color: var(--muted);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.wmtr-chip-arrow {
+  color: var(--wmtr-primary);
+  font-weight: 700;
+}
+
+.wmtr-chip-param {
+  font-weight: 600;
+}
+
+.wmtr-chip-mag {
+  color: var(--muted);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: var(--track);
+}
+
+.wmtr-intervene-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.wmtr-intervene-rationale {
+  color: var(--fg-2);
+  font-size: 12.5px;
+  max-width: 60ch;
+  line-height: 1.45;
+}
+
+.wmtr-intervene-button {
+  font-family: var(--font);
+  font-size: 11.5px;
+  letter-spacing: var(--track);
+  background: var(--wmtr-primary);
+  /* --bg, not #ffffff: in dark theme --consensus is a bright mint and white
+     label text on it drops to ~1.5:1. --bg inverts correctly in both themes. */
+  color: var(--bg);
+  border: 1px solid var(--wmtr-primary);
+  padding: 7px 14px;
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+  transition: background 180ms var(--wmtr-easing), transform 180ms var(--wmtr-easing);
+}
+
+.wmtr-intervene-button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--wmtr-primary) 86%, #000);
+  transform: translateY(-1px);
+}
+
+.wmtr-intervene-button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* ─── preview affordance under the centred scenario card ─────────────── */
+
+.wmtr-preview-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font);
+  font-size: 11.5px;
+  letter-spacing: var(--track);
+  color: var(--wmtr-primary);
+  background: transparent;
+  border: 1px solid color-mix(in srgb, var(--wmtr-primary) 40%, transparent);
+  border-radius: var(--radius-pill);
+  padding: 6px 14px;
+  margin-top: 10px;
+  cursor: pointer;
+  transition: background 180ms cubic-bezier(0.16, 1, 0.3, 1), border-color 180ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.wmtr-preview-link:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--wmtr-primary) 6%, transparent);
+  border-color: var(--wmtr-primary);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Forecast canvas — headline artifact of a run. WMTR trajectory is the
+   centerpiece; council readback is docked beneath, intervention loop sits
+   under that. Inherits the swarm shell tokens: same surface, same dividers,
+   same mono section headers as DECISION FLOW / CONSENSUS INTERVENTIONS.
+   ───────────────────────────────────────────────────────────────────────── */
+
+.forecast-canvas {
+  --forecast-primary: var(--consensus);   /* theme-aware; see --wmtr-primary */
+  --forecast-easing:  cubic-bezier(0.16, 1, 0.3, 1);
+  /* Measure cap. On a wide monitor the two-column grid gave each panel
+     ~1200px, which stretches a bar chart into a band of whitespace with a
+     stripe in it and pushes the components chart's endpoint labels a screen
+     away from the lines they annotate. ~790px per panel is the width the
+     layout was tuned at. */
+  --forecast-max-width: 1600px;
+
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  /* Bottom pad clears the floating composer: the content scrolls the full
+     canvas height now, so the last panel needs room to come out from under
+     the trigger. */
+  padding: 14px 18px calc(var(--dock-lift) + 56px);
+  overflow-y: auto;
+  height: 100%;
+  min-height: 0;
+  animation: forecast-canvas-in 520ms var(--forecast-easing) both;
+}
+
+@keyframes forecast-canvas-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.forecast-canvas--empty {
+  align-items: center;
+  justify-content: center;
+}
+
+.forecast-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+}
+
+.forecast-empty-eyebrow {
+  font-size: 11px;
+  letter-spacing: var(--track);
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+/* ─── Verdict header ──────────────────────────────────────────────────── */
+
+.forecast-verdict {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--grid);
+}
+
+.forecast-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  letter-spacing: var(--track);
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.forecast-eyebrow-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--forecast-primary);
+}
+
+.forecast-headline {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin-top: 4px;
+  /* Anchor for the verdict's "why this outcome?" bubble. It hangs off this
+     row rather than off the chip itself: the chip sits ~175px in, and a
+     bubble centred on it ran off the left edge — which .forecast-canvas
+     clips, since its overflow-y:auto makes overflow-x compute to auto too. */
+  position: relative;
+}
+
+.forecast-headline-lead {
+  font-size: 16px;
+  color: var(--fg-2);
+  font-weight: 400;
+}
+
+.forecast-headline-verdict {
+  display: inline-block;
+  font-family: var(--font);
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  padding: 2px 12px;
+  border: 1.5px solid currentColor;
+  border-radius: var(--radius-pill);
+  cursor: help;
+  /* color + borderColor set via inline style from OUTCOME_COLOR */
+}
+
+/* Hover/focus explanation of WHY this outcome — the classification rule, the
+   path count behind it, and how close the runner-up was. Same liquid-glass
+   bubble and 200ms reveal delay as the scenario chip, so the two read as one
+   affordance; `pre-line` lets the text break into short paragraphs. */
+.forecast-headline-verdict[data-tooltip]::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  top: calc(100% + 10px);
+  /* Flush with the headline's left edge, so the bubble always starts inside
+     the canvas padding instead of being centred on the chip and overhanging. */
+  left: 0;
+  background: rgba(20, 22, 28, 0.58);
+  /* The bubble is dark in BOTH themes, so its text is a fixed light cream. */
+  color: #f1ecdf;
+  -webkit-backdrop-filter: blur(7px) saturate(130%);
+  backdrop-filter: blur(7px) saturate(130%);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow:
+    0 10px 28px rgba(0, 0, 0, 0.22),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  font-family: var(--font);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.55;
+  letter-spacing: 0;
+  text-transform: none;
+  padding: 10px 14px;
+  border-radius: 10px;
+  white-space: pre-line;
+  width: max-content;
+  /* Four short labelled paragraphs of plain prose — wide enough that each
+     stays a couple of lines, narrow enough to keep a readable measure. The
+     100% ceiling is the headline row, i.e. the canvas content width, so the
+     bubble reflows rather than spilling past the right edge in a narrow
+     panel (the Scelo SwarmPanel embed is the tight case). */
+  max-width: min(560px, 100%);
+  line-height: 1.6;
+  text-align: left;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 140ms ease 200ms;
+  z-index: 25;
+}
+
+.forecast-headline-verdict:hover[data-tooltip]::after,
+.forecast-headline-verdict:focus-visible[data-tooltip]::after {
+  opacity: 1;
+}
+
+.forecast-headline-share {
+  font-size: 13px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.forecast-headline-meta {
+  font-size: 11.5px;
+  color: var(--muted);
+  letter-spacing: var(--track);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ─── Chart grid ──────────────────────────────────────────────────────── */
+
+/* Two fixed columns rather than auto-fit: the top row is the pair of
+   headline plots (wealth trajectory + W(M,T,R) components), and they need
+   to stay side by side and equally sized at every width that fits them.
+   auto-fit made the column count a function of viewport width, which is
+   what left the components chart stranded at a third of the row. */
+.forecast-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+/* The two co-primary charts. They carry no extra chrome — the emphasis is
+   the size and the top-row position — but the class keeps the intent
+   legible next to the supporting panels. */
+.forecast-panel--primary {
+  min-width: 0;
+}
+
+@media (max-width: 900px) {
+  .forecast-grid { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* No box. The border framed each panel and stopped dead below the last row,
+   which read as a rule cutting the dashboard off from the composer under it.
+   The grid gap already separates the panels; a plot does not need an outline
+   to be a plot. */
+.forecast-panel {
+  display: flex;
+  flex-direction: column;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  min-width: 0;
+}
+
+/* The head's underline went with it: once the frame is gone a lone hairline
+   under every title is the same cutting line, four times over. The uppercase
+   tracked label already separates itself from the plot. */
+.forecast-panel-head {
+  font-size: 10.5px;
+  letter-spacing: var(--track);
+  text-transform: uppercase;
+  color: var(--muted);
+  padding: 8px 2px 6px;
+  border-bottom: none;
+  background: transparent;
+}
+
+/* Headers that carry a reading of their own plot. `help` rather than
+   `pointer` where the header is not also a button, so the cursor does not
+   promise a click that does nothing. */
+.forecast-panel-head--explained,
+.explained-title {
+  position: relative;
+  cursor: help;
+}
+
+.forecast-panel-head--explained.forecast-panel-head--clickable {
+  cursor: pointer;
+}
+
+.forecast-panel-head--explained:hover,
+.explained-title:hover {
+  color: var(--fg);
+}
+
+/* Same liquid-glass bubble as the verdict's, and anchored the same way:
+   left-aligned to the header rather than centred on it. .forecast-canvas
+   scrolls vertically, which makes overflow-x compute to auto, so anything
+   overhanging its edge is clipped rather than drawn. */
+.forecast-panel-head--explained[data-tooltip]::after,
+.explained-title[data-tooltip]::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  z-index: 30;
+  background: rgba(20, 22, 28, 0.62);
+  /* Dark glass in BOTH themes, so the text is a fixed light cream. */
+  color: #f1ecdf;
+  -webkit-backdrop-filter: blur(9px) saturate(140%);
+  backdrop-filter: blur(9px) saturate(140%);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow:
+    0 10px 28px rgba(0, 0, 0, 0.22),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  font-family: var(--font);
+  font-size: 11.5px;
+  font-weight: 400;
+  line-height: 1.55;
+  letter-spacing: 0;
+  text-transform: none;
+  text-align: left;
+  padding: 10px 13px;
+  border-radius: 10px;
+  width: max-content;
+  /* 100% is the header, i.e. the panel width, so the bubble reflows instead
+     of spilling out of a half-width panel. */
+  max-width: min(420px, 100%);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 140ms ease 220ms;
+}
+
+.forecast-panel-head--explained:hover[data-tooltip]::after,
+.forecast-panel-head--explained:focus-visible[data-tooltip]::after,
+.explained-title:hover[data-tooltip]::after,
+.explained-title:focus-visible[data-tooltip]::after {
+  opacity: 1;
+}
+
+.forecast-panel-head--clickable {
+  cursor: pointer;
+  transition: color 180ms var(--forecast-easing);
+}
+.forecast-panel-head--clickable:hover {
+  color: var(--fg);
+}
+
+.forecast-panel-body {
+  padding: 10px 12px 12px;
+  min-width: 0;
+}
+
+/* ─── Council readback ───────────────────────────────────────────────── */
+
+.forecast-readback {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 0 16px;
+  border-top: 1px solid var(--grid);
+  border-bottom: 1px solid var(--grid);
+}
+
+.forecast-readback-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  letter-spacing: var(--track);
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.forecast-readback-pending {
+  color: var(--muted);
+  font-size: 13px;
+  font-style: italic;
+}
+
+
+
+
+
+
+
+
+
+.forecast-readback-quote {
+  margin: 0;
+  padding-left: 12px;
+  border-left: 2px solid var(--grid);
+  color: var(--fg-2);
+  font-size: 13px;
+  line-height: 1.5;
+  max-width: 80ch;
+}
+
+.forecast-intervene-empty {
+  color: var(--muted);
+  font-style: italic;
+  font-size: 12px;
+  padding: 8px 0;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   SIMULATION tab — SA-anchored population simulator. Reuses the existing
+   token palette (var(--bg) / --consensus / --adversarial / --grid) so a
+   theme switch carries through automatically.
+   ───────────────────────────────────────────────────────────────────────── */
+
+.simulation-view {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 18px 22px calc(var(--dock-lift) + 56px);
+  overflow-y: auto;
+  height: 100%;
+  min-height: 0;
+}
+
+.simulation-header {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--grid);
+}
+
+.simulation-templates {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.simulation-controls {
+  display: grid;
+  grid-template-columns: 1.4fr 1fr 1fr auto;
+  gap: 14px;
+  align-items: end;
+}
+
+@media (max-width: 880px) {
+  .simulation-controls {
+    grid-template-columns: 1fr;
+  }
+}
+
+.simulation-control {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+}
+
+.simulation-control input[type="text"] {
+  border: 1px solid var(--border);
+  background: var(--bg-2);
+  padding: 6px 10px;
+  font-family: var(--font);
+  color: var(--fg);
+}
+
+.simulation-control input[type="range"] {
+  width: 100%;
+}
+
+.simulation-error {
+  margin-top: 8px;
+  padding: 8px 12px;
+  border-left: 2px solid var(--adversarial);
+  background: var(--accent-soft);
+  color: var(--adversarial);
+  font-size: 12px;
+}
+
+.simulation-results {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+
+.simulation-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+
+
+
+.simulation-breakdown {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+
+@media (max-width: 720px) {
+  .simulation-breakdown {
+    grid-template-columns: 1fr;
+  }
+}
+
+.simulation-breakdown-col {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.simulation-refs {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 8px;
+}
+
+.simulation-ref {
+  background: var(--bg-2);
+  border: 1px solid var(--grid);
+  padding: 8px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.simulation-ref-head {
+  font-weight: 600;
+  color: var(--fg);
+  text-transform: lowercase;
+}
+
+.simulation-provenance {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+
+
+
+
+.simulation-footer {
+  padding-top: 8px;
+  border-top: 1px solid var(--grid);
+}
+
+/* ── Run status overlay — Council Reactions / Society Pulse ─────────────────
+   Answers the one thing an empty graph can't: is the swarm running, or broken?
+   Rendered inside .council-stack-graph, over the (possibly empty) graph. */
+.council-stack-graph { position: relative; }
+
+.run-status {
+  position: absolute;
+  inset: 0;
+  z-index: 8;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  padding: 24px;
+  text-align: center;
+  pointer-events: none;
+  background: radial-gradient(
+    120% 90% at 50% 45%,
+    color-mix(in srgb, var(--bg) 84%, transparent) 0%,
+    color-mix(in srgb, var(--bg) 42%, transparent) 55%,
+    transparent 78%
+  );
+  -webkit-backdrop-filter: blur(3px);
+  backdrop-filter: blur(3px);
+  animation: run-status-in 240ms ease both;
+}
+@keyframes run-status-in { from { opacity: 0; } to { opacity: 1; } }
+
+.run-status-title { font-size: 15px; font-weight: 600; letter-spacing: 0.01em; color: var(--fg); }
+.run-status.is-stalled .run-status-title { color: var(--dissent); }
+.run-status.is-error .run-status-title,
+.run-status.is-broken .run-status-title { color: var(--adversarial); }
+.run-status-detail { max-width: 44ch; font-size: 12.5px; line-height: 1.5; color: var(--muted); }
+.run-status-sub { font-size: 11px; color: var(--muted); opacity: 0.72; }
+
+.run-status-retry {
+  pointer-events: auto;
+  margin-top: 4px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  padding: 5px 15px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--fg);
+}
+.run-status-retry:hover { border-color: var(--border-strong); }
+
+.run-status-emblem { display: grid; place-items: center; width: 62px; height: 62px; margin-bottom: 2px; }
+/* non-running: three dots (blink for stalled/error) */
+.run-status-glyph { display: inline-flex; gap: 7px; }
+.run-status-glyph i { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); }
+.run-status.is-stalled .run-status-glyph i { background: var(--dissent); animation: run-blink 1.15s ease-in-out infinite; }
+.run-status.is-error .run-status-glyph i,
+.run-status.is-broken .run-status-glyph i { background: var(--adversarial); }
+.run-status.is-error .run-status-glyph i { animation: run-blink 0.95s ease-in-out infinite; }
+.run-status-glyph i:nth-child(2) { animation-delay: 0.15s; }
+.run-status-glyph i:nth-child(3) { animation-delay: 0.30s; }
+@keyframes run-blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.28; } }
+
+/* top chip — when results are already on the graph, stay unobtrusive */
+.run-status-chip {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 9;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px 5px 12px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--glass-border);
+  background: var(--glass-bg-strong);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  font-size: 11.5px;
+  color: var(--fg);
+  box-shadow: var(--glass-shadow);
+  pointer-events: auto;
+}
+.run-status-chip-dot { width: 7px; height: 7px; border-radius: 50%; animation: run-blink 1.1s ease-in-out infinite; }
+.run-status-chip.is-stalled .run-status-chip-dot { background: var(--dissent); }
+.run-status-chip.is-error .run-status-chip-dot { background: var(--adversarial); }
+.run-status-chip-text { color: var(--muted); }
+.run-status-chip-btn {
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  padding: 2px 9px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--fg);
+}
+.run-status-chip-btn:hover { border-color: var(--border-strong); }
+
+@media (prefers-reduced-motion: reduce) {
+  .run-status-orbit i,
+  .run-status-glyph i,
+  .run-status-chip-dot { animation: none; }
+}
+
+.sim-progress-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 18px;
+}
+
+.sim-progress-eyebrow {
+  font-size: 11px;
+  letter-spacing: var(--track);
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.sim-progress-elapsed {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.sim-progress-bar {
+  position: relative;
+  margin-top: 20px;
+  height: 2px;
+  border-radius: 2px;
+  overflow: hidden;
+  background: var(--border);
+}
+
+.sim-progress-bar span {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  width: 36%;
+  border-radius: 2px;
+  background: var(--accent);
+  animation: simBar 1.5s ease-in-out infinite;
+}
+
+.sim-progress-bar span { animation-duration: 3s; }
+
+.justify-spinner {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  border: 1px solid var(--muted);
+  border-top-color: transparent;
+  animation: justify-spin 700ms linear infinite;
+}
+
+/* running: a comet-tail of dots orbiting a ring — reads as live swarm activity */
+.run-status-orbit { position: relative; display: block; width: 52px; height: 52px; }
+
+.run-status-orbit i {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 8px;
+  height: 8px;
+  margin: -4px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: run-orbit 1.5s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+}
+
+.run-status-orbit i:nth-child(2) { animation-delay: -0.18s; opacity: 0.85; }
+
+.run-status-orbit i:nth-child(3) { animation-delay: -0.36s; opacity: 0.70; }
+
+.run-status-orbit i:nth-child(4) { animation-delay: -0.54s; opacity: 0.58; }
+
+.run-status-orbit i:nth-child(5) { animation-delay: -0.72s; opacity: 0.45; }
+
+.run-status-orbit i:nth-child(6) { animation-delay: -0.90s; opacity: 0.32; }
+
+@keyframes justify-spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes run-orbit {
+  0%   { transform: rotate(0deg)   translateX(21px) scale(1); }
+  50%  { transform: rotate(180deg) translateX(21px) scale(0.55); }
+  100% { transform: rotate(360deg) translateX(21px) scale(1); }
+}
+
+@keyframes simBar {
+  0% { left: -40%; }
+  100% { left: 100%; }
+}
+
+/* One-shot fade shared by the overlay and its resume chip. */
+@keyframes iaFadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+/* ── full-screen deliberation overlay (ported from Scelo) ────────────────────
+   Owns the screen while a multi-minute run is in flight. The point is that it
+   OVERWHELMS: a wait this long has to look like progress, not a frozen app. */
+
+.delib-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--bg) 90%, transparent);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  animation: iaFadeIn 0.24s ease-out both;
+}
+
+.delib-top {
+  position: absolute;
+  inset-inline: 0;
+  top: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 24px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.delib-eyebrow {
+  text-transform: uppercase;
+  letter-spacing: var(--track);
+}
+
+.delib-elapsed {
+  font-variant-numeric: tabular-nums;
+  color: var(--fg-2);
+}
+
+
+
+
+
+
+
+.delib-phase {
+  margin-top: 24px;
+  text-align: center;
+}
+
+.delib-title {
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.2em;
+  color: var(--fg);
+}
+
+.delib-sub {
+  margin-top: 4px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--fg-2);
+}
+
+.delib-note {
+  margin-top: 4px;
+  font-size: 10px;
+  color: var(--muted);
+}
+
+/* Fixed height so the ring above doesn't jitter as voices scroll in. */
+.delib-voices {
+  margin-top: 16px;
+  display: flex;
+  height: 64px;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  font-size: 10px;
+  color: var(--muted);
+}
+
+.delib-controls {
+  margin-top: 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.delib-kbd {
+  margin-inline-start: 6px;
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  background: var(--bg);
+  padding: 0 4px;
+  font-size: 9px;
+  color: var(--muted);
+}
+
+.delib-cancel:hover {
+  border-color: var(--adversarial);
+  color: var(--adversarial);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .delib-overlay { animation: none; }
+}
+
+/* Restores the deliberation overlay after "hide". Without it the hide is
+   one-way and the run's full view is unreachable until the next run. */
+.delib-resume {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  z-index: 80;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--bg-2);
+  padding: 7px 14px;
+  font-size: 11px;
+  color: var(--fg-2);
+  box-shadow: var(--shadow-2);
+  animation: iaFadeIn 0.24s ease-out both;
+}
+
+.delib-resume:hover {
+  border-color: var(--accent);
+  color: var(--fg);
+}
+
+.delib-resume-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: delibResumePulse 1.1s ease-in-out infinite;
+}
+
+@keyframes delibResumePulse {
+  0%, 100% { opacity: 0.3; }
+  50%      { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .delib-resume-dot { animation: none; }
+}
+
+/* Simulation seed — the control that decides whether a re-run is an
+   independent Monte Carlo draw (blank) or an exact reproduction (pinned). */
+.sim-seed-hint {
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--muted);
+}
+
+.sim-seed-value {
+  font-variant-numeric: tabular-nums;
+  color: var(--fg-2);
+}
+
+.sim-seed-pin {
+  appearance: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: transparent;
+  padding: 0 5px;
+  font: inherit;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: var(--track);
+  color: var(--muted);
+}
+
+.sim-seed-pin:hover {
+  border-color: var(--accent);
+  color: var(--fg);
+  background: transparent;
+}
+
+
+
+
+
+
+
+/* The percentage is the number people came for — push it to the far edge so
+   a column of tiles reads as one right-aligned scale. */
+
+
+
+
+
+
+/* Separator between figures only — never a dangling rule after the last. */
+
+
+
+
+
+
+/* ── Macro impact ledger ────────────────────────────────────────────────────
+   A statement, not a dashboard: three subject columns, figures right-aligned
+   in a tabular column so magnitudes compare down the column, hairline under
+   each heading, and no card chrome. `max-content` on the value column sizes
+   it to the widest figure in that group, which is what puts the digits on a
+   shared right edge without hard-coding a width. */
+.macro-ledger {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 18px 34px;
+}
+
+.macro-group {
+  display: flex;
+  flex-direction: column;
+}
+
+.macro-group-title {
+  padding-bottom: 6px;
+  margin-bottom: 6px;
+  border-bottom: 1px solid var(--grid);
+}
+
+.macro-row {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  align-items: baseline;
+  column-gap: 12px;
+  padding: 4px 0;
+}
+
+.macro-row-value {
+  text-align: right;
+  font-size: 1.2rem;
+  letter-spacing: -0.01em;
+  /* Digits share a width, so the column stays a column even as the numbers
+     change between runs. */
+  font-variant-numeric: tabular-nums;
+}
+
+.macro-row-text {
+  color: var(--fg);
+  min-width: 0;
+}
+
+/* The unit rides with the label rather than sitting on its own line — it is
+   a footnote to the label, not a third field. */
+.macro-row-sub {
+  white-space: normal;
+}
+
+/* ── Categorical breakdown — half-doughnut ──────────────────────────────────
+   Sized generously on purpose. The half-doughnut only uses the upper half of
+   its box, and ECharts scales the arch off min(width, height) — so in a wide
+   panel it is the HEIGHT that decides how big the arch reads, and a short box
+   yields a thin ribbon no matter how much width it is given. */
+.donut-chart {
+  width: 100%;
+  height: clamp(260px, 32vh, 360px);
+}
+
+.donut-empty {
+  display: grid;
+  place-items: center;
+  min-height: 120px;
+}
+
+/* ── Simulation chart grid ──────────────────────────────────────────────────
+   Two-up on anything wide enough, one-up below. `minmax(0, 1fr)` rather than
+   `1fr`: a canvas child has an intrinsic width, and without the 0 minimum the
+   column refuses to shrink below it and the grid overflows its panel. */
+.sim-chart-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(340px, 100%), 1fr));
+  gap: 14px 22px;
+}
+
+.sim-chart {
+  min-width: 0;
+}
+
+.sim-chart-title {
+  padding-bottom: 4px;
+}
+
+/* Council readback — an inline readout, not a card row.
+   Three boxed stats gave a `0%` the same border, padding and weight as the
+   headline shift, and read as three unrelated metrics. They are one sentence
+   about one run: what the council thinks, what it would change, how society
+   takes it. Hairline separators, no chrome, value and label on a shared
+   baseline so each figure reads as the phrase it is. All three remain
+   buttons — each jumps to the tab that can substantiate it. */
+.forecast-readback-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  row-gap: 14px;
+}
+
+.forecast-readback-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  padding: 0 24px 0 0;
+  background: none;
+  border: none;
+  border-radius: 0;
+  text-align: left;
+  color: var(--fg);
+  letter-spacing: 0;
+  font-weight: 400;
+  cursor: default;
+}
+
+/* Separator between figures only — never a dangling rule after the last. */
+.forecast-readback-stat + .forecast-readback-stat {
+  border-left: 1px solid var(--grid);
+  padding-left: 24px;
+}
+
+.forecast-readback-head {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+}
+
+.forecast-readback-big {
+  font-size: 23px;
+  font-weight: 600;
+  color: var(--fg);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+}
+
+.forecast-readback-stat.is-accent .forecast-readback-big {
+  color: var(--forecast-primary);
+}
+
+.forecast-readback-label {
+  font-size: 11px;
+  letter-spacing: var(--track);
+  text-transform: uppercase;
+  color: var(--muted);
+  transition: color 200ms var(--forecast-easing);
+}
+
+.forecast-readback-sub {
+  font-size: 12px;
+  color: var(--fg-2);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The card border used to be the only thing saying these were clickable.
+   With it gone the affordance moves onto the label: a chevron that resolves
+   on hover, so the resting state stays quiet. */
+.forecast-readback-stat.is-interactive {
+  cursor: pointer;
+}
+
+.forecast-readback-stat.is-interactive .forecast-readback-label::after {
+  content: ' →';
+  opacity: 0;
+  transition: opacity 200ms var(--forecast-easing);
+}
+
+.forecast-readback-stat.is-interactive:hover .forecast-readback-label,
+.forecast-readback-stat.is-interactive:focus-visible .forecast-readback-label {
+  color: var(--forecast-primary);
+}
+
+.forecast-readback-stat.is-interactive:hover .forecast-readback-label::after,
+.forecast-readback-stat.is-interactive:focus-visible .forecast-readback-label::after {
+  opacity: 1;
+}
+
+/* ── Forecast playback ──────────────────────────────────────────────────────
+   Sits above the four panels and scrubs all of them together — the point is
+   comparing shapes at the same instant, so one control drives the row. */
+.forecast-playback {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 0 14px;
+}
+
+.forecast-playback-btns {
+  display: flex;
+  gap: 6px;
+}
+
+/* Transport buttons. The marks are inline SVG from Icons.tsx (one stroke,
+   one footprint — see the transport section there); the buttons are the
+   same square so play/pause and stop read as a pair, and the mark is
+   centred by the grid, not by a font's idea of a glyph box. */
+.forecast-playback-btn {
+  width: 30px;
+  height: 28px;
+  /* The global button rule pads 8px 14px — inside a 30×28 box that leaves
+     a content area of nothing at all, and the mark spilled from its
+     top-left corner (the old glyphs sat low and right for the same
+     reason). */
+  padding: 0;
+  display: grid;
+  place-items: center;
+  line-height: 0;
+  color: var(--fg);
+  background: none;
+  border: 1px solid var(--grid);
+  border-radius: 4px;
+  cursor: pointer;
+  transition:
+    border-color 200ms var(--forecast-easing),
+    color 200ms var(--forecast-easing),
+    background 200ms var(--forecast-easing);
+}
+
+.forecast-playback-btn svg {
+  display: block;
+}
+
+.forecast-playback-btn:hover:not(:disabled),
+.forecast-playback-btn:focus-visible:not(:disabled) {
+  border-color: var(--forecast-primary);
+  color: var(--forecast-primary);
+  background: color-mix(in srgb, var(--forecast-primary) 10%, transparent);
+}
+
+/* Stop is disabled at rest (nothing to stop) — dimmed, not gone: still
+   visibly a button, so the pair reads as a transport rather than as one
+   button and a ghost. */
+.forecast-playback-btn:disabled {
+  color: var(--muted);
+  opacity: 0.55;
+  cursor: default;
+}
+
+.forecast-playback-range {
+  flex: 1;
+  min-width: 0;
+  accent-color: var(--forecast-primary);
+  cursor: pointer;
+}
+
+/* Tabular figures so the readout does not jitter as the year advances. */
+.forecast-playback-year {
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  min-width: 11ch;
+  text-align: right;
+}
+
+/* Constrain the CONTENT, not the scroll container: `.forecast-canvas` keeps
+   `overflow-y: auto` across the full width so the scrollbar stays at the
+   window edge, while each direct child is capped and centred. */
+.forecast-canvas > * {
+  width: 100%;
+  max-width: var(--forecast-max-width);
+  margin-inline: auto;
+}
+
+/* Reads as a footnote to the share, not as another figure. */
+.forecast-headline-asof {
+  color: var(--muted);
+}
+
+/* ── Deliberation bloom ─────────────────────────────────────────────────────
+   One circle per agent, in mirrored rows that ease outward from a centre
+   line. Wide rather than square: the crowd spreads left and right, and the
+   canvas sizes its own contents to whatever box it is given. */
+.delib-bloom {
+  display: block;
+  width: min(620px, 86vw);
+  height: 300px;
+}
+
+.delib-strips {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: min(620px, 86vw);
+  min-height: 14px;
+}
+
+.delib-pips {
+  display: flex;
+  gap: 7px;
+  flex: none;
+}
+
+.delib-pip {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  border: 1.2px solid var(--accent);
+  opacity: 0.7;
+}
+
+.delib-pip.is-done {
+  background: var(--accent);
+}
+
+.delib-pip.is-now {
+  background: color-mix(in srgb, var(--accent) 50%, transparent);
+  opacity: 1;
+}
+
+/* Society pulse — was the outer arc of the ring. */
+.delib-outer-label {
+  flex: none;
+  font-size: 10px;
+  letter-spacing: var(--track);
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.delib-outer {
+  flex: 1;
+  min-width: 0;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--border);
+  overflow: hidden;
+}
+
+.delib-outer-fill {
+  height: 100%;
+  background: var(--link);
+  border-radius: 2px;
+  transition: width 600ms ease;
+}
+
+.delib-working {
+  font-size: 11px;
+  color: var(--muted);
+  flex: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .delib-outer-fill { transition: none; }
+}
+
+/* ── Tab measure ────────────────────────────────────────────────────────────
+   The same cap the forecast canvas got, applied to the other document-like
+   tabs. On a wide monitor an uncapped column stretches a bar chart into a
+   band of whitespace with a stripe in it, and pushes a chart's endpoint
+   labels a screen away from the lines they annotate.
+
+   Constrain the CONTENT, not the scroller: each of these roots owns its own
+   `overflow-y`, so capping the root itself would pull the scrollbar inward
+   off the window edge. The children are capped and centred instead.
+
+   Deliberately NOT applied to the council and society graph tabs: a
+   force-directed layout uses whatever room it is given, and capping it just
+   makes the graph smaller. */
+.simulation-view,
+.synthesis-scroll,
+.canon-scroll {
+  --tab-max-width: 1600px;
+}
+
+/* Applied to the SCROLL ROOT's children. `.simulation-results` is nested
+   inside `.simulation-view`, so capping its children left the header, the
+   template row and the controls above it running the full width — and added a
+   second helping of padding on top of the root's own. */
+.simulation-view > *,
+.synthesis-scroll > *,
+.canon-scroll > * {
+  width: 100%;
+  max-width: var(--tab-max-width);
+  margin-inline: auto;
+}
+
+/* ── Pet rail ───────────────────────────────────────────────────────────────
+   Six icons ARE the navigation. Labels sit beside them at rest and step back
+   once a surface is chosen, so the rail stops competing with what it opened.
+   The active pet grows rather than gaining a border or a fill — scale is the
+   only state marker, which is what keeps the chrome at zero. */
+.pet-rail {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-start;
+  padding: 22px 18px 22px 22px;
+  overflow: hidden;
+}
+
+.pet-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 4px 0;
+  background: none;
+  border: none;
+  border-radius: 0;
+  color: var(--fg-2);
+  cursor: pointer;
+  transition: opacity 220ms var(--forecast-easing, ease);
+  opacity: 0.72;
+}
+
+.pet-item:hover,
+.pet-item:focus-visible,
+.pet-item.is-active {
+  opacity: 1;
+}
+
+/* One scale step up across the whole rail — resting, hover and active move
+   together so the size relationships that carry state are preserved. */
+.pet-icon {
+  width: 52px;
+  height: 52px;
+  display: block;
+  flex: none;
+  /* Scale is the whole state model, so it gets the easing budget. */
+  transition: width 260ms var(--forecast-easing, ease), height 260ms var(--forecast-easing, ease);
+}
+
+.pet-item.is-active .pet-icon {
+  width: 98px;
+  height: 98px;
+}
+
+/* Canon is the corpus every other surface reads from, not another view
+   of the run — the gap says so without a divider. */
+.pet-item.is-canon {
+  margin-top: 14px;
+}
+
+.pet-label {
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  /* Collapsed by max-width rather than opacity so the rail actually gives the
+     width back to the content; fading alone left a column of dead space. */
+  max-width: 16ch;
+  transition:
+    max-width 340ms var(--forecast-easing, ease),
+    opacity 240ms var(--forecast-easing, ease),
+    transform 340ms var(--forecast-easing, ease),
+    color 200ms ease;
+}
+
+/* Once something is chosen the other names are noise: the icon is the label.
+   The ACTIVE one stays — it is the answer to "where am I". */
+.pet-rail.is-focused .pet-label,
+.pet-rail.is-quiet .pet-label {
+  max-width: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* The active label sits in-flow BELOW its icon (see the block near the end
+   of this file) — it only needs its type treatment here. The old rightward
+   `max-width` unfurl belonged to the floating design and fought the static
+   layout with its higher specificity. */
+.pet-rail.is-focused .pet-item.is-active .pet-label {
+  opacity: 1;
+  letter-spacing: 0.01em;
+}
+
+/* Hover previews the selection: the same expand and the same left-to-right
+   unfurl the click would give you, so the rail answers "what is this one?"
+   without having to leave where you are.
+   
+   Deliberately a step smaller than the active size — matching it exactly
+   would erase the only marker of which surface you are actually in. */
+.pet-rail.is-focused .pet-item:hover .pet-icon,
+.pet-rail.is-focused .pet-item:focus-visible .pet-icon,
+.pet-rail.is-quiet .pet-item:hover .pet-icon,
+.pet-rail.is-quiet .pet-item:focus-visible .pet-icon {
+  width: 76px;
+  height: 76px;
+}
+
+/* The active one keeps its full size even while a neighbour is hovered. */
+.pet-rail.is-focused .pet-item.is-active:hover .pet-icon,
+.pet-rail.is-focused .pet-item.is-active:focus-visible .pet-icon {
+  width: 98px;
+  height: 98px;
+}
+
+.pet-rail.is-focused .pet-item:hover .pet-label,
+.pet-rail.is-focused .pet-item:focus-visible .pet-label,
+.pet-rail.is-quiet .pet-item:hover .pet-label,
+.pet-rail.is-quiet .pet-item:focus-visible .pet-label {
+  max-width: 20ch;
+  opacity: 1;
+  /* Keep the vertical centring — the labels are absolutely positioned glass
+     chips now, and a bare translateX dropped the -50% Y correction. */
+  transform: translateY(-50%) translateX(0);
+  pointer-events: none;
+}
+
+.pet-label {
+  transform: translateX(-8px);
+}
+
+.pet-rail.is-resting .pet-label {
+  transform: translateX(0);
+}
+
+/* Empty state — present for navigation, but the greeting owns the screen. */
+.pet-rail.is-quiet {
+  padding-top: 26px;
+}
+
+.pet-rail.is-quiet .pet-item {
+  opacity: 0.45;
+}
+
+.pet-rail.is-quiet .pet-item:hover,
+.pet-rail.is-quiet .pet-item:focus-visible {
+  opacity: 1;
+}
+
+.pet-rail.is-quiet .pet-icon {
+  width: 40px;
+  height: 40px;
+}
+
+/* ── Surface summaries ──────────────────────────────────────────────────────
+   The whole run, readable without opening anything. */
+.surface-summaries {
+  --summary-inset: clamp(150px, 15vw, 240px);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  /* Carries its own inset: with the rail hidden at rest there is nothing to
+     the left of it, and the list would otherwise hug the canvas edge. */
+  padding: 22px 0 8px 30px;
+  max-width: 76ch;
+}
+
+/* Selected, the active surface's name is pinned open beside its icon — and it
+   FLOATS, so it pushes nothing aside and was landing on top of the first
+   summary line. The clearance is the label's own allowance (22ch) plus the
+   gap it sits at, so the text starts where the name ends rather than under
+   it. */
+.surface-summaries.is-selected {
+  padding-left: var(--summary-inset);
+  /* Two traps in one cap.
+     border-box means it covers the inset too, so the reading column is the
+     cap MINUS the inset — widening one narrows the other. The inset is added
+     back so the measure holds whatever the inset does.
+     And `ch` resolves against THIS element's 15px base while the lines below
+     render at 19px, so the count is not the character count you get: 62ch
+     was buying about 48 characters of actual text. 84ch is ~66. */
+  max-width: calc(84ch + var(--summary-inset));
+}
+
+.summary-line {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 6px 0;
+  background: none;
+  border: none;
+  border-radius: 0;
+  text-align: left;
+  color: var(--fg-2);
+  font-size: 15px;
+  line-height: 1.5;
+  cursor: pointer;
+  transition: color 180ms ease;
+}
+
+/* No hover plate. The row is an icon and two runs of text on the canvas —
+   a filled rectangle appearing behind them is the only chrome on this
+   surface, and colour alone marks the hover. */
+.summary-line:hover,
+.summary-line:focus-visible {
+  color: var(--fg);
+}
+
+/* The pet, not a swatch of its colour. Same animal as the rail seat it flies
+   back to — a dot could never make that connection. */
+.summary-pet {
+  width: 20px;
+  height: 20px;
+  display: block;
+  flex: none;
+  align-self: center;
+}
+
+/* The in-flight clone. `position: fixed` and its geometry are set inline from
+   the measured rects; only the motion belongs here. */
+.pet-flight {
+  position: fixed;
+  z-index: 200;
+  margin: 0;
+  pointer-events: none;
+  transform-origin: top left;
+  transition: transform 420ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pet-flight { transition: none; }
+}
+
+.summary-name {
+  color: var(--fg);
+  flex: none;
+  min-width: 15ch;
+}
+
+.summary-text {
+  color: var(--muted);
+  min-width: 0;
+}
+
+.surface-summaries.is-selected .summary-line.is-lead {
+  font-size: 19px;
+  color: var(--fg);
+}
+
+
+.summary-open {
+  align-self: flex-start;
+  margin-top: 8px;
+  padding: 6px 0;
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.summary-open:hover,
+.summary-open:focus-visible {
+  color: var(--fg);
+}
+
+/* ── Greeting (empty state) ─────────────────────────────────────────────────
+   One face, one line, one input — nothing else, because there is nothing yet
+   to navigate. */
+.greeting {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  margin-bottom: 34px;
+}
+
+.greeting-face {
+  width: 92px;
+  height: 92px;
+  display: block;
+}
+
+.greeting-line {
+  font-size: 20px;
+  color: var(--fg-2);
+}
+
+/* ── Composer ───────────────────────────────────────────────────────────────
+   The one persistent control on a working screen: a single rounded field,
+   full stop. It shares the canvas's measure cap so it lines up with the
+   content above rather than running the whole window. */
+.composer {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  max-width: var(--tab-max-width, 1600px);
+  /* `margin-top: auto` pins it to the bottom of the flex stack no matter how
+     short the content above is — the padding below is then clear space, not
+     the thing holding it off the edge.
+     
+     The bottom clearance is deliberately large and viewport-relative: the bar
+     sits about a sixth of the way up from the floor, as drawn, instead of
+     hugging the window edge. Clamped so it neither collapses on a laptop nor
+     strands the bar in the middle of a tall monitor. */
+  margin: auto auto 0;
+  padding: 34px 40px clamp(72px, 14vh, 190px);
+}
+
+.composer-input {
+  flex: 1;
+  min-width: 0;
+  padding: 19px 26px;
+  font: inherit;
+  font-size: 14px;
+  color: var(--fg);
+  background: transparent;
+  border: 1px solid var(--border);
+  /* Fully rounded, as drawn. */
+  border-radius: 999px;
+  outline: none;
+  transition: border-color 200ms ease;
+}
+
+.composer-input::placeholder {
+  color: var(--muted);
+}
+
+.composer-input:focus {
+  border-color: var(--fg-2);
+}
+
+.composer-input:disabled {
+  opacity: 0.6;
+}
+
+.composer-send {
+  width: 46px;
+  height: 46px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  font-size: 15px;
+  color: var(--fg);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  cursor: pointer;
+  transition: border-color 200ms ease, opacity 200ms ease;
+}
+
+.composer-send:hover:not(:disabled),
+.composer-send:focus-visible:not(:disabled) {
+  border-color: var(--fg-2);
+}
+
+.composer-send:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+/* ── Decision sidebar, restyled ─────────────────────────────────────────────
+   Detached from the window edge and drawn as a dashed outline, per the
+   slides: it reads as a panel that can be dismissed rather than as a wall the
+   layout is built against. */
+.decision-panel {
+  border-left: none;
+  border: 1px dashed var(--border);
+  border-radius: 16px;
+  margin: 10px 12px 10px 0;
+  background: transparent;
+  overflow: hidden;
+}
+
+.decision-panel-head {
+  border-bottom: 1px dashed var(--grid);
+}
+
+/* The collapsed handle keeps the vertical label but loses its wall too. */
+.decision-handle,
+.decision-handle-btn {
+  border-left: none;
+  background: transparent;
+}
+
+.decision-handle-btn:hover {
+  background: color-mix(in srgb, var(--bg-2) 60%, transparent);
+}
+
+/* ── Chromeless buttons ─────────────────────────────────────────────────────
+   The rail items and summary rows are <button> elements, so the global
+   `button:hover:not(:disabled) { background: var(--bg-2) }` applies to them —
+   and at (0,0,2,1) it outranks a plain `.pet-item:hover` at (0,0,2,0), which
+   is why the plate kept coming back behind the icon-and-name group however
+   many times the resting background was cleared. Matching the global rule's
+   shape wins it back.
+
+   It is most obvious mid-hover: the icon scales up inside the box, so the
+   fill grows with it. */
+.pet-item:hover:not(:disabled),
+.pet-item:focus-visible:not(:disabled),
+.summary-line:hover:not(:disabled),
+.summary-line:focus-visible:not(:disabled),
+.summary-open:hover:not(:disabled),
+.summary-open:focus-visible:not(:disabled) {
+  background: none;
+  border-color: transparent;
+}
+
+/* ── Chat dock ──────────────────────────────────────────────────────────────
+   One conversation, bottom-anchored. Shut it is the composer bar; open it is
+   the full panel rising out of that same spot. There used to be two: a
+   refine-only composer here and a chat+refine panel welded to the right
+   edge — the same tool twice, one of them missing half its functions. */
+.chat-dock {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  width: 100%;
+  max-width: var(--tab-max-width, 1600px);
+  margin: auto auto 0;
+  padding: 34px 40px var(--dock-lift);
+}
+
+/* Shut, it FLOATS. In the column it reserved its own height plus the lift
+   holding it off the bottom — roughly a quarter of the canvas — and the tab
+   below it got `height: 100%` of what was left. That is what cut the
+   dashboard: the charts were not bordered or backed by anything, they were
+   clipped at the scroll viewport's bottom edge, with the dock's reserved
+   block below it reading as a second surface.
+   Out of flow, the viewport is the full canvas height and the trigger sits
+   over it at the same lift as before. */
+.chat-dock:not(.is-open) {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  /* Right-hand end of the measure. Open, it stays stretched — the panel is a
+     full-width surface, not a button. */
+  align-items: flex-end;
+  /* The strip is mostly empty space around a small button; it must not
+     swallow clicks meant for the plot underneath. */
+  pointer-events: none;
+}
+
+.chat-dock:not(.is-open) .chat-dock-trigger {
+  pointer-events: auto;
+}
+
+/* On the dashboard tabs (council / society) the shut trigger gets a strip of
+   its own under the plots instead of hovering over them. Out of flow at the
+   shared lift it landed mid-Sankey in the stacked layout — "ask the swarm"
+   printed straight across the "Mid 40–69" bucket label — and only missed
+   the plots in the wide layout because the Sankey happens to be centred.
+   The plots end above the strip; the trigger sits inside it, bottom-right,
+   where a status-bar action belongs. Other tabs keep the lift: their
+   content scrolls, and they already reserve the same amount at the end. */
+.canvas-stack[data-dock="shut"] .council-stack {
+  padding-bottom: 46px;
+}
+
+.canvas-stack[data-dock="shut"][data-tab="council"] > .chat-dock,
+.canvas-stack[data-dock="shut"][data-tab="society"] > .chat-dock {
+  padding-bottom: 6px;
+}
+
+/* Open, the bubble needs the room the clearance was holding — and the full
+   width, which the small trigger does not want. */
+.chat-dock.is-open {
+  padding-bottom: clamp(24px, 4vh, 48px);
+  align-items: stretch;
+}
+
+/* Small when shut. A full-width bar reads as an input you can type into, and
+   it is not one — it opens the panel. Sizing it to its own label makes it a
+   button, and gives the canvas back the width it was holding empty. */
+/* Unchromed, like the rail. The pill outline made it read as an input field
+   sitting in its own box under the charts; it is a button, and the label
+   plus caret already say so. */
+.chat-dock-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  width: auto;
+  padding: 9px 2px;
+  font-size: 13px;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  text-align: left;
+  cursor: pointer;
+  transition: color 200ms ease;
+}
+
+/* Focus still needs a visible ring — losing the border must not cost keyboard
+   users the only cue that says where they are. */
+.chat-dock-trigger:hover:not(:disabled) {
+  background: transparent;
+  color: var(--fg);
+}
+
+.chat-dock-trigger:focus-visible:not(:disabled) {
+  background: transparent;
+  color: var(--fg);
+  outline: 1px solid var(--fg-2);
+  outline-offset: 4px;
+}
+
+.chat-dock-placeholder {
+  color: var(--muted);
+  font-weight: 400;
+  white-space: nowrap;
+  transition: color 200ms ease;
+}
+
+.chat-dock-trigger:hover .chat-dock-placeholder,
+.chat-dock-trigger:focus-visible .chat-dock-placeholder {
+  color: var(--fg);
+}
+
+.chat-dock-caret {
+  flex: none;
+  color: var(--muted);
+}
+
+/* The panel, docked. It keeps every function it had on the right — the
+   chat/refine toggle, the samples, the transcript — and loses only the
+   column chrome that belonged to a sidebar. */
+.conversation-panel.is-docked {
+  border: 1px solid var(--glass-border);
+  border-radius: 20px;
+  background: var(--glass-bg-strong);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  box-shadow: var(--glass-shadow);
+  max-height: min(62vh, 620px);
+  overflow: hidden;
+  animation: chat-dock-rise 260ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes chat-dock-rise {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .conversation-panel.is-docked { animation: none; }
+}
+
+/* ── Grouped setup rail ─────────────────────────────────────────────────────
+   Eight unlabelled glyphs stacked down the left edge asked the reader to
+   decode eight things before reaching anything. They fold behind one icon
+   and unroll on demand, named as they go. */
+.left-rail {
+  transition: width 280ms var(--forecast-easing, ease);
+  overflow: hidden;
+}
+
+/* Open, the rail is wide enough to carry names beside the glyphs. The grid
+   column animates with it, so the canvas gives up the width rather than the
+   labels overlapping it. */
+.left-rail.is-tools-open {
+  align-items: stretch;
+  padding-inline: 10px;
+}
+
+.rail-icon-btn {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  white-space: nowrap;
+}
+
+/* Each row slides in from the left. `translateX` from a negative offset is
+   the "out of the rail, rightwards" motion; the stagger is set per item. */
+.rail-tool {
+  animation: rail-tool-in 300ms var(--forecast-easing, ease) both;
+}
+
+@keyframes rail-tool-in {
+  from {
+    opacity: 0;
+    transform: translateX(-14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+/* Names behave exactly like the pet rail's: collapsed by width so the shut
+   rail gives the space back, unfurled left-to-right on hover. */
+.rail-icon-label {
+  max-width: 0;
+  opacity: 0;
+  overflow: hidden;
+  font-size: 13px;
+  color: var(--fg-2);
+  transition:
+    max-width 300ms var(--forecast-easing, ease),
+    opacity 200ms var(--forecast-easing, ease);
+}
+
+.left-rail.is-tools-open .rail-icon-btn:hover .rail-icon-label,
+.left-rail.is-tools-open .rail-icon-btn:focus-visible .rail-icon-label,
+.left-rail.is-tools-open .rail-icon-btn.is-active .rail-icon-label {
+  max-width: 18ch;
+  opacity: 1;
+}
+
+/* The group toggle keeps its own name visible while the list is out, so the
+   column always says what it is. */
+.left-rail.is-tools-open .rail-tools-toggle .rail-icon-label {
+  max-width: 18ch;
+  opacity: 1;
+  color: var(--fg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .left-rail,
+  .rail-tool { transition: none; animation: none; }
+}
+
+/* ── Rail tools ─────────────────────────────────────────────────────────────
+   The panel toggle and the setup group, sharing the pets' rail instead of a
+   44px column of their own. The divider is the only thing separating a
+   surface you open from a control you adjust. */
+.pet-rail-tools {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  margin-top: 22px;
+  padding-top: 16px;
+  border-top: 1px solid var(--grid);
+  align-self: stretch;
+  position: relative;   /* anchors the section flyout */
+}
+
+.pet-rail-tools .rail-icon-btn {
+  padding: 6px 0;
+  background: none;
+  border: none;
+  border-radius: 0;
+  color: var(--fg-2);
+  opacity: 0.72;
+  transition: opacity 200ms ease;
+}
+
+.pet-rail-tools .rail-icon-btn:hover:not(:disabled),
+.pet-rail-tools .rail-icon-btn:focus-visible:not(:disabled),
+.pet-rail-tools .rail-icon-btn.is-active {
+  background: none;
+  border-color: transparent;
+  opacity: 1;
+}
+
+/* The names unfurl on hover, exactly as the pets' do. */
+.pet-rail-tools .rail-icon-btn:hover .rail-icon-label,
+.pet-rail-tools .rail-icon-btn:focus-visible .rail-icon-label,
+.pet-rail-tools .rail-icon-btn.is-active .rail-icon-label {
+  max-width: 18ch;
+  opacity: 1;
+}
+
+/* ── Rail labels, floated ───────────────────────────────────────────────────
+   The names were laid out INSIDE the rail, so they needed the column to grow
+   to fit them — and the rail clips its overflow (that is what makes a
+   collapsed label take no space). The result was "Setup" rendering as "Se".
+   Widening the rail instead would shove the canvas sideways on every hover.
+
+   So the label floats out of the button: absolutely positioned just past the
+   icon, revealed by the same left-to-right `max-width` unfurl. The rail keeps
+   its width, nothing reflows, and the motion is identical for the pets and
+   the setup icons because they now share these rules. */
+.pet-rail {
+  overflow: visible;
+}
+
+.pet-item,
+.pet-rail-tools .rail-icon-btn {
+  position: relative;
+  width: auto;
+  height: auto;
+  min-width: 0;
+}
+
+.pet-label,
+.pet-rail-tools .rail-icon-label {
+  position: absolute;
+  left: calc(100% + 18px);
+  top: 50%;
+  max-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-50%) translateX(-8px);
+  /* Hover labels float over live canvas content (charts, summaries, header
+     copy), so they wear glass-chip chrome: without a surface of their own
+     they printed straight onto whatever text happened to sit at that x —
+     the "setup / forecast icons overlap" report. Chip + blur keeps them
+     legible anywhere and reads as an overlay, not a collision. */
+  padding: 4px 10px;
+  border-radius: 9px;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  box-shadow: var(--glass-shadow);
+  z-index: 30;
+  transition:
+    max-width 340ms var(--forecast-easing, ease),
+    opacity 240ms var(--forecast-easing, ease),
+    transform 340ms var(--forecast-easing, ease),
+    color 200ms ease;
+}
+
+/* Revealed: anything hovered — pets and tools alike. */
+.pet-rail .pet-item:hover .pet-label,
+.pet-rail .pet-item:focus-visible .pet-label,
+.pet-rail-tools .rail-icon-btn:hover .rail-icon-label,
+.pet-rail-tools .rail-icon-btn:focus-visible .rail-icon-label,
+.pet-rail-tools .rail-icon-btn.is-active .rail-icon-label {
+  max-width: 22ch;
+  opacity: 1;
+  transform: translateY(-50%) translateX(0);
+}
+
+/* The ACTIVE surface's name is permanent, so it cannot float over the
+   canvas at all — a lasting chip would sit on the header of every tab
+   (the "Forecast" label printed across the forecast eyebrow). It drops
+   into the flow BELOW its icon instead: the rail column owns that space,
+   nothing to the right is ever covered, and the answer to "where am I"
+   stays pinned to the animal that opened it. */
+.pet-rail .pet-item.is-active {
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.pet-rail .pet-item.is-active .pet-label {
+  position: static;
+  transform: none;
+  max-width: 112px;
+  white-space: normal;
+  overflow: visible;
+  text-align: center;
+  line-height: 1.25;
+  font-size: 12.5px;
+  opacity: 1;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: none;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  box-shadow: none;
+  /* The surface's own hue, pulled 30% toward the theme foreground: at full
+     strength the pale animals (hamster #EBD9A6, bunny #F3C6D1) disappear
+     into the cream background; the mix keeps the identity AND the contrast
+     on both themes. */
+  color: color-mix(in srgb, var(--pet-hue, currentColor) 70%, var(--fg));
+}
+
+/* The toggle is a rail icon here, not a boxed control: it was the one thing
+   in the column still wearing a border and a fill. */
+.pet-rail-tools .sidebar-toggle {
+  border: none;
+  background: none;
+  width: auto;
+  height: auto;
+  padding: 6px 0;
+}
+
+.pet-rail-tools .sidebar-toggle:hover:not(:disabled),
+.pet-rail-tools .sidebar-toggle:focus-visible:not(:disabled) {
+  border: none;
+  background: none;
+}
+
+/* Tool glyphs default to 16px from `Icons.tsx`; lifted here so they sit in
+   proportion to the pets above them rather than reading as a footnote. */
+.pet-rail-tools .rail-icon-btn svg {
+  width: 30px;
+  height: 30px;
+}
+
+/* ── Rail tool icons zoom on hover ──────────────────────────────────────────
+   Same gesture the pets have, so every icon in the rail answers a hover the
+   same way. Scaled by transform rather than by width/height: these glyphs sit
+   in a narrow strip whose labels float over the canvas, so growing them for
+   real would nudge the column and drag the floating labels with it. The pets
+   can afford the layout change; these cannot. */
+.pet-rail-tools .rail-icon-btn svg {
+  transition: transform 260ms var(--forecast-easing, ease);
+  transform-origin: left center;
+}
+
+.pet-rail-tools .rail-icon-btn:hover svg,
+.pet-rail-tools .rail-icon-btn:focus-visible svg,
+.pet-rail-tools .rail-icon-btn.is-active svg {
+  /* 16px → ~23px, matching the pets' 28 → 42 step. */
+  transform: scale(1.45);
+}

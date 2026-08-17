@@ -13,6 +13,23 @@
 <component type="desktop-application">
   <id>io.intelligentactuaries.scelo</id>
 
+  <!--
+    Ties this component to the Debian package, and without it the store cannot
+    connect the two: App Center then lists the bare package instead of the app
+    and shows "Unknown publisher / License unknown / Last updated Unknown" even
+    though this file is installed correctly. The tell is the listing's title —
+    it reads "scelo-ide" (the package) rather than "Scelo IDE" (the <name>
+    below). Confirmed on an installed 0.1.3: `appstreamcli get
+    io.intelligentactuaries.scelo` found the component but reported no Package
+    association, which is exactly what this element supplies.
+
+    Upstream metainfo usually omits pkgname because the distro's catalog
+    generator fills it in. We are our own distributor and Cloudsmith publishes
+    no DEP-11 catalog metadata (`main/dep11/Components-amd64.yml.gz` is 404), so
+    nothing else will ever supply it. Hence: set it here.
+  -->
+  <pkgname>scelo-ide</pkgname>
+
   <!-- License of THIS metadata file (permissive, required). -->
   <metadata_license>CC0-1.0</metadata_license>
   <!-- License of the application itself. -->
@@ -73,15 +90,37 @@
     abandoned. Dates are the release publication dates on GitHub.
   -->
   <releases>
+    <release version="0.1.5" date="2026-08-17">
+      <description>
+        <p>
+          App Center now shows the publisher, license and release date instead
+          of "Unknown". Shipping this metadata file was not enough on its own:
+          nothing tied it to the Debian package, so the store listed the bare
+          package and ignored everything here. The arrows in the description no
+          longer render as question marks in App Center. Linux only.
+        </p>
+      </description>
+    </release>
+    <release version="0.1.4" date="2026-08-17">
+      <description>
+        <p>
+          The first release published to the signed apt repository, so
+          installing and updating is verified by apt instead of side-loading an
+          untrusted .deb. The running window now shows the Scelo logo in the
+          GNOME dock rather than a generic gear, and the .desktop entry finally
+          passes desktop-file-validate — its Comment is a single line. Carries
+          the swarm workbench and the forecast transport controls. Linux only.
+        </p>
+      </description>
+    </release>
     <release version="0.1.3" date="2026-08-16">
       <description>
         <p>
           Desktop-integration fixes. This metainfo file is now actually
           installed to /usr/share/metainfo, so App Center shows the publisher,
-          license and release date instead of "Unknown". The .desktop entry is
-          no longer malformed: it dropped the literal "entry=[object Object]"
-          key and its Comment is a single line, so it passes
-          desktop-file-validate for the first time. Linux only.
+          license and release date instead of "Unknown". The .desktop entry
+          dropped the literal "entry=[object Object]" key, so Name and Keywords
+          apply for the first time. Linux only.
         </p>
       </description>
     </release>
