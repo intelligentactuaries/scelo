@@ -2,15 +2,14 @@
 
 ## The swarm panel says "offline" / "unreachable at :3010"
 
-The swarm server isn't running, or it's on the wrong port. It must run on **3010**
-(its own default is 3000):
+The swarm server isn't running (or something moved it off **3010**, its default).
+From a Scelo checkout:
 
 ```bash
-cd swarms
-PORT=3010 bun run dev
+bun run dev:swarm
 ```
 
-`PORT=3010 bun run dev` starts **both** the API (3010) and the UI (5190). See
+That starts **both** the API (3010) and the UI (5190), on any OS. See
 [Running the swarm](../swarm/running.md).
 
 ## "Test connection" returns "(connected — model returned no text)"

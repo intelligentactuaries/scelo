@@ -110,6 +110,41 @@
   .ia-pip-pulse {
     animation: iaPulse 1.1s ease-in-out infinite;
   }
+  /* Swarm liveness LED — one look everywhere the IDE reports whether the
+     swarm server answers on :3010 (workspace swarm panel, Welcome card,
+     header nav link, Hard Data's council box). A lit LED, not a coloured
+     glyph: filled + a soft glow of its own colour when live (green), red
+     when offline, hollow and pulsing while the first probe is in flight.
+     Colours come from the theme tokens so they stay right in both palettes. */
+  .ia-led {
+    display: inline-block;
+    width: 0.6em;
+    height: 0.6em;
+    border-radius: 9999px;
+    flex-shrink: 0;
+    vertical-align: middle;
+    box-sizing: border-box;
+    transition:
+      background-color 200ms ease,
+      box-shadow 200ms ease;
+  }
+  .ia-led-live {
+    background: rgb(var(--rgb-primary));
+    box-shadow:
+      0 0 0 1px rgb(var(--rgb-primary) / 0.35),
+      0 0 6px 1px rgb(var(--rgb-primary) / 0.75);
+  }
+  .ia-led-down {
+    background: rgb(var(--rgb-error));
+    box-shadow:
+      0 0 0 1px rgb(var(--rgb-error) / 0.35),
+      0 0 6px 1px rgb(var(--rgb-error) / 0.65);
+  }
+  .ia-led-probing {
+    background: transparent;
+    border: 1px solid rgb(var(--rgb-fg-dim));
+    animation: iaPulse 1.1s ease-in-out infinite;
+  }
   /* Hide the native scrollbar without disabling scroll itself — used by the
      in-card chat threads where a visible scrollbar adds visual noise. */
   .scrollbar-none {

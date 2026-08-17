@@ -40,6 +40,7 @@ import ReactFlow, {
 } from "reactflow";
 import "reactflow/dist/style.css";
 import { emitWorkspaceFact } from "@/lib/workspaceFactsBus";
+import { SwarmLiveDot } from "../SwarmLiveDot";
 import { useSwarmProbe } from "../SwarmStatus";
 import { SWARM_DOCS_URL, swarmStartCommand } from "../workspace/SwarmPanel";
 import { ChatInputPill } from "./ChatInputPill";
@@ -2667,12 +2668,15 @@ function CouncilAttachCta({ focused }: { focused: RunResult }) {
       <div className="flex items-baseline justify-between font-mono text-[9px] uppercase tracking-wider text-fg-dim">
         <span>convene council · swarm @ :3010</span>
         <span
-          className={probe === "up" ? "text-primary" : probe === "down" ? "text-error" : ""}
+          className={`inline-flex items-center gap-1 ${
+            probe === "up" ? "text-primary" : probe === "down" ? "text-error" : ""
+          }`}
           title={probe === "up" ? "swarm API reachable" : "swarm API not reachable"}
         >
-          {probe === "up" && "● live"}
-          {probe === "probing" && "○ probing…"}
-          {probe === "down" && "● offline"}
+          <SwarmLiveDot probe={probe} className="text-[10px]" />
+          {probe === "up" && "live"}
+          {probe === "probing" && "probing…"}
+          {probe === "down" && "offline"}
         </span>
       </div>
       <p className="mt-1 text-[11px] text-fg-mute">
@@ -2681,14 +2685,13 @@ function CouncilAttachCta({ focused }: { focused: RunResult }) {
       </p>
       {probe === "down" && !synth && (
         <div className="mt-2 rounded border border-border bg-bg-2 p-2 text-[10px] text-fg-mute">
-          The swarm is a separate app (not bundled with Scelo) and nothing is listening on :3010.
-          Start it from your swarms checkout:
+          The swarm (apps/swarm in the Scelo repo, not bundled into the installer) isn't running —
+          nothing is listening on :3010. Start it from a Scelo checkout:
           <code className="mt-1 block select-all rounded bg-bg-1 px-1.5 py-1 font-mono text-fg">
             {swarmStartCommand()}
           </code>
           <span className="mt-1 block text-fg-dim">
-            Its default port is 3000 — the PORT=3010 override is required. This panel re-probes
-            every 5 seconds.{" "}
+            It listens on 3010 by default. This panel re-probes every 5 seconds.{" "}
             <a
               href={SWARM_DOCS_URL}
               target="_blank"
@@ -2815,7 +2818,7 @@ function CouncilAttachCta({ focused }: { focused: RunResult }) {
             {/timed out/i.test(error)
               ? "A large council (192 agents + society) on a local model can take a long time. Try a smaller agent count, enable “Skip society pulse”, or point the swarm at a faster provider — the run may still be finishing server-side."
               : /failed to fetch/i.test(error)
-                ? `The swarm runs from a separate checkout — start it there with \`${swarmStartCommand()}\` (its default port is 3000, so the PORT=3010 override is required).`
+                ? `The swarm isn't running — start it from a Scelo checkout with \`${swarmStartCommand()}\` (it listens on 3010 by default).`
                 : "The swarm server responded but the run failed — check the swarm app's own logs for the run error."}
           </div>
         </div>

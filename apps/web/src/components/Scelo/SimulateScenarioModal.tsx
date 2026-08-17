@@ -55,7 +55,7 @@ export function describeNetworkFailure(requestBytes: number): SwarmFailure {
       : "";
   return {
     message: "swarm server unreachable at :3010 — is it running?",
-    hint: `Start it from your swarms checkout (a separate repo, not bundled with Scelo): \`${swarmStartCommand()}\` — it must listen on port 3010 (its default is 3000). See docs: swarm/running.${sizeNote}`,
+    hint: `Start it from a Scelo checkout (it lives in apps/swarm, not in the installer): \`${swarmStartCommand()}\` — it listens on 3010 by default. See docs: swarm/running.${sizeNote}`,
   };
 }
 

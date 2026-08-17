@@ -10,7 +10,8 @@
       "**/.bun",
       "**/.cache",
       "data/schemas/**",
-      "**/*.geo.json"
+      "**/*.geo.json",
+      "apps/swarm/**"
     ]
   },
   "formatter": {

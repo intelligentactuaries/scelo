@@ -15,6 +15,7 @@
 import { type ReactNode, useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { SceloLogo } from "../components/Scelo/SceloLogo";
+import { SwarmLiveDot } from "../components/SwarmLiveDot";
 import { SwarmNavLink, useSwarmProbe } from "../components/SwarmStatus";
 import ToastTray from "../components/workspace/ToastTray";
 import { SAMPLE_WORKSPACES, type SampleWorkspaceSpec } from "../lib/sampleWorkspaces";
@@ -170,12 +171,7 @@ export default function Welcome() {
               label={
                 <span className="inline-flex items-center gap-2">
                   Open the Swarm
-                  <span
-                    aria-hidden
-                    className={`inline-block h-1.5 w-1.5 rounded-full ${
-                      swarmProbe === "up" ? "bg-primary" : "bg-fg-dim"
-                    }`}
-                  />
+                  <SwarmLiveDot probe={swarmProbe} className="text-[10px]" />
                   {swarmProbe === "up" && (
                     <span className="font-mono text-[10px] text-primary">live</span>
                   )}

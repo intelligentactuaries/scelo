@@ -10,7 +10,7 @@ There are two distinct problems, and they need different fixes:
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| "Unknown publisher / license / date" | no AppStream metadata in the package | the `metainfo.xml` in this folder (written; ships from 0.1.3 — see below) |
+| "Unknown publisher / license / date" | no AppStream metadata in the package, **or** metadata the store cannot tie to the package | the `metainfo.xml` in this folder — installed from 0.1.3, but only effective from 0.1.5, which added `<pkgname>` (see below) |
 | "Potentially unsafe / third party" | not from a verified store, not signed | publish to a store / buy a signing cert (below) |
 
 ---
@@ -27,14 +27,80 @@ One-time (yours):
 1. Create a free Cloudsmith account, then a repo (e.g. `scelo`) under your org.
 2. Account → API Settings → make an API key.
 
+One-time, store the key where the CLI finds it by itself — this keeps it out of
+your shell history, out of `ps`, and out of any terminal transcript:
+```bash
+mkdir -p ~/.cloudsmith && chmod 700 ~/.cloudsmith
+printf '[default]\napi_key = YOUR_KEY\n' > ~/.cloudsmith/credentials.ini
+chmod 600 ~/.cloudsmith/credentials.ini
+```
+(`CLOUDSMITH_API_KEY` still works and is the right choice in CI, where there is
+no home directory to persist.)
+
 Each release:
 ```bash
+# 1 · bump apps/scelo-ide/package.json's version and add a <release> entry to
+#     packaging/io.intelligentactuaries.scelo.metainfo.xml — the publish script
+#     selects the .deb *by that version*, so this is not optional.
 bun run ide:dist:linux                       # builds the .deb (+ AppImage)
-export CLOUDSMITH_API_KEY=...                 # your key
-export CLOUDSMITH_OWNER=intelligentactuaries  # your org slug
-export CLOUDSMITH_REPO=scelo
 bash apps/scelo-ide/scripts/publish-deb-cloudsmith.sh
 ```
+
+The script picks `build/Scelo IDE-<package.json version>-amd64.deb`, never a
+glob. It used to take `ls -1 build/*.deb | head -1`, and because `build/` keeps
+every past release and `ls` sorts lexically, the first Cloudsmith publish pushed
+**0.1.2 instead of 0.1.3** — a stale package, into the one channel that
+auto-updates users. Check what the repo actually serves after any push:
+
+```bash
+curl -fsSL https://dl.cloudsmith.io/public/intelligentactuaries/scelo/deb/ubuntu/dists/any-version/main/binary-amd64/Packages \
+  | grep -E '^(Package|Version):'
+```
+
+Before uploading, the script refuses the package unless the `.desktop` inside it
+has `StartupWMClass=@ia/scelo-ide`, parses as group/comment/`key=value` on every
+line, and the AppStream metainfo is present. All three shipped broken at some
+point in 0.1.0–0.1.3, and a signed apt repo is the one channel you cannot
+quietly correct afterwards.
+
+### Never publish to `any-distro/any-version`
+
+The script uploads once per real codename (`ubuntu/jammy ubuntu/noble`, override
+with `CLOUDSMITH_DISTROS`). The tempting shortcut — one upload to
+`any-distro/any-version`, since the `.deb` bundles its own Python/R and is not
+distro-pinned — produces a repository that **passes every check and cannot be
+installed from**:
+
+| Root | Index | Package file |
+|---|---|---|
+| `/deb/ubuntu` (what apt is configured with) | ✅ present, signed | ❌ 404 |
+| `/deb/any-distro` | ❌ 404, no suite exists | ✅ present |
+
+An any-distro package is listed in every distro's `Packages`, but the file is
+only served beneath `/deb/any-distro/pool/…`, and `Filename:` is resolved
+relative to the root apt was given. So `apt update` succeeds, the signature
+verifies, `apt-cache policy` shows the right candidate — and the download 404s.
+That is how 0.1.0 through 0.1.2 sat in this repo looking fine and never being
+installable by anyone.
+
+Verify with real apt rather than by reading the index, in a throwaway root so
+nothing on your machine changes:
+
+```bash
+d=$(mktemp -d); mkdir -p $d/{var/lib/apt/lists/partial,var/cache/apt/archives/partial,var/lib/dpkg}
+: > $d/var/lib/dpkg/status
+curl -1sLf https://dl.cloudsmith.io/public/intelligentactuaries/scelo/gpg.key | gpg --dearmor > $d/k.gpg
+echo "deb [signed-by=$d/k.gpg] https://dl.cloudsmith.io/public/intelligentactuaries/scelo/deb/ubuntu noble main" > $d/sources
+A="-o Dir::Etc::sourcelist=$d/sources -o Dir::Etc::sourceparts=$d/none -o Dir::State=$d/var/lib/apt -o Dir::State::status=$d/var/lib/dpkg/status -o Dir::Cache=$d/var/cache/apt -o APT::Architecture=amd64"
+apt-get $A update && (cd $d && apt-get $A download scelo-ide)   # must actually fetch
+```
+
+Note that only the codenames you upload to carry the package. Every other suite
+still returns a signed, valid, **empty** index, so a user on 24.10 or Debian
+sees `apt update` succeed and then "Unable to locate package" — which is why
+`docs/docs/installation/linux.md` pins the suite instead of using
+`$VERSION_CODENAME` verbatim. Cloudsmith also refuses a real-distro upload while
+an `any-distro` package of the same name+version+arch exists; delete that first.
 
 Users then install the verified, auto-updating package:
 ```bash
@@ -123,20 +189,44 @@ terminal need broad `--filesystem` / `--device` permissions). Steps:
 
 ## Summary
 
-- **Code (written; first ships in 0.1.3):** AppStream `metainfo.xml` +
-  `.desktop` + the snap target → fixes "Unknown publisher/license/date" and
-  wires the Snap path. Through 0.1.2 the metainfo was authored but never
-  installed by the build, and the `.desktop` was malformed, so shipped packages
-  still showed "Unknown" everywhere. Both fixed in `electron-builder.yml`;
-  **verify on the next Linux build** with:
+- **Code:** AppStream `metainfo.xml` + `.desktop` + the snap target → fixes
+  "Unknown publisher/license/date" and wires the Snap path. This took three
+  releases to actually work, so do not assume any part of it from the source
+  alone:
+  - through **0.1.2** the metainfo was authored but never installed by the
+    build, and the `.desktop` was malformed;
+  - **0.1.3** installed it and fixed the `.desktop`, but App Center still read
+    "Unknown publisher" — the file was present and correct and nothing tied it
+    to the Debian package, so the store listed the bare package and ignored it
+    (the tell: the listing is titled `scelo-ide`, not `Scelo IDE`);
+  - **0.1.5** added `<pkgname>scelo-ide</pkgname>`, which supplies that link.
+    Normally a distro's catalog generator provides it, but we self-distribute
+    and Cloudsmith publishes no DEP-11 metadata, so it has to be in the file.
+
+  **Verify on the next Linux build** — and verify the *store listing*, not just
+  that the file shipped:
 
   ```bash
   dpkg -c build/*.deb | grep -E "metainfo|\.desktop"
   dpkg-deb --fsys-tarfile build/*.deb | tar -xO ./usr/share/applications/scelo-ide.desktop
+  appstreamcli validate packaging/io.intelligentactuaries.scelo.metainfo.xml
+  appstreamcli convert packaging/io.intelligentactuaries.scelo.metainfo.xml /tmp/o.yml \
+    && grep -E '^(ID|Package):' /tmp/o.yml     # Package: scelo-ide must appear
+  # after installing, the component must resolve WITH a package association:
+  appstreamcli get io.intelligentactuaries.scelo
   ```
 
+  Note that none of this removes the **"Potentially unsafe / third party"**
+  banner. That is about the channel, not the metadata, and no amount of
+  AppStream data changes it — only a store (Snap/Flathub) does.
+
   The desktop file must be single-line per key and must not contain
-  `entry=[object Object]`.
+  `entry=[object Object]`, and its `StartupWMClass` must be `@ia/scelo-ide`
+  (the window's real WM_CLASS — see the comment in `electron-builder.yml`).
+  With the wrong class the installed app runs under a generic gear icon in
+  the GNOME dock instead of the Scelo logo. Verify after installing: launch
+  from the dock and confirm the running window shows the logo; on X11
+  `wmctrl -lx` should list it as `@ia/scelo-ide.@ia/scelo-ide`.
 - **Accounts + money (you):** a Snap Store / Flathub publisher account (free) to
   clear the Linux "third party" flag, and Windows/Apple signing certs (paid) to
   clear SmartScreen / Gatekeeper.
