@@ -33,11 +33,21 @@ never reads from soft. The tools layer is the only path between them.
 Python + R and the IA actuarial stack are bundled, so everything runs offline
 once installed.
 
-**Debian / Ubuntu — recommended.** The signed, auto-updating apt repository:
+**Ubuntu 22.04 / 24.04 — recommended.** The signed, auto-updating apt
+repository:
 
 ```bash
 curl -1sLf 'https://dl.cloudsmith.io/public/intelligentactuaries/scelo/setup.deb.sh' | sudo -E bash
 sudo apt install scelo-ide
+```
+
+The repository is published for `jammy` and `noble`. On **24.10+ or Debian**,
+pin the suite — otherwise apt configures your own codename, finds an empty
+index, and reports "Unable to locate package":
+
+```bash
+curl -1sLf 'https://dl.cloudsmith.io/public/intelligentactuaries/scelo/setup.deb.sh' \
+  | sudo -E distro=ubuntu codename=noble bash
 ```
 
 Rather not pipe a script into a root shell? The

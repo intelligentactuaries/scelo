@@ -29,9 +29,27 @@ set -euo pipefail
 
 OWNER="${CLOUDSMITH_OWNER:-intelligentactuaries}"
 REPO="${CLOUDSMITH_REPO:-scelo}"
-# Cloudsmith needs a distro/release coordinate. Our .deb bundles its own
-# Python/R and isn't distro-pinned, so the generic any-distro slot fits.
-DISTRO="${CLOUDSMITH_DISTRO:-any-distro/any-version}"
+# Cloudsmith needs a distro/release coordinate, and it must be a REAL one, one
+# upload per codename. Do not reach for `any-distro/any-version` even though our
+# .deb bundles its own Python/R and isn't distro-pinned: an any-distro package
+# is listed in every distro's index, but the file is only served under
+# `/deb/any-distro/pool/…`, while `Filename:` in the index is relative to the
+# root apt was configured with (`/deb/ubuntu`). So `apt update` and
+# `apt-cache policy` both look perfect, and then the download 404s. That is how
+# 0.1.0 through 0.1.2 sat in this repo for weeks looking installed-able and
+# never being installable. Verified with real apt on 2026-08-17.
+#
+# The cost is one ~186MB copy per codename, and Cloudsmith rejects a real-distro
+# upload while an any-distro package of the same name+version+arch exists, so
+# delete that first if you ever hit the conflict.
+#
+# Only the codenames listed here get the package. Every other suite still
+# returns a valid but EMPTY index, so a user on 24.10 or Debian sees `apt
+# update` succeed and then "Unable to locate package scelo-ide" — add a codename
+# here rather than leaving them with that.
+DISTROS="${CLOUDSMITH_DISTROS:-ubuntu/jammy ubuntu/noble}"
+# Back-compat: CLOUDSMITH_DISTRO (singular) still pins a single coordinate.
+DISTROS="${CLOUDSMITH_DISTRO:-$DISTROS}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BUILD_DIR="$SCRIPT_DIR/../build"
@@ -132,12 +150,35 @@ if [ -z "$CS" ]; then
   exit 1
 fi
 
-echo "↑ Pushing $(basename "$DEB") → $OWNER/$REPO ($DISTRO)"
-"$CS" push deb "$OWNER/$REPO/$DISTRO" "$DEB"
+for DISTRO in $DISTROS; do
+  echo "↑ Pushing $(basename "$DEB") → $OWNER/$REPO ($DISTRO)"
+  "$CS" push deb "$OWNER/$REPO/$DISTRO" "$DEB"
+done
+
+# Uploading is not the same as being installable — that was the whole lesson of
+# the any-distro coordinate. Confirm each suite's published index really lists
+# the version before claiming success. Cloudsmith's CDN needs a moment after
+# synchronising, so give it a few tries rather than failing on the first miss.
+BASE="https://dl.cloudsmith.io/public/$OWNER/$REPO/deb"
+for DISTRO in $DISTROS; do
+  CODENAME="${DISTRO#*/}"
+  IDX="$BASE/${DISTRO%%/*}/dists/$CODENAME/main/binary-amd64/Packages"
+  for _ in 1 2 3 4 5 6 7 8; do
+    if curl -fsSL "$IDX" 2>/dev/null | grep -q "^Version: $VERSION$"; then
+      echo "✓ $CODENAME: index lists $VERSION"
+      continue 2
+    fi
+    sleep 15
+  done
+  echo "✗ $CODENAME: index still does not list $VERSION — apt users will get" >&2
+  echo "  'Unable to locate package'. Check the package's sync stage in the" >&2
+  echo "  Cloudsmith UI before announcing this release." >&2
+  exit 1
+done
 
 cat <<EOF
 
-✓ Published. Cloudsmith signs the repo automatically.
+✓ Published to: $DISTROS. Cloudsmith signs the repo automatically.
 
   Users install the VERIFIED, auto-updating package with:
     curl -1sLf 'https://dl.cloudsmith.io/public/$OWNER/$REPO/setup.deb.sh' | sudo -E bash
