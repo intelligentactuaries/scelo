@@ -101,7 +101,18 @@ linux:
   desktop:
     Name: Scelo IDE
     Keywords: actuarial;data-science;python;r;reserving;mortality;capital;
-    StartupWMClass: Scelo IDE
+    # MUST equal the window's real WM_CLASS / Wayland app_id, or GNOME cannot
+    # tie the running window to this launcher: the dock then shows a generic
+    # gear instead of the Scelo logo, the launcher keeps "starting" until it
+    # times out, and the window gets its own unnamed dock entry (0.1.0–0.1.3
+    # all shipped like that). Electron derives WM_CLASS from app.name, which
+    # is package.json's `name` because that file has no productName — so the
+    # class is literally "@ia/scelo-ide" (check with `xprop WM_CLASS` on the
+    # window). Do NOT "fix" this by adding productName to package.json: that
+    # renames app.name and silently moves userData from
+    # ~/.config/@ia/scelo-ide to ~/.config/Scelo IDE, orphaning every
+    # existing install's workspaces and state.
+    StartupWMClass: "@ia/scelo-ide"
   target:
     - target: AppImage
       arch: [x64]
