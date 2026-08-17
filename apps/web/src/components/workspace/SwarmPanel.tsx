@@ -17,6 +17,7 @@
 import { useEffect, useState } from "react";
 import { getLastSwarmRequest, subscribeOpenInSwarm, urlFor } from "../../lib/swarmBus";
 import { emitToast } from "../../lib/toastBus";
+import { SwarmLiveDot } from "../SwarmLiveDot";
 
 // The swarm's Vite dev URL — derived from swarmBus's canonical
 // constant so the probe, the iframe, and every surface that
@@ -82,21 +83,18 @@ export default function SwarmPanel() {
     <div className="flex h-full flex-col bg-bg-2 text-fg">
       <div className="flex shrink-0 items-baseline justify-between border-b border-border px-3 py-1">
         <span className="text-[10px] uppercase tracking-wider text-fg-mute">swarm</span>
-        {/* The dot carries the state's colour — green for a live swarm, red
-            for none, hollow while probing — so life reads at a glance; the
-            word stays muted like the rest of the header. */}
-        <span className="font-mono text-[10px] text-fg-mute" title={SWARM_URL}>
-          {probe === "up" && (
-            <>
-              <span className="text-primary">●</span> live
-            </>
-          )}
-          {probe === "probing" && "○ probing…"}
-          {probe === "down" && (
-            <>
-              <span className="text-error">●</span> offline
-            </>
-          )}
+        {/* A lit LED carries the state — glowing green for a live swarm,
+            red for none, a hollow pulsing ring while probing — so life
+            reads at a glance; the word stays muted like the rest of the
+            header. */}
+        <span
+          className="inline-flex items-center gap-1.5 font-mono text-[10px] text-fg-mute"
+          title={SWARM_URL}
+        >
+          <SwarmLiveDot probe={probe} />
+          {probe === "up" && "live"}
+          {probe === "probing" && "probing…"}
+          {probe === "down" && "offline"}
         </span>
       </div>
       {probe === "up" ? (
