@@ -87,7 +87,7 @@ linux:
   # map, so this description always wins. Keep it single-line.
   description: >-
     Scelo IDE is a downloadable desktop workbench for actuaries: a
-    soft-data → tools → hard-data pipeline with a bundled Python and R
+    soft-data to tools to hard-data pipeline with a bundled Python and R
     runtime, the lifelib + chainladder + climada stack, and AI co-pilots
     scoped to each stage. Works fully offline once installed.
   # FLAT map of desktop-entry keys, NOT `desktop: { entry: {...} }`.
@@ -155,7 +155,7 @@ snap:
   summary: Actuarial workbench with bundled Python + R
   description: |
     Scelo IDE is a downloadable desktop workbench for actuaries: a
-    soft-data → tools → hard-data pipeline with a bundled Python and R
+    soft-data to tools to hard-data pipeline with a bundled Python and R
     runtime, the lifelib + chainladder + climada stack, and AI co-pilots
     scoped to each stage. Works fully offline once installed.
 

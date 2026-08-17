@@ -56,7 +56,7 @@ has the same repo as a deb822 `.sources` entry.
 
 **Everything else** is on the
 [**Releases tab**](https://github.com/intelligentactuaries/scelo/releases).
-Note the platforms are not in lockstep: Linux is on **0.1.4** (both the apt
+Note the platforms are not in lockstep: Linux is on **0.1.5** (both the apt
 repository above and the Releases tab), Windows on **0.1.2**, and **macOS has
 no build yet** — see
 [INSTALL-WINDOWS-MACOS.md](INSTALL-WINDOWS-MACOS.md) to build it locally.
