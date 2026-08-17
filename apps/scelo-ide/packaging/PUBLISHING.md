@@ -136,7 +136,12 @@ terminal need broad `--filesystem` / `--device` permissions). Steps:
   ```
 
   The desktop file must be single-line per key and must not contain
-  `entry=[object Object]`.
+  `entry=[object Object]`, and its `StartupWMClass` must be `@ia/scelo-ide`
+  (the window's real WM_CLASS — see the comment in `electron-builder.yml`).
+  With the wrong class the installed app runs under a generic gear icon in
+  the GNOME dock instead of the Scelo logo. Verify after installing: launch
+  from the dock and confirm the running window shows the logo; on X11
+  `wmctrl -lx` should list it as `@ia/scelo-ide.@ia/scelo-ide`.
 - **Accounts + money (you):** a Snap Store / Flathub publisher account (free) to
   clear the Linux "third party" flag, and Windows/Apple signing certs (paid) to
   clear SmartScreen / Gatekeeper.
