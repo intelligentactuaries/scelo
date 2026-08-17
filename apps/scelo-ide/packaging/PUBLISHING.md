@@ -27,14 +27,48 @@ One-time (yours):
 1. Create a free Cloudsmith account, then a repo (e.g. `scelo`) under your org.
 2. Account → API Settings → make an API key.
 
+One-time, store the key where the CLI finds it by itself — this keeps it out of
+your shell history, out of `ps`, and out of any terminal transcript:
+```bash
+mkdir -p ~/.cloudsmith && chmod 700 ~/.cloudsmith
+printf '[default]\napi_key = YOUR_KEY\n' > ~/.cloudsmith/credentials.ini
+chmod 600 ~/.cloudsmith/credentials.ini
+```
+(`CLOUDSMITH_API_KEY` still works and is the right choice in CI, where there is
+no home directory to persist.)
+
 Each release:
 ```bash
+# 1 · bump apps/scelo-ide/package.json's version and add a <release> entry to
+#     packaging/io.intelligentactuaries.scelo.metainfo.xml — the publish script
+#     selects the .deb *by that version*, so this is not optional.
 bun run ide:dist:linux                       # builds the .deb (+ AppImage)
-export CLOUDSMITH_API_KEY=...                 # your key
-export CLOUDSMITH_OWNER=intelligentactuaries  # your org slug
-export CLOUDSMITH_REPO=scelo
 bash apps/scelo-ide/scripts/publish-deb-cloudsmith.sh
 ```
+
+The script picks `build/Scelo IDE-<package.json version>-amd64.deb`, never a
+glob. It used to take `ls -1 build/*.deb | head -1`, and because `build/` keeps
+every past release and `ls` sorts lexically, the first Cloudsmith publish pushed
+**0.1.2 instead of 0.1.3** — a stale package, into the one channel that
+auto-updates users. Check what the repo actually serves after any push:
+
+```bash
+curl -fsSL https://dl.cloudsmith.io/public/intelligentactuaries/scelo/deb/ubuntu/dists/any-version/main/binary-amd64/Packages \
+  | grep -E '^(Package|Version):'
+```
+
+Before uploading, the script refuses the package unless the `.desktop` inside it
+has `StartupWMClass=@ia/scelo-ide`, parses as group/comment/`key=value` on every
+line, and the AppStream metainfo is present. All three shipped broken at some
+point in 0.1.0–0.1.3, and a signed apt repo is the one channel you cannot
+quietly correct afterwards.
+
+Note the upload coordinate is `any-distro/any-version` because the `.deb`
+bundles its own Python/R and is not distro-pinned. Cloudsmith then serves that
+same package set under *every* suite — `dists/noble/…` and `dists/any-version/…`
+return byte-identical `Packages` indexes — which is why the deb822 snippet in
+`docs/docs/installation/linux.md` can read `Suites` from `/etc/os-release` and
+still resolve.
 
 Users then install the verified, auto-updating package:
 ```bash
