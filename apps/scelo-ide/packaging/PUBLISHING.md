@@ -63,12 +63,44 @@ line, and the AppStream metainfo is present. All three shipped broken at some
 point in 0.1.0–0.1.3, and a signed apt repo is the one channel you cannot
 quietly correct afterwards.
 
-Note the upload coordinate is `any-distro/any-version` because the `.deb`
-bundles its own Python/R and is not distro-pinned. Cloudsmith then serves that
-same package set under *every* suite — `dists/noble/…` and `dists/any-version/…`
-return byte-identical `Packages` indexes — which is why the deb822 snippet in
-`docs/docs/installation/linux.md` can read `Suites` from `/etc/os-release` and
-still resolve.
+### Never publish to `any-distro/any-version`
+
+The script uploads once per real codename (`ubuntu/jammy ubuntu/noble`, override
+with `CLOUDSMITH_DISTROS`). The tempting shortcut — one upload to
+`any-distro/any-version`, since the `.deb` bundles its own Python/R and is not
+distro-pinned — produces a repository that **passes every check and cannot be
+installed from**:
+
+| Root | Index | Package file |
+|---|---|---|
+| `/deb/ubuntu` (what apt is configured with) | ✅ present, signed | ❌ 404 |
+| `/deb/any-distro` | ❌ 404, no suite exists | ✅ present |
+
+An any-distro package is listed in every distro's `Packages`, but the file is
+only served beneath `/deb/any-distro/pool/…`, and `Filename:` is resolved
+relative to the root apt was given. So `apt update` succeeds, the signature
+verifies, `apt-cache policy` shows the right candidate — and the download 404s.
+That is how 0.1.0 through 0.1.2 sat in this repo looking fine and never being
+installable by anyone.
+
+Verify with real apt rather than by reading the index, in a throwaway root so
+nothing on your machine changes:
+
+```bash
+d=$(mktemp -d); mkdir -p $d/{var/lib/apt/lists/partial,var/cache/apt/archives/partial,var/lib/dpkg}
+: > $d/var/lib/dpkg/status
+curl -1sLf https://dl.cloudsmith.io/public/intelligentactuaries/scelo/gpg.key | gpg --dearmor > $d/k.gpg
+echo "deb [signed-by=$d/k.gpg] https://dl.cloudsmith.io/public/intelligentactuaries/scelo/deb/ubuntu noble main" > $d/sources
+A="-o Dir::Etc::sourcelist=$d/sources -o Dir::Etc::sourceparts=$d/none -o Dir::State=$d/var/lib/apt -o Dir::State::status=$d/var/lib/dpkg/status -o Dir::Cache=$d/var/cache/apt -o APT::Architecture=amd64"
+apt-get $A update && (cd $d && apt-get $A download scelo-ide)   # must actually fetch
+```
+
+Note that only the codenames you upload to carry the package. Every other suite
+still returns a signed, valid, **empty** index, so a user on 24.10 or Debian
+sees `apt update` succeed and then "Unable to locate package" — which is why
+`docs/docs/installation/linux.md` pins the suite instead of using
+`$VERSION_CODENAME` verbatim. Cloudsmith also refuses a real-distro upload while
+an `any-distro` package of the same name+version+arch exists; delete that first.
 
 Users then install the verified, auto-updating package:
 ```bash
