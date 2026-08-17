@@ -10,7 +10,7 @@ There are two distinct problems, and they need different fixes:
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| "Unknown publisher / license / date" | no AppStream metadata in the package | the `metainfo.xml` in this folder (written; ships from 0.1.3 — see below) |
+| "Unknown publisher / license / date" | no AppStream metadata in the package, **or** metadata the store cannot tie to the package | the `metainfo.xml` in this folder — installed from 0.1.3, but only effective from 0.1.5, which added `<pkgname>` (see below) |
 | "Potentially unsafe / third party" | not from a verified store, not signed | publish to a store / buy a signing cert (below) |
 
 ---
@@ -189,17 +189,36 @@ terminal need broad `--filesystem` / `--device` permissions). Steps:
 
 ## Summary
 
-- **Code (written; first ships in 0.1.3):** AppStream `metainfo.xml` +
-  `.desktop` + the snap target → fixes "Unknown publisher/license/date" and
-  wires the Snap path. Through 0.1.2 the metainfo was authored but never
-  installed by the build, and the `.desktop` was malformed, so shipped packages
-  still showed "Unknown" everywhere. Both fixed in `electron-builder.yml`;
-  **verify on the next Linux build** with:
+- **Code:** AppStream `metainfo.xml` + `.desktop` + the snap target → fixes
+  "Unknown publisher/license/date" and wires the Snap path. This took three
+  releases to actually work, so do not assume any part of it from the source
+  alone:
+  - through **0.1.2** the metainfo was authored but never installed by the
+    build, and the `.desktop` was malformed;
+  - **0.1.3** installed it and fixed the `.desktop`, but App Center still read
+    "Unknown publisher" — the file was present and correct and nothing tied it
+    to the Debian package, so the store listed the bare package and ignored it
+    (the tell: the listing is titled `scelo-ide`, not `Scelo IDE`);
+  - **0.1.5** added `<pkgname>scelo-ide</pkgname>`, which supplies that link.
+    Normally a distro's catalog generator provides it, but we self-distribute
+    and Cloudsmith publishes no DEP-11 metadata, so it has to be in the file.
+
+  **Verify on the next Linux build** — and verify the *store listing*, not just
+  that the file shipped:
 
   ```bash
   dpkg -c build/*.deb | grep -E "metainfo|\.desktop"
   dpkg-deb --fsys-tarfile build/*.deb | tar -xO ./usr/share/applications/scelo-ide.desktop
+  appstreamcli validate packaging/io.intelligentactuaries.scelo.metainfo.xml
+  appstreamcli convert packaging/io.intelligentactuaries.scelo.metainfo.xml /tmp/o.yml \
+    && grep -E '^(ID|Package):' /tmp/o.yml     # Package: scelo-ide must appear
+  # after installing, the component must resolve WITH a package association:
+  appstreamcli get io.intelligentactuaries.scelo
   ```
+
+  Note that none of this removes the **"Potentially unsafe / third party"**
+  banner. That is about the channel, not the metadata, and no amount of
+  AppStream data changes it — only a store (Snap/Flathub) does.
 
   The desktop file must be single-line per key and must not contain
   `entry=[object Object]`, and its `StartupWMClass` must be `@ia/scelo-ide`
