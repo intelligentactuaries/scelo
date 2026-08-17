@@ -10,6 +10,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { swarmApiUrl } from "./Scelo/forecast/councilClient";
+import { SwarmLiveDot } from "./SwarmLiveDot";
 
 export type SwarmProbe = "probing" | "up" | "down";
 
@@ -42,10 +43,10 @@ export function useSwarmProbe(): SwarmProbe {
   return probe;
 }
 
-/** Compact "swarm" nav button with a liveness pip — drop-in beside the
- *  other ia-btn-ghost header links. Green pip + "live" once the swarm
- *  server answers on :3010, so a running deliberation is one click away
- *  from anywhere. */
+/** Compact "swarm" nav button with a liveness LED — drop-in beside the
+ *  other ia-btn-ghost header links. Glowing green LED + "live" once the
+ *  swarm server answers on :3010 (red when it doesn't), so a running
+ *  deliberation is one click away from anywhere. */
 export function SwarmNavLink({ className }: { className?: string }) {
   const probe = useSwarmProbe();
   return (
@@ -58,12 +59,7 @@ export function SwarmNavLink({ className }: { className?: string }) {
           : "Open the Swarm view (server not detected on :3010 — it shows start instructions)"
       }
     >
-      <span
-        aria-hidden
-        className={`inline-block h-1.5 w-1.5 rounded-full ${
-          probe === "up" ? "bg-primary" : "bg-fg-dim"
-        } ${probe === "probing" ? "animate-pulse" : ""}`}
-      />
+      <SwarmLiveDot probe={probe} className="text-[10px]" />
       swarm
       {probe === "up" && <span className="font-mono text-[9px] text-primary">live</span>}
     </Link>

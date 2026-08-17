@@ -40,6 +40,7 @@ import ReactFlow, {
 } from "reactflow";
 import "reactflow/dist/style.css";
 import { emitWorkspaceFact } from "@/lib/workspaceFactsBus";
+import { SwarmLiveDot } from "../SwarmLiveDot";
 import { useSwarmProbe } from "../SwarmStatus";
 import { SWARM_DOCS_URL, swarmStartCommand } from "../workspace/SwarmPanel";
 import { ChatInputPill } from "./ChatInputPill";
@@ -2667,12 +2668,15 @@ function CouncilAttachCta({ focused }: { focused: RunResult }) {
       <div className="flex items-baseline justify-between font-mono text-[9px] uppercase tracking-wider text-fg-dim">
         <span>convene council · swarm @ :3010</span>
         <span
-          className={probe === "up" ? "text-primary" : probe === "down" ? "text-error" : ""}
+          className={`inline-flex items-center gap-1 ${
+            probe === "up" ? "text-primary" : probe === "down" ? "text-error" : ""
+          }`}
           title={probe === "up" ? "swarm API reachable" : "swarm API not reachable"}
         >
-          {probe === "up" && "● live"}
-          {probe === "probing" && "○ probing…"}
-          {probe === "down" && "● offline"}
+          <SwarmLiveDot probe={probe} className="text-[10px]" />
+          {probe === "up" && "live"}
+          {probe === "probing" && "probing…"}
+          {probe === "down" && "offline"}
         </span>
       </div>
       <p className="mt-1 text-[11px] text-fg-mute">
