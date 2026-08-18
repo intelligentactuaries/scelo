@@ -242,7 +242,7 @@ function basePick(sig: DataSignature): PickResult {
     const headline = isSavings ? "cashvalue-savings" : "basicterm-projection";
     const headlineWhy = isSavings
       ? "MP carries account_value — UL / savings shape, projects via CashValue_ME."
-      : "MP triplet (age_at_entry · sum_assured · policy_term) — runs lifelib BasicTerm_M in-browser.";
+      : "MP triplet (age_at_entry · sum_assured · policy_term) — runs lifelib BasicTerm_ME in-browser.";
     return {
       domain: "life",
       selected: [
@@ -250,12 +250,12 @@ function basePick(sig: DataSignature): PickResult {
         {
           id: "ifrs17-csm",
           rationale:
-            "Same MP file feeds the IFRS 17 LRC / LIC / CSM roll-forward (lifelib ifrs17sim).",
+            "Same MP file feeds the IFRS 17 LRC / LIC / CSM roll-forward (lifelib ifrs17sim, legacy).",
         },
         {
           id: "solvency2-life",
           rationale:
-            "Standard-formula life SCR (mortality / longevity / lapse / expense / CAT) on the same MPs.",
+            "Standard-formula life SCR (mortality / longevity / disability / lapse / expense / revision / CAT) on the same MPs — lifelib annuallife/TradLife_A_EX1.",
         },
         {
           id: "cluster-modelpoints",
@@ -265,7 +265,7 @@ function basePick(sig: DataSignature): PickResult {
       ],
       summary: isSavings
         ? "Lifelib MP file with account-value (UL / savings): CashValue_ME for the headline, IFRS 17 CSM + Solvency II life SCR alongside, cluster for compression."
-        : "Lifelib MP file (term life): BasicTerm_M for the headline projection, IFRS 17 CSM + Solvency II life SCR alongside, cluster for compression at scale.",
+        : "Lifelib MP file (term life): BasicTerm_ME for the headline projection, IFRS 17 CSM + Solvency II life SCR alongside, cluster for compression at scale.",
     };
   }
   // Claims-triangle shape → reserving family.

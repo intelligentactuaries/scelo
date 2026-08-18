@@ -162,13 +162,16 @@ export const MODEL_CATALOG: CatalogModel[] = [
   },
   // ── life · lifelib-rooted (lifelib-dev/lifelib) ───────────────────────────
   // Every entry below maps 1:1 to a lifelib library so the user can pivot
-  // from the in-app projection to the canonical Python implementation.
+  // from the in-app projection to the canonical Python implementation. The
+  // authoritative mapping (library, model, active/legacy status, pinned
+  // lifelib version) is LIFELIB_TARGETS in @scelo/core — keep the "Lifelib →"
+  // tail of each description in step with it.
   {
     id: "basicterm-projection",
     name: "BasicTerm · projection",
     family: "life",
     description:
-      "Monthly term-life projection on a model-point file (pol-in-force, mortality decrement, premium, claim, reserve, profit). Lifelib → basiclife / BasicTerm_M.",
+      "Monthly term-life projection on a model-point file (pol-in-force, mortality decrement, premium, claim, reserve, profit). Lifelib → basiclife / BasicTerm_ME (BasicTerm_M for a pure new-business file).",
     applicableTo: [
       "life",
       "term",
@@ -204,7 +207,7 @@ export const MODEL_CATALOG: CatalogModel[] = [
     name: "IFRS 17 · CSM roll-forward",
     family: "life",
     description:
-      "IFRS 17 LRC / LIC / CSM release for a portfolio of insurance contracts. Lifelib → ifrs17sim.",
+      "IFRS 17 LRC / LIC / CSM release for a portfolio of insurance contracts. Lifelib → ifrs17sim (legacy since 0.12.0; ifrs17a is the active engine but takes nominal cash flows, not model points).",
     applicableTo: ["life", "ifrs17", "csm", "lrc", "lic", "model-points", "reporting"],
   },
   {
@@ -212,7 +215,7 @@ export const MODEL_CATALOG: CatalogModel[] = [
     name: "Solvency II · life SCR",
     family: "life",
     description:
-      "Standard formula SCR for the life underwriting module (mortality, longevity, lapse, expense, CAT). Lifelib → solvency2.",
+      "Standard formula SCR for the life underwriting module (mortality, longevity, disability, lapse up/down/mass, expense, revision, CAT). Lifelib → annuallife / TradLife_A_EX1 (replaces the deprecated solvency2 project).",
     applicableTo: ["life", "solvency2", "scr", "underwriting", "model-points"],
   },
   {
@@ -220,7 +223,7 @@ export const MODEL_CATALOG: CatalogModel[] = [
     name: "Nested stochastic",
     family: "life",
     description:
-      "Outer real-world × inner risk-neutral projection for guarantees and TVOG. Lifelib → nestedlife.",
+      "Outer real-world × inner risk-neutral projection for guarantees and TVOG. Lifelib → nestedlife (legacy since 0.12.0).",
     applicableTo: ["life", "savings", "guarantees", "tvog", "stochastic", "esg"],
   },
   {
@@ -243,7 +246,7 @@ export const MODEL_CATALOG: CatalogModel[] = [
     name: "Economic curves",
     family: "life",
     description:
-      "Discount / forward / zero curves with bootstrap + interpolation. Lifelib → economic / economic_curves.",
+      "Discount / forward / zero curves with bootstrap + interpolation. Lifelib → economic_curves scripts + economic / BasicHullWhite.",
     applicableTo: ["life", "capital", "yield_curve", "rates", "discount"],
   },
   // ── forecast · W(M,T,R) survival under shocks ───────────────────────────

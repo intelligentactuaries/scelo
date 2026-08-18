@@ -296,21 +296,41 @@ in the result detail panel:
 
 The `life` family is **lifelib-rooted**
 ([github.com/lifelib-dev/lifelib](https://github.com/lifelib-dev/lifelib)).
-Eight catalog entries map 1:1 to lifelib libraries: `basicterm-projection`
-(basiclife · BasicTerm_M), `cashvalue-savings` (savings · CashValue_ME),
-`ifrs17-csm` (ifrs17sim), `solvency2-life` (solvency2), `nested-stochastic`
-(nestedlife), `smithwilson-curve` (smithwilson), `cluster-modelpoints`
-(cluster), `economic-curves` (economic / economic_curves). Each entry's
+Scelo targets **lifelib 0.14.0 / modelx 0.32.0** — the pin lives in ONE
+place, `packages/scelo-core/src/lifelib.ts` (`LIFELIB_VERSION`,
+`MODELX_VERSION`, `LIFELIB_LIBRARIES`, `LIFELIB_TARGETS`), mirrored by the
+bundled-runtime lock `apps/scelo-ide/runtime/python-requirements.in`. The
+catalog, the theory blurbs, the notebook export, the Python bridges and the
+runtime probe all read that manifest; a lifelib bump is a change there, not
+a hunt through blurbs. Eight catalog entries map 1:1 to lifelib libraries
+via `LIFELIB_TARGETS`: `basicterm-projection` (basiclife · BasicTerm_ME —
+in-force, honours `duration_mth`; BasicTerm_M is the new-business case),
+`cashvalue-savings` (savings · CashValue_ME), `ifrs17-csm` (ifrs17sim,
+**legacy** since 0.12.0 — successor `ifrs17a` takes nominal cash flows, not
+model points), `solvency2-life` (**annuallife · TradLife_A_EX1**, the
+0.13.0 successor to the deprecated `solvency2` project), `nested-stochastic`
+(nestedlife, legacy), `smithwilson-curve` (smithwilson),
+`cluster-modelpoints` (cluster), `economic-curves` (economic_curves scripts
++ economic / BasicHullWhite). lifelib 0.12–0.14 also added `annuallife /
+TradLife_A` (annual traditional-life projection) and `uslib` (twelve draft
+U.S. life & annuity reference models) — listed in `LIFELIB_LIBRARIES`, not
+yet routed to (see "what is intentionally not built yet"). Each entry's
 `applicableTo` carries lifelib model-point column names (`age_at_entry`,
 `sum_assured`, `policy_term`, `duration_mth`, `premium_pp`, `account_value`)
 so the heuristic picker routes to `life` the moment those columns appear.
+
+lifelib is a *library of modelx models*: `lifelib.create(<library>, <dir>)`
+copies a library folder out of site-packages and `modelx.read_model(<dir>/
+<Model>)` loads a model. There is no `from lifelib.libraries.x import
+Model` — every Python path in Scelo (bridges, notebook) goes through
+`bridges/lifelibPrelude.ts`'s `lifelib_model()` / the notebook's cell 2.
 
 #### Lifelib integration depth
 
 Three layers, deepest first:
 
 1. **In-browser TS port** (`lifelibBasicTerm.ts`) — `runBasicTermProjection`
-   is a faithful port of lifelib's `basiclife/BasicTerm_M`. Walks the MP
+   is a faithful port of lifelib's `basiclife/BasicTerm_ME`. Walks the MP
    file month-by-month: `pols_if` decremented by Makeham `qx` (monthly
    conversion) and constant lapse, `claims = pols_death · sum_assured`,
    `net_cf = premiums - claims - expenses` discounted at 3% pa. Stratified-
@@ -325,16 +345,28 @@ Three layers, deepest first:
 3. **Notebook export** (`lifelibNotebookExport.ts`,
    `LifelibNotebookCta` in `HardDataWorkstation.tsx`). On any life-family
    result card, an "Export · lifelib notebook" button generates a runnable
-   `.ipynb` with `%pip install lifelib`, the user's MP file embedded as
-   inline CSV → DataFrame, and the canonical `lifelib.create(...)` call for
-   the chosen model. Bridges the in-browser proof to the production tool.
+   `.ipynb`: `%pip install lifelib==<pin> modelx==<pin>`, a
+   `lifelib.create` + `mx.read_model` cell, the user's MP file embedded as
+   inline CSV → DataFrame, a column-normalisation cell, and the model
+   invocation — the same calls the IDE bridges make. Every run cell is
+   executed against the pinned lifelib on the sample MP file by
+   `lifelibNotebookExport.test.ts` when `SCELO_LIFELIB_PYTHON` points at an
+   interpreter with lifelib installed. Bridges the in-browser proof to the
+   production tool.
 4. **Scelo IDE Python / R bridges** (`bridges/*`). When running inside
    the Scelo IDE desktop shell (`window.scelo` exposed by
    `apps/scelo-ide`'s Electron preload), `runModelAsync` delegates select
    tools to the bundled runtimes:
 
    - `basicterm-projection` → `bridges/lifelibBasicTermPython.ts` (real
-     lifelib `basiclife/BasicTerm_M`).
+     lifelib `basiclife/BasicTerm_ME` via modelx; the file's `premium_pp`
+     replaces the model's premium table when present; MPs outside the
+     table with no premium are dropped and counted, never guessed).
+   - `solvency2-life` → `bridges/solvency2LifeScrPython.ts` (real lifelib
+     `annuallife/TradLife_A_EX1`: `risk_life_sub(0, risk)` per policy for
+     mortality / longevity / disability / lapse / expense / revision / CAT,
+     summed and aggregated with the model's `life_corr` matrix; per-policy
+     loop under a 45 s wall-clock budget, coverage reported, never scaled).
    - `chain-ladder` / `mack` / `bornhuetter-ferguson` / `bootstrap` →
      `bridges/chainladderPython.ts` (canonical `chainladder.Mack` /
      `BornhuetterFerguson` / `BootstrapODPSample`).
@@ -346,9 +378,20 @@ Three layers, deepest first:
    - `lee-carter` → `bridges/leeCarterPython.ts` (numpy SVD on log-qx +
      statsmodels SARIMAX(0,1,0) on κ(t); replaces the linear-decay stub
      with 95 % CI projections).
-   - `ifrs17-csm` → `bridges/ifrs17CsmPython.ts` (lifelib `ifrs17sim`,
-     with an inlined BBA rollforward fallback when ifrs17sim isn't
-     shipped alongside basiclife in this lifelib install).
+   - `ifrs17-csm` → `bridges/ifrs17CsmPython.ts` (real lifelib `ifrs17sim`
+     — legacy library — `OuterProj[pid].CSM(t)` / `TransServices(t)` per
+     policy on a simplelife-style PolicyData mapping; RA reported as the
+     library's 0 stub, not invented; same time-budget / coverage contract
+     as the SCR bridge).
+
+   All three lifelib bridges share `bridges/lifelibPrelude.ts` (library
+   copy + `read_model`, MP column normalisation, JSON emit carrying
+   `lifelibVersion` / `modelxVersion`, hard `os._exit` after emit because
+   modelx teardown at interpreter exit costs seconds). The IDE spawns the
+   bundled CPython for bridges with `PYTHONNOUSERSITE=1` and no inherited
+   `PYTHONPATH` (`bundledPythonEnv()` in `apps/scelo-ide/src/main.ts`) so
+   the pinned lifelib is the one that runs, and sets `SCELO_LIFELIB_HOME`
+   to the app's userData dir for the library copies.
    - `glm-frequency` / `glm-severity` → `bridges/glmPython.ts`
      (statsmodels Poisson GLM with optional log-exposure offset for
      frequency; Gamma log-link for severity; returns coefficient table +
@@ -771,6 +814,16 @@ where the ground is unstable. Update this list as items land.
 - **No tests** — there's no test surface for Scelo yet. When tests do
   land, they should target `modelPicker.heuristicPick`, `cleaning`,
   `formulaEvaluator`, and `modelRunner` first since those are pure.
+- **lifelib 0.12–0.14 libraries not yet routed to** — `annuallife /
+  TradLife_A` (annual traditional-life projection with reserves; only its
+  `_EX1` SCR variant is bridged, for `solvency2-life`), `uslib` (twelve
+  draft U.S. life & annuity reference models — draft API, listed in
+  `LIFELIB_LIBRARIES` only), `ifrs17a` (the active IFRS 17 engine; needs a
+  cash-flow-shaped input Scelo doesn't produce yet — `ifrs17-csm` still
+  runs legacy `ifrs17sim`), `appliedlife`, `assets`. `cashvalue-savings`,
+  `nested-stochastic`, `smithwilson-curve`, `cluster-modelpoints` and
+  `economic-curves` have real notebook exports but no IDE Python bridge —
+  their cards are still the in-browser proxies.
 
 ---
 

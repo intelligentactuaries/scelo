@@ -37,6 +37,11 @@ fi
 PYTHON_VERSION="3.11.10"
 PBS_RELEASE="20241016"  # python-build-standalone release tag
 R_VERSION="4.4.2"
+# Filled in by stage_python_packages from what actually landed in site-packages
+# (must equal the pins in runtime/python-requirements.in — the stage fails
+# otherwise). Recorded in manifest.json so the IDE can say which lifelib it ships.
+LIFELIB_VERSION="unknown"
+MODELX_VERSION="unknown"
 
 echo "▷ Bundling Scelo IDE runtime for: $TARGET_OS"
 echo "  Python ${PYTHON_VERSION} (PBS ${PBS_RELEASE})"
@@ -74,31 +79,62 @@ stage_python() {
   echo "  ✓ Python staged."
 }
 
-# ─── 2. IA Python deps resolved by uv against root pyproject.toml ──────
+# ─── 2. IA Python deps from runtime/python-requirements-<os>.txt ─────
+#
+# The stack is pinned in apps/scelo-ide/runtime/python-requirements.in
+# (headline libraries — lifelib, modelx — pinned hard) and fully locked per
+# platform by `uv pip compile` into python-requirements-{linux,macos,windows}.txt.
+# We install the lock so a clean rebuild ships the same lifelib every time;
+# if the lock is missing for this platform we fall back to the .in file so
+# the build still produces a usable runtime (and says so loudly).
+PY_REQ_DIR="$APP_DIR/runtime"
+py_lock_for_target() {
+  case "$TARGET_OS" in
+    linux) echo "$PY_REQ_DIR/python-requirements-linux.txt" ;;
+    mac)   echo "$PY_REQ_DIR/python-requirements-macos.txt" ;;
+    win)   echo "$PY_REQ_DIR/python-requirements-windows.txt" ;;
+  esac
+}
+
 stage_python_packages() {
   local py_bin
   py_bin="$RUNTIME_DIR/python/bin/python3"
   [ "$TARGET_OS" = "win" ] && py_bin="$RUNTIME_DIR/python/python.exe"
 
-  echo "  ↓ Installing IA Python deps into bundled interpreter"
-  # Resolve from the repo's pyproject.toml so the IDE's stack stays in sync
-  # with the rest of the monorepo (climada, lifelib, statsmodels, …).
-  "$py_bin" -m pip install --upgrade pip
-  "$py_bin" -m pip install --no-cache-dir \
-    -r <("$py_bin" -m pip install --dry-run -r "$REPO_ROOT/pyproject.toml" 2>/dev/null || \
-         cat "$REPO_ROOT/pyproject.toml") \
-    || {
-      # Fallback: install the explicit dependency list from pyproject.toml.
-      # uv pip compile would be cleaner — added in Phase 2.
-      "$py_bin" -m pip install --no-cache-dir \
-        numpy pandas scipy scikit-learn statsmodels lightgbm \
-        rpy2 lifelib chainladder
-    }
+  local lock req
+  lock="$(py_lock_for_target)"
+  if [ -f "$lock" ]; then
+    req="$lock"
+  else
+    echo "  ! No lock file at $lock — installing unpinned from python-requirements.in"
+    req="$PY_REQ_DIR/python-requirements.in"
+  fi
+
+  echo "  ↓ Installing IA Python deps into bundled interpreter from $(basename "$req")"
+  # -I / PYTHONNOUSERSITE: the bundled interpreter must resolve ONLY its own
+  # site-packages while we stage it — a developer's ~/.local lifelib or a
+  # PYTHONPATH from another toolchain must not satisfy (or shadow) a pin.
+  PYTHONNOUSERSITE=1 PYTHONPATH= "$py_bin" -I -m pip install --upgrade pip
+  PYTHONNOUSERSITE=1 PYTHONPATH= "$py_bin" -I -m pip install --no-cache-dir -r "$req"
+
   # LSP-lite tooling: pyright for in-editor diagnostics on save (Phase 6).
   # Tolerates failure — the editor falls back to no-lint mode gracefully.
-  "$py_bin" -m pip install --no-cache-dir pyright || \
+  PYTHONNOUSERSITE=1 PYTHONPATH= "$py_bin" -I -m pip install --no-cache-dir pyright || \
     echo "  ! pyright install failed; editor diagnostics will no-op."
-  echo "  ✓ Python packages installed."
+
+  # Prove the headline library is the one we pinned, not a stray import.
+  local want_lifelib want_modelx have_lifelib have_modelx
+  want_lifelib="$(grep -E '^lifelib==' "$PY_REQ_DIR/python-requirements.in" | cut -d= -f3)"
+  want_modelx="$(grep -E '^modelx==' "$PY_REQ_DIR/python-requirements.in" | cut -d= -f3)"
+  have_lifelib="$(PYTHONNOUSERSITE=1 PYTHONPATH= "$py_bin" -I -c 'import importlib.metadata as m; print(m.version("lifelib"))')"
+  have_modelx="$(PYTHONNOUSERSITE=1 PYTHONPATH= "$py_bin" -I -c 'import importlib.metadata as m; print(m.version("modelx"))')"
+  if [ "$have_lifelib" != "$want_lifelib" ] || [ "$have_modelx" != "$want_modelx" ]; then
+    echo "  ✗ lifelib/modelx mismatch: have lifelib $have_lifelib modelx $have_modelx, want $want_lifelib / $want_modelx"
+    exit 1
+  fi
+  LIFELIB_VERSION="$have_lifelib"
+  MODELX_VERSION="$have_modelx"
+  echo "  ✓ Python packages installed (lifelib $LIFELIB_VERSION · modelx $MODELX_VERSION)."
 }
 
 # ─── 3. Portable R per platform ────────────────────────────────────────
@@ -344,7 +380,10 @@ write_manifest() {
   "python": {
     "version": "$PYTHON_VERSION",
     "pbs_release": "$PBS_RELEASE",
-    "bytes": $py_size
+    "bytes": $py_size,
+    "requirements": "$(basename "$(py_lock_for_target)")",
+    "lifelib": "$LIFELIB_VERSION",
+    "modelx": "$MODELX_VERSION"
   },
   "r": {
     "version": "$R_VERSION",

@@ -1,7 +1,9 @@
 // lifelibBasicTerm.ts
 //
-// In-browser TypeScript port of lifelib's BasicTerm_M projection
-// (github.com/lifelib-dev/lifelib · basiclife / BasicTerm_M).
+// In-browser TypeScript port of lifelib's BasicTerm_ME projection
+// (github.com/lifelib-dev/lifelib · basiclife / BasicTerm_ME — the in-force
+// variant that honours `duration_mth`; BasicTerm_M is the new-business
+// special case). Pinned lifelib version: LIFELIB_VERSION in @scelo/core.
 //
 // Lifelib is Python (modelx) and not pip-runnable in the browser, so this
 // file implements the same projection cells in TS so the user gets a real,

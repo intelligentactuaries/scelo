@@ -119,6 +119,32 @@ function pythonBinary(): string | null {
   return existsSync(candidate) ? candidate : null;
 }
 
+/** Environment for spawning the BUNDLED CPython on behalf of a Tools bridge
+ *  or a stack probe. The interpreter must see only its own site-packages:
+ *  a developer's `~/.local/lib/python3.11/site-packages` (which the PBS build
+ *  honours by default) or a `PYTHONPATH` inherited from another toolchain
+ *  would silently swap the lifelib we pinned and shipped for whatever that
+ *  host happens to have — the exact class of "which lifelib ran this?"
+ *  provenance bug the bundled runtime exists to rule out. The integrated
+ *  terminal deliberately does NOT use this (see `_augmentedEnv`): there the
+ *  user is driving and their environment is theirs. */
+function bundledPythonEnv(): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...process.env };
+  delete env.PYTHONPATH;
+  delete env.PYTHONHOME;
+  delete env.PYTHONSTARTUP;
+  env.PYTHONNOUSERSITE = "1";
+  env.PYTHONDONTWRITEBYTECODE = "1";
+  env.PYTHONIOENCODING = "utf-8";
+  // Where the lifelib bridges keep their per-version copies of lifelib's
+  // model libraries (`lifelib.create` copies a folder; modelx reads models
+  // from it). userData is per-user, writable and survives app updates —
+  // the copies are keyed by lifelib version underneath, so a runtime bump
+  // simply creates a sibling folder.
+  env.SCELO_LIFELIB_HOME = join(app.getPath("userData"), "lifelib");
+  return env;
+}
+
 /** Path to the bundled R interpreter (R-portable on Win, R.framework on mac,
  *  static R on Linux). Stub-friendly: returns null when the runtime hasn't
  *  been bundled, so the renderer can show an "install missing" prompt. */
@@ -652,7 +678,7 @@ function execRuntime(
       return;
     }
     const child = spawn(binary, [runtimeFlag, req.script, ...(req.argv ?? [])], {
-      env: process.env,
+      env: runtimeFlag === "-c" ? bundledPythonEnv() : process.env,
     });
     let stdout = "";
     let stderr = "";
@@ -3350,7 +3376,7 @@ const PY_STACK_PROBE = `
 import json, importlib.metadata as m
 PKGS = [
     "numpy", "pandas", "scipy", "scikit-learn", "statsmodels", "lightgbm",
-    "lifelib", "chainladder", "climada", "fairlearn", "rpy2",
+    "lifelib", "modelx", "openpyxl", "chainladder", "climada", "fairlearn", "rpy2",
 ]
 out = []
 for p in PKGS:

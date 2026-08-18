@@ -1,0 +1,39 @@
+# Scelo IDE — bundled CPython actuarial stack.
+#
+# This is the single source of truth for what `bundle-runtimes.sh` installs
+# into resources/runtime/python. The headline actuarial libraries are pinned
+# HARD here (a Scelo release runs one known lifelib, not "whatever pip found
+# that morning"); the rest are pinned by the per-platform lock files next to
+# this file, regenerated with:
+#
+#   uv pip compile --python-version 3.11 --python-platform linux   python-requirements.in -o python-requirements-linux.txt
+#   uv pip compile --python-version 3.11 --python-platform macos   python-requirements.in -o python-requirements-macos.txt
+#   uv pip compile --python-version 3.11 --python-platform windows python-requirements.in -o python-requirements-windows.txt
+#
+# When lifelib moves, bump BOTH this file and packages/scelo-core/src/lifelib.ts
+# (LIFELIB_VERSION / MODELX_VERSION) — the renderer, the notebook export and
+# the runtime probe all read from that manifest.
+
+# ── numerics ──────────────────────────────────────────────────────────
+numpy
+pandas
+scipy
+scikit-learn
+statsmodels
+lightgbm
+matplotlib
+
+# ── life · lifelib-rooted (lifelib-dev/lifelib) ──────────────────────
+# lifelib 0.14.0 (2026-08-16): annuallife (TradLife_A / TradLife_A_EX1),
+# uslib (draft), ifrs17a; solvency2 / simplelife / nestedlife / ifrs17sim
+# are legacy. modelx is lifelib's engine; openpyxl reads the models'
+# input.xlsx workbooks (annuallife, savings, cluster).
+lifelib==0.14.0
+modelx==0.32.0
+openpyxl
+
+# ── reserving / climate / fairness / R bridge ────────────────────────
+chainladder
+climada
+fairlearn
+rpy2
