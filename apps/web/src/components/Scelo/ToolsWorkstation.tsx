@@ -53,6 +53,7 @@ import { ResizablePanel } from "./ResizablePanel";
 import { SciText } from "./SciText";
 import { type ColumnMeta, type Dataset, formatNumber } from "./SoftDataWorkstation";
 import { StageChatPanel } from "./StageChatPanel";
+import { useActuarialTableChat } from "./useActuarialTableChat";
 import { UploadIndicator } from "./UploadIndicator";
 import { getColumnMetas } from "./columnMetaCache";
 import {
@@ -1266,6 +1267,11 @@ export function ToolsWorkstation() {
     logEvent,
   } = useScelo();
 
+  // Actuarial tables from the Tools chat too — "build a commutation table
+  // at 4 %" while picking models should just work; typed prompts are also
+  // read for table ideas.
+  const tableChat = useActuarialTableChat("tools", dataset);
+
   const [focusedId, setFocusedId] = useState<string | null>(null);
   const [status, setStatus] = useState<"idle" | "loading" | "ready" | "fallback">("idle");
   const [regenSeed, setRegenSeed] = useState(0);
@@ -1600,11 +1606,16 @@ export function ToolsWorkstation() {
     [setSelectedModels, logEvent],
   );
   const onChatStackCommand = useCallback(
-    (text: string, assistantHistory?: string[]): string | null =>
-      applyDirectiveAndDescribe(
+    (text: string, assistantHistory?: string[]): string | null => {
+      // Table requests first: they name tables explicitly, whereas the stack
+      // parser is happy to read "add …" loosely.
+      const tableReply = tableChat.onLocalCommand(text);
+      if (tableReply !== null) return tableReply;
+      return applyDirectiveAndDescribe(
         parseStackCommand(text, assistantHistory ?? [], selectedModelsRef.current),
-      ),
-    [applyDirectiveAndDescribe],
+      );
+    },
+    [applyDirectiveAndDescribe, tableChat.onLocalCommand],
   );
 
   const desiredNodes: Node[] = useMemo(() => {
@@ -1966,13 +1977,13 @@ export function ToolsWorkstation() {
   // Chatbar context — refreshes whenever picks / dataset / domain change.
   const chatStageContext = useMemo(
     () =>
-      buildToolsStageContext({
+      `${buildToolsStageContext({
         dataset,
         domain: domain as ModelFamily | null,
         selected: selectedModels,
         summary: pickSummary,
-      }),
-    [dataset, domain, selectedModels, pickSummary],
+      })}\n\n${tableChat.contextAddendum}`,
+    [dataset, domain, selectedModels, pickSummary, tableChat.contextAddendum],
   );
   const chatPlaceholder = useMemo(() => {
     if (!dataset) return "load a dataset in Soft Data first…";
@@ -2257,6 +2268,7 @@ export function ToolsWorkstation() {
           dataset={dataset}
           onLocalCommand={onChatStackCommand}
           onAssistantFinal={onChatStackDirective}
+          actions={tableChat.actions}
         />
       </div>
     </div>

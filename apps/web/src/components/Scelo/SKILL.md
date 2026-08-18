@@ -205,6 +205,7 @@ blocks the markdown renderer (`SceloChatMarkdown`) intercepts:
 | ```derive``` | `{"name":"paid_rounded","formula":"round(paid)"}` | Adds a NEW column. Idempotent on the column name. |
 | ```transform``` | `{"column":"paid","formula":"round(paid)"}` | Replaces values of an EXISTING column in place. Idempotent on a `(column + formula)` fingerprint stored in `SceloContext.transformLog`. |
 | ```clean``` | `{"ops":["drop-duplicates","missing-tokens"]}` (or `{"ops":"safe"}` / `{"ops":"all"}`) | Runs the deterministic cleaning engine (`cleaning.ts`, the same ops the banner drives) against the active dataset. Idempotent on the raw block (`clean::…` fingerprint reuses `transformLog`). Rendered by `cleanAction.tsx`'s `ChatClean`. |
+| ```table``` | `{"kind":"life-table","basis":{"kind":"qx-column","ageColumn":"age","qxColumn":"qx"},"radix":100000}` — kinds `life-table`, `commutation`, `annuity-assurance`, `net-premium`, `runoff-triangle`, `discount-curve`, `exposure-ae`, `model-points` | Builds an actuarial table (deterministic, `@scelo/core` `generateActuarialTable`) against the active dataset and renders `ChatTableCard` (`actuarialTableUi.tsx`): preview + **keep** (→ `SceloContext.tables`) / **use as dataset** (undoable) / **stage for combine** / **csv**. Building has no side effect; keeping is an explicit press. Spec is validated by `coerceTableSpec` (loose LLM shapes tolerated, unknown kinds rejected). |
 
 Both render a card showing what was applied plus a deterministic
 summary (cells changed, mean shift, range delta, sample of old → new
@@ -597,7 +598,47 @@ Three concentric layers:
 `StageChatPanel.tsx` is the persistent right-side chat for the three
 workstations. Wider than other panels (defaultWidth=384), wrapped in
 `ResizablePanel`, badge driven (`SOFT · CHAT`, `TOOLS · CHAT`,
-`HARD · CHAT`).
+`HARD · CHAT`). It listens for the `scelo:chat-draft` window event
+(`seedChatDraft(chatId, text)` in `actuarialTableUi.tsx`) so a
+suggestion elsewhere on the page can drop a prompt into its input for
+the user to edit and send.
+
+### Actuarial tables — the suggesting agent + the table vocabulary
+
+Headless core: `packages/scelo-core/src/actuarialTables.ts` —
+`generateActuarialTable(spec, dataset)` (life table qx/px/lx/dx/Lx/Tx/eₓ;
+commutation Dx/Nx/Cx/Mx/Rx/Sx; annuity & assurance factors äx/ax/Ax and
+n-year äx:n / A¹x:n / nEx / Ax:n; net premium per 1,000 grid age × term
+for term / endowment / whole-life; cumulative or incremental run-off
+triangle from origin × development-lag-or-payment-period; discount
+curve v_t / forwards / annuity-certain from points, columns or a flat
+rate; A/E by age band; lifelib-shaped model points from a policy file),
+`suggestActuarialTables(dataset, prompt)` (reads the column shape AND
+the last prompt the user wrote — age+qx → life table / commutation /
+factors, deaths+exposure → +A/E, origin+lag+amount → triangle,
+tenor+rate → discount curve, MP triplet → model points + premium grid,
+prompt-only → parametric tables on the ILLUSTRATIVE Gompertz–Makeham
+basis, always labelled), and `parseTablePrompt(text, dataset)` (typed
+prompt → spec, deterministic; requires a build verb and no question
+form; every suggested prompt round-trips). Mortality bases: qx column,
+lx column, deaths/exposure, Gompertz–Makeham. Tests:
+`actuarialTables.test.ts` (identities: l(x+1)=lx−dx, Nx=ΣDy,
+Ax=1−d·äx, premium = 1000·A/ä …).
+
+App wiring: `useActuarialTableChat(stage, dataset)` is mounted by all
+three workstations and hands each `StageChatPanel` (a) chips above the
+input — one per top suggestion, pressing builds + keeps; (b) an
+`onLocalCommand` that answers table prompts offline ("build a life table
+at 4 % from age 20 to 100", "commutation table from `age` and `qx`",
+"run-off triangle of paid", "suggest tables") and records every prompt
+so the suggestions react to it; (c) a system-prompt addendum teaching the
+LLM the ```table block. Soft Data additionally renders `TableIdeasStrip`
+right after an upload (title · why · the ready prompt · **build** /
+**send prompt to chat**) and `TablesShelf` (what was built: preview,
+use-as-dataset, stage, csv). Built tables live in
+`SceloContext.tables` (`WorkspaceTable`, persisted, row-capped, max 12);
+events `table.build` / `table.keep` / `table.use` in the activity log.
+Tests: `actuarialTableUi.test.tsx`.
 
 ---
 

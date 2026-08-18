@@ -137,6 +137,34 @@ export type ActivityEvent =
     }
   | {
       ts: number;
+      stage: "soft" | "tools" | "hard";
+      // An actuarial table was built (life table, commutation, triangle …)
+      // from a typed prompt / suggestion / LLM block and kept in the
+      // workspace. `spec` is the executable spec — the exporters can
+      // regenerate the table with @scelo/core's generateActuarialTable.
+      kind: "table.build";
+      payload: {
+        id: string;
+        title: string;
+        kind: string;
+        origin: "chat" | "suggestion" | "llm";
+        spec: unknown;
+      };
+    }
+  | {
+      ts: number;
+      stage: "soft" | "tools" | "hard";
+      kind: "table.keep";
+      payload: { id: string; title: string; kind: string; origin: "chat" | "suggestion" | "llm" };
+    }
+  | {
+      ts: number;
+      stage: "soft" | "tools" | "hard";
+      kind: "table.use";
+      payload: { id: string; title: string };
+    }
+  | {
+      ts: number;
       stage: "tools";
       kind: "models.aiPick";
       payload: {

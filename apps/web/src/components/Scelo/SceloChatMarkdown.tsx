@@ -18,6 +18,7 @@ import remarkMath from "remark-math";
 
 import { remarkFencedMath } from "@/lib/remarkFencedMath";
 import type { Dataset } from "./SoftDataWorkstation";
+import { ChatTableCard } from "./actuarialTableUi";
 import { ChatDerive, ChatTransform } from "./chatDerive";
 import { ChatViz } from "./chatViz";
 import { ChatClean } from "./cleanAction";
@@ -83,6 +84,15 @@ function SceloChatMarkdownImpl({ children, dataset, streaming = false, size = "s
             if (!isInline && lang === "clean") {
               const raw = String(codeChildren).replace(/\n$/, "");
               return <ChatClean raw={raw} />;
+            }
+            // Fenced ```table block → build an actuarial table (life table,
+            // commutation, premium grid, triangle, discount curve, A/E,
+            // model points) against the active dataset and render a card
+            // with keep / use-as-dataset / CSV. Building is deterministic
+            // and side-effect free; keeping is an explicit press.
+            if (!isInline && lang === "table") {
+              const raw = String(codeChildren).replace(/\n$/, "");
+              return <ChatTableCard raw={raw} />;
             }
             return (
               <code className={className} {...rest}>

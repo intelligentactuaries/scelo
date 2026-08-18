@@ -54,6 +54,7 @@ import { SceloLogo } from "./SceloLogo";
 import { ScrollFade } from "./ScrollFade";
 import { type Dataset, formatNumber } from "./SoftDataWorkstation";
 import { StageChatPanel } from "./StageChatPanel";
+import { useActuarialTableChat } from "./useActuarialTableChat";
 import { UploadIndicator, nextPaint } from "./UploadIndicator";
 import { type CouncilSynthesis, conveneCouncil, swarmApiUrl } from "./forecast/councilClient";
 import { forecastConfigFor } from "./forecast/derive";
@@ -3007,6 +3008,9 @@ export function HardDataWorkstation() {
   const navigate = useNavigate();
   const { resolved } = useTheme();
   const { dataset, selectedModels, domain, runs, setRuns, modelWires, logEvent } = useScelo();
+  // Actuarial tables from the Hard Data chat as well: results often beg for
+  // a commutation table or a triangle next to them.
+  const tableChat = useActuarialTableChat("hard", dataset);
 
   const [focusedId, setFocusedId] = useState<string | null>(null);
   const [narrative, setNarrative] = useState<string | null>(null);
@@ -3384,8 +3388,9 @@ export function HardDataWorkstation() {
 
   // Chatbar ──────────────────────────────────────────────────────────────────
   const chatStageContext = useMemo(
-    () => buildHardStageContext({ dataset, domain, runs: runsList, narrative }),
-    [dataset, domain, runsList, narrative],
+    () =>
+      `${buildHardStageContext({ dataset, domain, runs: runsList, narrative })}\n\n${tableChat.contextAddendum}`,
+    [dataset, domain, runsList, narrative, tableChat.contextAddendum],
   );
   const chatPlaceholder = useMemo(() => {
     if (!dataset) return "load a dataset in Soft Data first…";
@@ -3584,6 +3589,8 @@ export function HardDataWorkstation() {
           title={chatPlaceholder}
           badge="hard · chat"
           dataset={dataset}
+          onLocalCommand={tableChat.onLocalCommand}
+          actions={tableChat.actions}
         />
       </div>
 
