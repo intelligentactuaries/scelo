@@ -67,6 +67,7 @@ import { SocietyGraph, type SocietyPin } from './components/SocietyGraph';
 import { AgentInspector } from './components/AgentInspector';
 import { GroupInspector } from './components/GroupInspector';
 import { SocietyInspector } from './components/SocietyInspector';
+import { MemberInterview, pickRandomMember, type InterviewTarget } from './components/MemberInterview';
 import { SynthesisView } from './components/SynthesisView';
 import { SimulationView, useSimulationState } from './components/SimulationView';
 import { CanonPanel, useCanonState } from './components/CanonPanel';
@@ -261,6 +262,18 @@ export function App() {
     [isMobile],
   );
   const [inspector, setInspector] = useState<CouncilAgentResult | null>(null);
+  // Audit interview with ONE member (council professional or society
+  // citizen) — see MemberInterview. Cleared when the run changes so a
+  // transcript is never shown against a different run's record.
+  const [interview, setInterview] = useState<InterviewTarget | null>(null);
+  const openRandomInterview = useCallback(
+    (kind: 'council' | 'society') => {
+      if (!run) return;
+      const id = pickRandomMember(run, kind, interview?.kind === kind ? interview.agentId : null);
+      if (id) setInterview({ kind, agentId: id });
+    },
+    [run, interview],
+  );
   const esRef = useRef<EventSource | null>(null);
   const scenarioRef = useRef<HTMLTextAreaElement>(null);
 
@@ -516,6 +529,7 @@ export function App() {
       setSelectedAgentId(null);
       setInspector(null);
     }
+    setInterview(null);
     setRunError(null);
     setProgress([]);
     setSociety(null);
@@ -1461,6 +1475,18 @@ export function App() {
                               </div>
                             )
                           }
+                          headerExtra={
+                            run.councilResults.length > 0 && run.status === 'complete' && (
+                              <button
+                                type="button"
+                                className="pill interview-pill"
+                                onClick={() => openRandomInterview('council')}
+                                title="Pick a council member at random and interview them about their vote — every reply is checked against their recorded verdict"
+                              >
+                                🎲 interview a random member
+                              </button>
+                            )
+                          }
                         />
                       )}
                       <RunStatus
@@ -1518,6 +1544,18 @@ export function App() {
                             >
                               society pulse · citizen reactions
                             </div>
+                          }
+                          headerExtra={
+                            run.status === 'complete' && (
+                              <button
+                                type="button"
+                                className="pill interview-pill"
+                                onClick={() => openRandomInterview('society')}
+                                title="Pick a citizen at random and talk to them about their reaction — every reply is checked against their recorded sentiment"
+                              >
+                                🎲 interview a random member
+                              </button>
+                            )
                           }
                         />
                       )}
@@ -1659,6 +1697,11 @@ export function App() {
                           agent={inspector}
                           runId={runId}
                           legalJurisdiction={legalJurisdiction}
+                          onInterview={
+                            run?.status === 'complete'
+                              ? (agentId) => setInterview({ kind: 'council', agentId })
+                              : undefined
+                          }
                           onClose={() => {
                             // Dropping the panel also drops THIS agent's
                             // click-locked focus — otherwise the graphs stay
@@ -1698,6 +1741,11 @@ export function App() {
                         <SocietyInspector
                           run={run}
                           pin={societyPin}
+                          onInterview={
+                            run.status === 'complete'
+                              ? (agentId) => setInterview({ kind: 'society', agentId })
+                              : undefined
+                          }
                           onClose={() => {
                             setCrossHighlight((cur) =>
                               cur?.locked &&
@@ -1760,6 +1808,15 @@ export function App() {
         onLegalJurisdictionChange={setLegalJurisdiction}
       />
       <HelpOverlay open={helpOpen} onClose={() => setHelpOpen(false)} />
+      {run && run.status === 'complete' && interview && (
+        <MemberInterview
+          run={run}
+          target={interview}
+          legalJurisdiction={legalJurisdiction}
+          onClose={() => setInterview(null)}
+          onRetarget={setInterview}
+        />
+      )}
       {runBusy && overlayHidden && (
         <button
           type="button"

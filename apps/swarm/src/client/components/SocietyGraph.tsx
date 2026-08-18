@@ -30,6 +30,10 @@ type Props = {
    *  first thing on the row, ahead of the keys — so title, keys and plot
    *  stack as one chart anatomy instead of the title floating alone. */
   header?: ReactNode;
+  /** Extra control rendered right after the title chip (e.g. the audit
+   *  interview button). Kept separate so the chip's tooltip anchoring is
+   *  untouched. */
+  headerExtra?: ReactNode;
   /** Where the header band renders. Omitted: at the top of the graph's own
    *  frame. An element: portalled there (the App hands over a slot above
    *  the graph+Sankey row so the band spans both — wide enough for the
@@ -54,6 +58,7 @@ export function SocietyGraph({
   crossHighlight,
   onCrossHighlight,
   header,
+  headerExtra,
   keysHost,
 }: Props) {
   const ref = useRef<HTMLDivElement>(null);
@@ -369,6 +374,7 @@ export function SocietyGraph({
   const keys = (
       <div className="graph-keys">
         {header}
+        {headerExtra}
         <div className="sentiment-key" onMouseLeave={onSentimentLeave}>
           <span className="sentiment-key-label">sentiment</span>
           <span className="graph-key-items">

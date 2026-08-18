@@ -38,6 +38,10 @@ type Props = {
   /** The pane's title chip, rendered at the head of the graph's own header
    *  band so title, key and plot stack as one chart. */
   header?: ReactNode;
+  /** Extra control rendered right after the title chip (e.g. the audit
+   *  interview button). Kept separate so the chip's tooltip anchoring is
+   *  untouched. */
+  headerExtra?: ReactNode;
   /** Where the header band renders. Omitted: at the top of the graph's own
    *  frame. An element: portalled there (the App hands over a slot above
    *  the graph+Sankey row so the band spans both). `null` means a host is
@@ -55,6 +59,7 @@ export function CouncilGraph({
   crossHighlight,
   onCrossHighlight,
   header,
+  headerExtra,
   keysHost,
 }: Props) {
   const ref = useRef<HTMLDivElement>(null);
@@ -364,6 +369,7 @@ export function CouncilGraph({
   const keys = (
       <div className="graph-keys">
         {header}
+        {headerExtra}
         <div className="graph-legend" onMouseLeave={onLegendLeave}>
           <span className="graph-legend-label">professions</span>
           <span className="graph-key-items">

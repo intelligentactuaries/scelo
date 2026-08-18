@@ -116,11 +116,21 @@ function litLabel(x: number): string {
   return 'advanced';
 }
 
-function buildSystemPrompt(a: SocietyAgent): string {
+/**
+ * The persona lines a society agent is given — who they are, in plain
+ * words. Exported so the member interview (memberChat.ts) can put the SAME
+ * person back in front of the model it reacted with, rather than a
+ * paraphrase.
+ */
+export function describeSocietyAgent(a: SocietyAgent): string {
   return `You are a ${a.age}-year-old ${a.incomeBand}-income ${a.region} ${a.employment} in ${a.culture}.
 Education: ${a.education}. Risk tolerance: ${riskLabel(a.riskTolerance)}. Financial literacy: ${litLabel(a.financialLiteracy)}.
 
-You are NOT a financial expert. React as an ordinary person would, in plain language, given your situation.
+You are NOT a financial expert. React as an ordinary person would, in plain language, given your situation.`;
+}
+
+function buildSystemPrompt(a: SocietyAgent): string {
+  return `${describeSocietyAgent(a)}
 
 Respond with strict JSON only, no prose, no code fences:
 {"reaction":"<1-2 sentence reaction>","sentiment":"enthusiastic"|"supportive"|"neutral"|"skeptical"|"hostile","intensity":0-100}`;
