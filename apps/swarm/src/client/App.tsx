@@ -916,7 +916,6 @@ export function App() {
           type="button"
           className="sidebar-toggle rail-icon-btn"
           onClick={() => setToolsOpen(true)}
-          title="setup controls"
           aria-label="setup controls"
           aria-expanded={false}
         >
@@ -934,7 +933,6 @@ export function App() {
             }}
             aria-label="close setup controls"
             aria-expanded
-            title="close setup controls"
           >
             <ToolsIcon />
             <span className="rail-icon-label">Setup</span>

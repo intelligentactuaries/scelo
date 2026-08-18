@@ -5692,9 +5692,10 @@ body.is-resizing * {
 .pet-rail.is-quiet .pet-item:focus-visible .pet-label {
   max-width: 20ch;
   opacity: 1;
-  /* Keep the vertical centring — the labels are absolutely positioned glass
-     chips now, and a bare translateX dropped the -50% Y correction. */
-  transform: translateY(-50%) translateX(0);
+  /* Vertical centring is done by the chip's own inset/margin (see the
+     floated-labels block) — no translateY(-50%), which landed the text on a
+     half pixel whenever the button's height was odd and rasterised it soft. */
+  transform: translateX(0);
   pointer-events: none;
 }
 
@@ -6268,26 +6269,36 @@ body.is-resizing * {
 .pet-rail-tools .rail-icon-label {
   position: absolute;
   left: calc(100% + 18px);
-  top: 50%;
+  /* Centred with inset + auto margins, NOT top:50% + translateY(-50%): the
+     buttons are 52–98px tall and animate between those sizes, so the -50%
+     correction put the chip on a fractional pixel for most of its life and
+     the browser rasterised the text soft. Auto margins snap to whole pixels
+     and never move the text mid-transition. */
+  top: 0;
+  bottom: 0;
+  margin-block: auto;
+  height: max-content;
   max-width: 0;
   overflow: hidden;
   white-space: nowrap;
   opacity: 0;
   pointer-events: none;
-  transform: translateY(-50%) translateX(-8px);
+  transform: translateX(-8px);
   /* Hover labels float over live canvas content (charts, summaries, header
-     copy), so they wear glass-chip chrome: without a surface of their own
-     they printed straight onto whatever text happened to sit at that x —
-     the "setup / forecast icons overlap" report. Chip + blur keeps them
-     legible anywhere and reads as an overlay, not a collision. */
+     copy), so they wear a chip: without a surface of their own they printed
+     straight onto whatever text happened to sit at that x — the "setup /
+     forecast icons overlap" report. The chip is an OPAQUE plate rather than
+     frosted glass: backdrop-filter promoted the chip to its own compositing
+     layer, and while max-width / transform animated, the text inside was
+     re-rasterised through that layer at sub-pixel offsets — the second
+     source of the blur. Opaque keeps it legible anywhere and always crisp. */
   padding: 4px 10px;
   border-radius: 9px;
-  background: var(--glass-bg);
-  border: 1px solid var(--glass-border);
-  -webkit-backdrop-filter: var(--glass-blur);
-  backdrop-filter: var(--glass-blur);
+  background: var(--bg-2);
+  border: 1px solid var(--border);
   box-shadow: var(--glass-shadow);
   z-index: 30;
+  -webkit-font-smoothing: antialiased;
   transition:
     max-width 340ms var(--forecast-easing, ease),
     opacity 240ms var(--forecast-easing, ease),
@@ -6303,7 +6314,7 @@ body.is-resizing * {
 .pet-rail-tools .rail-icon-btn.is-active .rail-icon-label {
   max-width: 22ch;
   opacity: 1;
-  transform: translateY(-50%) translateX(0);
+  transform: translateX(0);
 }
 
 /* The ACTIVE surface's name is permanent, so it cannot float over the
