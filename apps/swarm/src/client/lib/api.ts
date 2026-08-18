@@ -396,6 +396,129 @@ export function streamChat(
   return { abort: () => ctrl.abort(), done };
 }
 
+// ─── Member interviews ────────────────────────────────────────────────────
+// Talk to one council professional / society citizen about the position
+// they recorded, for audit. Mirrors streamChat, plus a `meta` payload on the
+// done event: what the member restated at the end of the reply and whether
+// it matches their recorded verdict / sentiment.
+
+export interface RestatedPosition {
+  field: 'position' | 'sentiment';
+  label: string;
+  score: number;
+}
+export interface InterviewTurnMeta {
+  kind: 'council' | 'society';
+  restated: RestatedPosition | null;
+  recorded: { label: string; score: number };
+  consistent: boolean | null;
+  scoreDelta: number | null;
+}
+export interface InterviewTurn {
+  id: number;
+  role: 'user' | 'assistant';
+  content: string;
+  provider: string | null;
+  model: string | null;
+  createdAt: number;
+  meta: InterviewTurnMeta | null;
+}
+export interface InterviewSummary {
+  agentId: string;
+  kind: 'council' | 'society';
+  turns: number;
+  consistent: number;
+  drift: number;
+  unverified: number;
+  lastAt: number;
+}
+
+export type MemberChatEvent =
+  | { type: 'chunk'; text: string }
+  | { type: 'done'; provider: string; model: string; meta: InterviewTurnMeta | null }
+  | { type: 'error'; message: string };
+
+export const memberApi = {
+  /** The member's written justification, if one was generated (404 → throws). */
+  justification: (runId: string, agentId: string) =>
+    jfetch<JustificationResponse>(
+      `/api/run/${encodeURIComponent(runId)}/agents/${encodeURIComponent(agentId)}/justify`,
+    ),
+  transcript: (runId: string, agentId: string) =>
+    jfetch<{ agentId: string; kind: 'council' | 'society'; turns: InterviewTurn[] }>(
+      `/api/run/${encodeURIComponent(runId)}/members/${encodeURIComponent(agentId)}/chat`,
+    ),
+  interviews: (runId: string) =>
+    jfetch<{ interviews: InterviewSummary[] }>(`/api/run/${encodeURIComponent(runId)}/interviews`),
+};
+
+export function streamMemberChat(
+  runId: string,
+  agentId: string,
+  body: {
+    message: string;
+    history?: { role: 'user' | 'assistant'; content: string }[];
+    legalJurisdiction?: LegalJurisdiction;
+  },
+  onEvent: (e: MemberChatEvent) => void,
+): StreamChatHandle {
+  const ctrl = new AbortController();
+  let sawTerminal = false;
+  const emit = (e: MemberChatEvent) => {
+    if (e.type === 'done' || e.type === 'error') sawTerminal = true;
+    onEvent(e);
+  };
+  const done = (async () => {
+    try {
+      const r = await fetch(
+        `/api/run/${encodeURIComponent(runId)}/members/${encodeURIComponent(agentId)}/chat`,
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(body),
+          signal: ctrl.signal,
+        },
+      );
+      if (!r.ok || !r.body) {
+        emit({ type: 'error', message: `interview ${r.status}` });
+        return;
+      }
+      const reader = r.body.getReader();
+      const dec = new TextDecoder();
+      let buf = '';
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        const { value, done: d } = await reader.read();
+        if (d) break;
+        buf += dec.decode(value, { stream: true });
+        let i = buf.indexOf('\n\n');
+        while (i !== -1) {
+          const frame = buf.slice(0, i);
+          buf = buf.slice(i + 2);
+          for (const line of frame.split('\n')) {
+            const t = line.trim();
+            if (!t.startsWith('data:')) continue;
+            const payload = t.slice(5).trim();
+            if (!payload) continue;
+            try {
+              emit(JSON.parse(payload) as MemberChatEvent);
+            } catch {
+              // skip malformed
+            }
+          }
+          i = buf.indexOf('\n\n');
+        }
+      }
+      if (!sawTerminal) emit({ type: 'error', message: 'interview stream ended unexpectedly — try again' });
+    } catch (e) {
+      if ((e as { name?: string })?.name !== 'AbortError') {
+        emit({ type: 'error', message: e instanceof Error ? e.message : 'interview failed' });
+      }
+    }
+  })();
+  return { abort: () => ctrl.abort(), done };
+}
+
 /**
  * Push the browser's stored keys AND preferences to the server.
  *

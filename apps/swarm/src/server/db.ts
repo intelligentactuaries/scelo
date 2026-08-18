@@ -98,6 +98,22 @@ db.exec(`
   }
 })();
 
+// Member interviews (memberChat.ts) share the chat_log audit table: an
+// `agent_id` says which council / society member was being interviewed
+// (NULL = the run-level swarm chatbot) and `meta_json` carries the
+// machine-read position the member restated at the end of a reply plus the
+// server's consistency verdict against their recorded vote / sentiment.
+(() => {
+  const cols = db.prepare(`PRAGMA table_info(chat_log)`).all() as { name: string }[];
+  if (!cols.some((c) => c.name === 'agent_id')) {
+    db.exec(`ALTER TABLE chat_log ADD COLUMN agent_id TEXT`);
+  }
+  if (!cols.some((c) => c.name === 'meta_json')) {
+    db.exec(`ALTER TABLE chat_log ADD COLUMN meta_json TEXT`);
+  }
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_chat_log_agent ON chat_log(run_id, agent_id)`);
+})();
+
 // Reconcile orphaned runs on startup. A run left 'running'/'pending' when the
 // server last stopped can never resume — the in-memory orchestration (and its
 // SSE listeners) are gone — so it would otherwise sit "running" forever and any

@@ -38,6 +38,7 @@ import type { WmtrSingleParams } from '../shared/wmtr';
 import type { CanonWork, SimulationAgentResult } from '../shared/types';
 import { sampleSAPopulation } from './agents/saPopulation';
 import { runSimulation, type SimulationProgress } from './agents/simulation';
+import { findMember, listInterviews, readInterview, streamMemberChat } from './memberChat';
 import { aggregateMacro, SA_MACRO_PROVENANCE } from './macroMap';
 import { fetchReferenceBundle, formatReferenceBlock, type ReferenceBundle } from './refdata';
 
@@ -1025,7 +1026,7 @@ route('GET', '/api/chat-log', async ({ req }) => {
   try {
     const rows = db
       .prepare(
-        `SELECT id, run_id, role, content, provider, model, created_at
+        `SELECT id, run_id, role, content, provider, model, created_at, agent_id, meta_json
            FROM chat_log
           WHERE created_at > ?
           ORDER BY created_at DESC, id DESC
@@ -1039,6 +1040,8 @@ route('GET', '/api/chat-log', async ({ req }) => {
       provider: string | null;
       model: string | null;
       created_at: number;
+      agent_id: string | null;
+      meta_json: string | null;
     }>;
     return json({
       entries: rows.map((r) => ({
@@ -1049,6 +1052,11 @@ route('GET', '/api/chat-log', async ({ req }) => {
         content: r.content,
         provider: r.provider,
         model: r.model,
+        // Member interviews (memberChat.ts) ride on the same audit table:
+        // agentId names the council / society member spoken to, meta the
+        // restated-position consistency check for that reply.
+        agentId: r.agent_id,
+        meta: r.meta_json ? safeParse(r.meta_json) : null,
       })),
       // Tells the caller whether it hit the cap and should page further back.
       truncated: rows.length === limit,
@@ -1056,6 +1064,98 @@ route('GET', '/api/chat-log', async ({ req }) => {
   } catch (e) {
     return json({ error: e instanceof Error ? e.message : String(e), entries: [] }, { status: 500 });
   }
+});
+
+function safeParse(s: string): unknown {
+  try {
+    return JSON.parse(s);
+  } catch {
+    return null;
+  }
+}
+
+// ─── Member interviews ────────────────────────────────────────────────────
+// Talk to one council professional / society citizen about the vote or
+// reaction they recorded, for audit. See memberChat.ts for the contract
+// (persona brief + fixed record + machine-read restated position).
+
+route('GET', '/api/run/:id/interviews', ({ params }) => {
+  const run = getRun(params.id);
+  if (!run) return json({ error: 'run not found' }, { status: 404 });
+  return json({ interviews: listInterviews(params.id) });
+});
+
+route('GET', '/api/run/:id/members/:agentId/chat', ({ params }) => {
+  const run = getRun(params.id);
+  if (!run) return json({ error: 'run not found' }, { status: 404 });
+  const member = findMember(run, params.agentId);
+  if (!member) return json({ error: 'member not found in run' }, { status: 404 });
+  return json({ agentId: params.agentId, kind: member.kind, turns: readInterview(params.id, params.agentId) });
+});
+
+interface MemberChatBody {
+  message: string;
+  history?: { role: 'user' | 'assistant'; content: string }[];
+  fresh?: boolean;
+  legalJurisdiction?: LegalJurisdiction;
+}
+
+route('POST', '/api/run/:id/members/:agentId/chat', async ({ req, params }) => {
+  const body = await readBody<MemberChatBody>(req);
+  if (!body.message?.trim()) return json({ error: 'message required' }, { status: 400 });
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream({
+    async start(controller) {
+      const send = (obj: unknown) => {
+        try {
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify(obj)}\n\n`));
+        } catch {
+          /* client went away */
+        }
+      };
+      const heartbeat = setInterval(() => {
+        try {
+          controller.enqueue(encoder.encode(`: hb\n\n`));
+        } catch {
+          clearInterval(heartbeat);
+        }
+      }, 15_000);
+      try {
+        const gen = streamMemberChat(params.id, params.agentId, body.message.trim(), body.history ?? [], {
+          fresh: body.fresh,
+          legalJurisdiction: body.legalJurisdiction,
+        });
+        let res: IteratorResult<string, Awaited<ReturnType<typeof gen.return>>['value']>;
+        // eslint-disable-next-line no-constant-condition
+        while (true) {
+          res = await gen.next();
+          if (res.done) {
+            const v = res.value as { provider: string; model: string; meta: unknown };
+            send({ type: 'done', provider: v.provider, model: v.model, meta: v.meta });
+            break;
+          }
+          send({ type: 'chunk', text: res.value });
+        }
+      } catch (e) {
+        send({ type: 'error', message: e instanceof Error ? e.message : String(e) });
+      } finally {
+        clearInterval(heartbeat);
+        try {
+          controller.close();
+        } catch {
+          /* already closed */
+        }
+      }
+    },
+  });
+  return new Response(stream, {
+    headers: {
+      'content-type': 'text/event-stream',
+      'cache-control': 'no-cache',
+      connection: 'keep-alive',
+      'x-accel-buffering': 'no',
+    },
+  });
 });
 
 route('POST', '/api/chat', async ({ req }) => {

@@ -9,9 +9,11 @@ type Props = {
   runId: string | null;
   legalJurisdiction: LegalJurisdiction;
   onClose: () => void;
+  /** Open the audit interview drawer on this agent (complete runs only). */
+  onInterview?: (agentId: string) => void;
 };
 
-export function AgentInspector({ agent, runId, legalJurisdiction, onClose }: Props) {
+export function AgentInspector({ agent, runId, legalJurisdiction, onClose, onInterview }: Props) {
   const dark = useTheme().resolved === 'dark';
   if (!agent) {
     return (
@@ -52,9 +54,20 @@ export function AgentInspector({ agent, runId, legalJurisdiction, onClose }: Pro
             </div>
           </div>
         </div>
-        <button className="ghost-btn" onClick={onClose}>
-          close
-        </button>
+        <div className="inspector-header-actions">
+          {onInterview && (
+            <button
+              className="ghost-btn"
+              onClick={() => onInterview(a.id)}
+              title="Interview this agent about their vote — replies are checked against the recorded verdict and logged for audit"
+            >
+              interview
+            </button>
+          )}
+          <button className="ghost-btn" onClick={onClose}>
+            close
+          </button>
+        </div>
       </div>
 
       <div className="inspector-vote">

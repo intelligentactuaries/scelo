@@ -6393,3 +6393,185 @@ body.is-resizing * {
   /* 16px → ~23px, matching the pets' 28 → 42 step. */
   transform: scale(1.45);
 }
+
+/* ── Member interview (audit) ───────────────────────────────────────────────
+   Talk to ONE council professional or ONE society citizen about the position
+   they recorded. A floating drawer over the right edge of the canvas — the
+   same glass as the rail flyout, taller and wider because it holds a
+   transcript. It lives outside the decision sidebar on purpose: the
+   sidebar shows the RECORD (inspector, justification); the drawer tests it. */
+.member-interview {
+  position: fixed;
+  top: 64px;
+  right: 14px;
+  bottom: 14px;
+  width: min(480px, calc(100vw - 28px));
+  display: flex;
+  flex-direction: column;
+  background: var(--glass-bg-strong);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--glass-shadow);
+  border-radius: 12px;
+  z-index: 40;
+  overflow: hidden;
+}
+
+.member-interview-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--grid);
+}
+
+.member-interview-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.member-interview-body {
+  padding: 14px;
+}
+
+.member-card {
+  margin: 12px 14px 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg-2) 70%, transparent);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.member-card-id {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.member-card-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.member-card-big {
+  font-size: 18px;
+  font-weight: 500;
+  line-height: 1.1;
+  text-transform: capitalize;
+}
+
+.member-interview-tally {
+  padding: 8px 14px 0;
+}
+
+.member-interview-scroller {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 10px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.member-interview-probes {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.member-interview-probes .pill {
+  text-align: left;
+  white-space: normal;
+  cursor: pointer;
+}
+
+.member-interview-probes .pill:hover:not(:disabled) {
+  color: var(--fg);
+  border-color: var(--fg);
+}
+
+.member-interview-input-row {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+  padding: 10px 14px;
+  border-top: 1px solid var(--grid);
+}
+
+.member-interview-input-row .conversation-panel-input {
+  flex: 1;
+}
+
+/* Per-reply verdict from the server's check of the member's restated
+   position against their record. */
+.consistency-badge {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 10px;
+  letter-spacing: 0.02em;
+  text-transform: none;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  vertical-align: middle;
+}
+
+.consistency-badge.is-ok {
+  color: var(--consensus);
+  border-color: color-mix(in srgb, var(--consensus) 55%, transparent);
+}
+
+.consistency-badge.is-drift {
+  color: var(--dissent);
+  border-color: color-mix(in srgb, var(--dissent) 60%, transparent);
+  background: color-mix(in srgb, var(--dissent) 10%, transparent);
+}
+
+.consistency-badge.is-unverified {
+  font-style: italic;
+}
+
+/* The 🎲 button in the council / society header bands. */
+.interview-pill {
+  cursor: pointer;
+  background: none;
+  white-space: nowrap;
+  transition: color 160ms ease, border-color 160ms ease;
+}
+
+.interview-pill:hover:not(:disabled) {
+  color: var(--fg);
+  border-color: var(--fg);
+}
+
+.inspector-header-actions {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+}
+
+@media (max-width: 720px) {
+  .member-interview {
+    top: 56px;
+    right: 8px;
+    left: 8px;
+    bottom: 8px;
+    width: auto;
+  }
+}
+
+.society-member-interview {
+  margin-left: auto;
+  padding: 0 6px;
+  font-size: 10px;
+}

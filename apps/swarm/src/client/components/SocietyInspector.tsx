@@ -26,15 +26,17 @@ type Props = {
   run: Run;
   pin: SocietyPin;
   onClose: () => void;
+  /** Open the audit interview drawer on one citizen (complete runs only). */
+  onInterview?: (agentId: string) => void;
 };
 
 // Decision-sidebar content for the Society tab. Renders one of two shapes
 // depending on what the user pinned in the legend:
 //   - cluster  → c0..c5 demographic + sentiment-mix
 //   - sentiment → "supportive" / "skeptical" / etc. group profile
-export function SocietyInspector({ run, pin, onClose }: Props) {
+export function SocietyInspector({ run, pin, onClose, onInterview }: Props) {
   if (pin.kind === 'cluster') {
-    return <ClusterInspector run={run} clusterName={pin.name} onClose={onClose} />;
+    return <ClusterInspector run={run} clusterName={pin.name} onClose={onClose} onInterview={onInterview} />;
   }
   return <SentimentInspector run={run} sentiment={pin.name} onClose={onClose} />;
 }
@@ -43,10 +45,12 @@ function ClusterInspector({
   run,
   clusterName,
   onClose,
+  onInterview,
 }: {
   run: Run;
   clusterName: string;
   onClose: () => void;
+  onInterview?: (agentId: string) => void;
 }) {
   const SENTIMENT_COLORS = sentimentColors(colorsForTheme(useTheme().resolved));
   // cluster ids are "c0", "c1" etc. — strip the prefix to index.
@@ -102,6 +106,16 @@ function ClusterInspector({
                       {m.sentiment}
                     </span>
                     <span className="num small">{Math.round(m.intensity)}</span>
+                    {onInterview && (
+                      <button
+                        type="button"
+                        className="ghost-btn society-member-interview"
+                        onClick={() => onInterview(m.agent.id)}
+                        title={`Interview ${m.agent.id} about this reaction — replies are checked against the recorded sentiment`}
+                      >
+                        interview
+                      </button>
+                    )}
                   </div>
                   <ReactionLine reaction={m.reaction} />
                 </div>
