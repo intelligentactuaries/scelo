@@ -227,6 +227,29 @@ describe("combineAll", () => {
     expect(stats.length).toBe(2);
   });
 
+  test("no count cap: many staged files chain in order, and Infinity means no row cap", () => {
+    // Eight batches appended after the base — the old UI stopped at two.
+    const batches = Array.from({ length: 8 }, (_, b) =>
+      ds(
+        `batch${b}.csv`,
+        ["id", "v"],
+        Array.from({ length: 50 }, (_, i) => [`b${b}-${i}`, i]),
+      ),
+    );
+    const base = ds("base.csv", ["id", "v"], Array.from({ length: 50 }, (_, i) => [`base-${i}`, i]));
+    const { dataset, stats, truncated, totalRows } = combineAll(
+      base,
+      batches.map((dataset) => ({ dataset, step: { strategy: "append" as const } })),
+      Number.POSITIVE_INFINITY,
+    );
+    expect(truncated).toBe(false);
+    expect(stats.length).toBe(8);
+    expect(totalRows).toBe(450);
+    expect(dataset.rows.length).toBe(450);
+    expect(dataset.name.split(" + ").length).toBe(9);
+    expect(dataset.sampled).toBeUndefined();
+  });
+
   test("row cap truncates with honest provenance fields", () => {
     const bigA = ds(
       "a.csv",
