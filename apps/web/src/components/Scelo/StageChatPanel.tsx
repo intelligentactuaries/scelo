@@ -17,6 +17,7 @@ import { ResizablePanel } from "./ResizablePanel";
 import { SceloChatMarkdown } from "./SceloChatMarkdown";
 import type { Dataset } from "./SoftDataWorkstation";
 import { nextPaint } from "./UploadIndicator";
+import { CHAT_DRAFT_EVENT } from "./actuarialTableUi";
 import { useScelo } from "./sceloContext";
 import { useNodeChat } from "./useNodeChat";
 
@@ -85,6 +86,24 @@ export function StageChatPanel({
     logProject: project?.name,
   });
   const [draft, setDraft] = useState("");
+  const inputHostRef = useRef<HTMLDivElement | null>(null);
+
+  // A suggestion elsewhere on the page ("send prompt to chat" on a table
+  // idea) can drop text into THIS panel's input by chatId — the user then
+  // edits and sends it like anything they typed. Focus follows so the
+  // hand-off is visible.
+  useEffect(() => {
+    const onSeed = (ev: Event) => {
+      const detail = (ev as CustomEvent<{ chatId: string; text: string }>).detail;
+      if (!detail || detail.chatId !== chatId) return;
+      setDraft(detail.text);
+      window.requestAnimationFrame(() => {
+        inputHostRef.current?.querySelector("textarea")?.focus();
+      });
+    };
+    window.addEventListener(CHAT_DRAFT_EVENT, onSeed);
+    return () => window.removeEventListener(CHAT_DRAFT_EVENT, onSeed);
+  }, [chatId]);
   /** id of the action currently running, or null. Actions are serialised:
    *  one at a time, and never while a reply is streaming. */
   const [runningAction, setRunningAction] = useState<string | null>(null);
@@ -243,7 +262,7 @@ export function StageChatPanel({
         )}
       </div>
 
-      <div className="shrink-0 border-t border-border bg-bg-1 px-3 py-2">
+      <div ref={inputHostRef} className="shrink-0 border-t border-border bg-bg-1 px-3 py-2">
         {actions && actions.length > 0 && (
           <div className="mb-2 flex flex-wrap gap-1.5">
             {actions.map((action) => {

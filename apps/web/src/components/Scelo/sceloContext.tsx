@@ -4,6 +4,7 @@
 // re-uploading or re-selecting. Resets when the user leaves /dashboards/scelo
 // entirely.
 
+import type { ActuarialTableSpec } from "@scelo/core";
 import {
   type ReactNode,
   createContext,
@@ -48,6 +49,11 @@ const PROJECT_STORAGE_KEY = "scelo:project-state";
 // capped) so we don't blow the localStorage 5 MB ceiling.
 const SESSION_STORAGE_KEY = "scelo:session-snapshot.v1";
 const SESSION_MAX_ROWS = 5000;
+// Generated actuarial tables are small (a life table is ~100 rows); the cap
+// only matters for a triangle or A/E built from a very wide file.
+const SESSION_TABLE_MAX_ROWS = 2_000;
+// Keep the shelf bounded — the user can always rebuild from the prompt.
+export const MAX_WORKSPACE_TABLES = 12;
 // When even the 5k-row snapshot overflows the quota, retry with this much
 // smaller slice before dropping rows entirely — a 1k sample still lets the
 // workstations render something real after a reload.
@@ -63,6 +69,24 @@ type StoredProjectState = {
   mode: SceloMode;
   project: SceloProject | null;
 };
+
+/** An actuarial table built in this session (chat, Table-ideas strip, or
+ *  the LLM's ```table block) — kept beside the active dataset rather than
+ *  replacing it, so a life table or a triangle can sit next to the raw
+ *  file it was derived from. Row-capped on persist like the dataset. */
+export interface WorkspaceTable {
+  id: string;
+  title: string;
+  spec: ActuarialTableSpec;
+  dataset: Dataset;
+  notes: string[];
+  basisLabel: string;
+  /** Name of the dataset it was built from (null for parametric tables). */
+  sourceDataset: string | null;
+  /** Where the request came from — audit trail for the card. */
+  origin: "chat" | "suggestion" | "llm";
+  createdAt: number;
+}
 
 export interface StoredSessionSnapshot {
   dataset: Dataset | null;
@@ -82,6 +106,9 @@ export interface StoredSessionSnapshot {
   /** Serialised as array since JSON doesn't carry Set. */
   transformLog: string[];
   events: ActivityEvent[];
+  /** Generated actuarial tables (see WorkspaceTable). Optional so older
+   *  snapshots without the field still restore. */
+  tables?: WorkspaceTable[];
 }
 
 const EMPTY_SESSION: StoredSessionSnapshot = {
@@ -96,6 +123,7 @@ const EMPTY_SESSION: StoredSessionSnapshot = {
   derivedColumns: {},
   transformLog: [],
   events: [],
+  tables: [],
 };
 
 function loadStoredProject(): StoredProjectState {
@@ -149,6 +177,7 @@ function loadStoredSession(): StoredSessionSnapshot {
           : {},
       transformLog: Array.isArray(parsed.transformLog) ? (parsed.transformLog as string[]) : [],
       events: Array.isArray(parsed.events) ? (parsed.events as ActivityEvent[]) : [],
+      tables: Array.isArray(parsed.tables) ? (parsed.tables as WorkspaceTable[]) : [],
     };
   } catch {
     return EMPTY_SESSION;
@@ -192,6 +221,10 @@ function saveStoredSession(snap: StoredSessionSnapshot): void {
     ...snap,
     dataset,
     events: trimEventsPreservingAnchors(snap.events, SESSION_MAX_EVENTS),
+    tables: (snap.tables ?? []).map((t) => ({
+      ...t,
+      dataset: sliceDatasetForPersist(t.dataset, SESSION_TABLE_MAX_ROWS),
+    })),
   };
   try {
     localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(trimmed));
@@ -307,6 +340,12 @@ type SceloState = {
   // running the transform a second time. Cleared with the dataset.
   transformLog: Set<string>;
   setTransformLog: (s: Set<string> | ((prev: Set<string>) => Set<string>)) => void;
+  /** Generated actuarial tables kept beside the active dataset. */
+  tables: WorkspaceTable[];
+  /** Add (or replace by id) a table; oldest are evicted past MAX_WORKSPACE_TABLES. */
+  addTable: (t: WorkspaceTable) => void;
+  removeTable: (id: string) => void;
+  clearTables: () => void;
   // Activity log — chronological record of every major user action (data
   // load, filters, cleaning, derived columns, model picks, runs). Feeds the
   // Export Screen's Python / R / C++ / prompt generators. In-memory only;
@@ -432,6 +471,20 @@ export function SceloProvider({ children }: { children: ReactNode }) {
     () => new Set(storedSession.transformLog),
   );
   const [events, setEvents] = useState<ActivityEvent[]>(storedSession.events);
+  const [tables, setTables] = useState<WorkspaceTable[]>(storedSession.tables ?? []);
+  const addTable = useCallback((t: WorkspaceTable) => {
+    setTables((prev) => {
+      const without = prev.filter((x) => x.id !== t.id);
+      const next = [...without, t];
+      return next.length > MAX_WORKSPACE_TABLES
+        ? next.slice(next.length - MAX_WORKSPACE_TABLES)
+        : next;
+    });
+  }, []);
+  const removeTable = useCallback((id: string) => {
+    setTables((prev) => prev.filter((x) => x.id !== id));
+  }, []);
+  const clearTables = useCallback(() => setTables([]), []);
 
   // ── undo stack ──────────────────────────────────────────────────────────
   const [history, setHistory] = useState<HistoryEntry[]>([]);
@@ -525,6 +578,7 @@ export function SceloProvider({ children }: { children: ReactNode }) {
         derivedColumns,
         transformLog: Array.from(transformLog),
         events,
+        tables,
       });
     }, 400);
     return () => window.clearTimeout(t);
@@ -540,6 +594,7 @@ export function SceloProvider({ children }: { children: ReactNode }) {
     derivedColumns,
     transformLog,
     events,
+    tables,
   ]);
 
   const logEvent = useCallback((next: Omit<ActivityEvent, "ts">) => {
@@ -593,6 +648,7 @@ export function SceloProvider({ children }: { children: ReactNode }) {
       derivedColumns,
       transformLog: Array.from(transformLog),
       events,
+      tables,
     }),
     [
       dataset,
@@ -606,6 +662,7 @@ export function SceloProvider({ children }: { children: ReactNode }) {
       derivedColumns,
       transformLog,
       events,
+      tables,
     ],
   );
 
@@ -622,6 +679,7 @@ export function SceloProvider({ children }: { children: ReactNode }) {
     setDerivedColumns(snap.derivedColumns ?? {});
     setTransformLog(new Set(snap.transformLog ?? []));
     setEvents(snap.events ?? []);
+    setTables(snap.tables ?? []);
     if (proj) {
       setProject(proj);
       setMode("project");
@@ -659,6 +717,10 @@ export function SceloProvider({ children }: { children: ReactNode }) {
       setDerivedColumns,
       transformLog,
       setTransformLog,
+      tables,
+      addTable,
+      removeTable,
+      clearTables,
       events,
       logEvent,
       clearEvents,
@@ -686,6 +748,10 @@ export function SceloProvider({ children }: { children: ReactNode }) {
       runs,
       derivedColumns,
       transformLog,
+      tables,
+      addTable,
+      removeTable,
+      clearTables,
       events,
       logEvent,
       clearEvents,

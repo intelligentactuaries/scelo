@@ -48,7 +48,7 @@ type TransformSpec = {
 
 // Extract the first balanced JSON object from a string, ignoring any
 // prose / commentary the LLM appended after it.
-function extractFirstJsonObject(s: string): string | null {
+export function extractFirstJsonObject(s: string): string | null {
   let depth = 0;
   let start = -1;
   let inString = false;

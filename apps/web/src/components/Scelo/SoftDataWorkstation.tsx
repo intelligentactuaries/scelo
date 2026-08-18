@@ -45,6 +45,8 @@ import { SceloChatMarkdown } from "./SceloChatMarkdown";
 import { SimulateScenarioModal } from "./SimulateScenarioModal";
 import { SmartColumnDashboard } from "./SmartColumnDashboard";
 import { type ChatAction, StageChatPanel } from "./StageChatPanel";
+import { TableIdeasStrip, TablesShelf } from "./actuarialTableUi";
+import { useActuarialTableChat } from "./useActuarialTableChat";
 import { UploadIndicator, type UploadState, nextPaint, useMinVisible } from "./UploadIndicator";
 import { auditRequest, formatAutoCleanReport } from "./autoCleanReport";
 import {
@@ -1791,6 +1793,7 @@ export function SoftDataWorkstation() {
     setTransformLog,
     stagedDatasets,
     setStagedDatasets,
+    tables,
     logEvent,
     clearEvents,
     pushHistory,
@@ -1799,6 +1802,12 @@ export function SoftDataWorkstation() {
     canUndo,
     clearHistory,
   } = useScelo();
+
+  // Actuarial tables — the agent that reads the data (and the prompts the
+  // user writes) and suggests tables, plus the typed-prompt builder shared
+  // by all three stage chats. Suggestions feed the ideas strip above the
+  // grid AND the chips above the chat input.
+  const tableChat = useActuarialTableChat("soft", dataset);
 
   // Snapshot-then-replace. Every dataset TRANSFORM goes through here so it
   // is reversible; loading or clearing a dataset deliberately does not (see
@@ -2076,6 +2085,7 @@ export function SoftDataWorkstation() {
   // genuinely tedious to phrase and has exactly one sensible execution.
   const softChatActions = useMemo<ChatAction[]>(
     () => [
+      ...tableChat.actions,
       {
         id: "undo",
         label: undoLabel ? `Undo: ${undoLabel}` : "Undo",
@@ -2097,7 +2107,7 @@ export function SoftDataWorkstation() {
         run: runAutoClean,
       },
     ],
-    [dataset, runAutoClean, runUndo, undoLabel, canUndo],
+    [dataset, runAutoClean, runUndo, undoLabel, canUndo, tableChat.actions],
   );
 
   const toggleOp = useCallback((key: CleaningOpKey) => {
@@ -2512,6 +2522,13 @@ export function SoftDataWorkstation() {
         return runUndo();
       }
 
+      // ── actuarial tables ─────────────────────────────────────────────────
+      // "build a life table at 4% from age 20 to 100", "commutation table
+      // from age and qx", "run-off triangle of paid", "suggest tables".
+      // Deterministic; also records the prompt so the table ideas react.
+      const tableReply = tableChat.onLocalCommand(text);
+      if (tableReply !== null) return tableReply;
+
       // ── data augmentation ────────────────────────────────────────────────
       // "add 1000 more rows through augmentation", "generate synthetic rows",
       // "bootstrap 500 records". Bootstrap-resamples + jitters numerics.
@@ -2661,6 +2678,7 @@ export function SoftDataWorkstation() {
       logEvent,
       runUndo,
       commitDataset,
+      tableChat.onLocalCommand,
     ],
   );
 
@@ -2714,8 +2732,9 @@ export function SoftDataWorkstation() {
   // the chatbar's stage context so questions like "why is age skewed in this
   // slice?" resolve against the user's actual filter stack.
   const chatStageContext = useMemo(
-    () => buildStageContext({ dataset, filters, filteredRows, selectedMeta }),
-    [dataset, filters, filteredRows, selectedMeta],
+    () =>
+      `${buildStageContext({ dataset, filters, filteredRows, selectedMeta })}\n\n${tableChat.contextAddendum}`,
+    [dataset, filters, filteredRows, selectedMeta, tableChat.contextAddendum],
   );
 
   const chatPlaceholder = useMemo(() => {
@@ -3391,6 +3410,23 @@ export function SoftDataWorkstation() {
             onApply={onApplyCleaning}
           />
         )}
+
+      {/* table ideas — the agent's read of the freshly loaded data: which
+          actuarial tables follow from these columns, each with a prompt the
+          user can send to the chat or build in one press. Below it, the
+          shelf of tables already built this session. */}
+      {dataset && uploadState.kind !== "loading" && (tableChat.suggestions.length > 0 || tables.length > 0) && (
+        <div className="flex shrink-0 flex-col gap-2 border-b border-border bg-bg px-3 py-2">
+          {tableChat.suggestions.length > 0 && (
+            <TableIdeasStrip
+              suggestions={tableChat.suggestions}
+              onBuild={tableChat.buildSuggestion}
+              chatId="soft-stage"
+            />
+          )}
+          <TablesShelf />
+        </div>
+      )}
 
       {/* filter chip strip — only rendered when filters exist */}
       {filters.length > 0 && (
