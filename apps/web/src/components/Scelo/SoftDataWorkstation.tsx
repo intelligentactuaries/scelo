@@ -157,6 +157,22 @@ export type { CellValue, ColumnMeta, ColumnType, Dataset, Filter, Row };
 // what fits rather than to a fixed row count.
 export { applyFilters, coerceCsvCell, describeFilter, formatNumber, minMax, summariseDataset };
 
+/** Horizontal pan distance for one wheel event over the data grid.
+ *
+ *  A trackpad's two-finger sideways swipe arrives as `deltaX` — that wins
+ *  whenever it is non-zero. A mouse has no horizontal wheel, so shift+wheel
+ *  (`deltaY` with shift held) is the fallback, the convention every
+ *  spreadsheet uses. A plain vertical wheel is left alone: it scrolls rows.
+ *  Pure so the gesture contract is testable without a layout engine. */
+export function horizontalPanDelta(e: {
+  deltaX: number;
+  deltaY: number;
+  shiftKey: boolean;
+}): number {
+  if (e.deltaX !== 0) return e.deltaX;
+  return e.shiftKey ? e.deltaY : 0;
+}
+
 function rowsFromCsvCells(header: string[], cells: string[][]): Row[] {
   const out: Row[] = new Array(cells.length);
   for (let r = 0; r < cells.length; r++) {
@@ -999,6 +1015,47 @@ function DataGrid({
   useEffect(() => {
     lockedRef.current = lockedCol;
   }, [lockedCol]);
+  // ── Horizontal panning (the spreadsheet gesture) ──────────────────────
+  //
+  // A wide dataset overflows this container sideways, and a trackpad
+  // two-finger swipe (deltaX) or shift+wheel (mice, which have no
+  // horizontal wheel) should pan it — as any spreadsheet does.
+  //
+  // Two things were in the way. `overscroll-behavior-x` was unset, so a
+  // swipe that reached either edge escaped to the browser's horizontal
+  // overscroll — history navigation, which in this SPA reads as "the swipe
+  // did nothing" (or worse, left the workstation). And shift+wheel was left
+  // to the platform, which does not translate it everywhere.
+  //
+  // So: `overscroll-x-contain` on the element, plus a NON-PASSIVE wheel
+  // listener (React attaches its own wheel handlers passively, which cannot
+  // preventDefault) that pans and consumes the event only when the pan
+  // actually moved. At the edge nothing is consumed, so a genuine
+  // two-finger back gesture still works where the platform offers one.
+  const gridScrollRef = useRef<HTMLDivElement | null>(null);
+  const [overflowsX, setOverflowsX] = useState(false);
+  useEffect(() => {
+    const el = gridScrollRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      if (el.scrollWidth <= el.clientWidth + 1) return; // nothing to pan
+      const dx = horizontalPanDelta(e);
+      if (dx === 0) return;
+      const before = el.scrollLeft;
+      el.scrollLeft = before + dx;
+      if (el.scrollLeft !== before) e.preventDefault();
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    const measure = () => setOverflowsX(el.scrollWidth > el.clientWidth + 1);
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => {
+      el.removeEventListener("wheel", onWheel);
+      ro.disconnect();
+    };
+  }, []);
+
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const cancelClose = useCallback(() => {
     if (closeTimer.current) {
@@ -1032,16 +1089,50 @@ function DataGrid({
     if (rect) setHoverAnchor(rect);
   }, []);
 
+  // Panning moves the column a popover is anchored to. A PINNED chat follows
+  // its column (the anchor is recomputed from the header cell); an unpinned
+  // hover popover is dismissed — chasing the pointer's old column mid-pan is
+  // noise. Coalesced through rAF so a fast swipe doesn't thrash state.
+  const scrollRaf = useRef<number | null>(null);
+  const onGridScroll = useCallback(() => {
+    if (scrollRaf.current !== null) return;
+    scrollRaf.current = requestAnimationFrame(() => {
+      scrollRaf.current = null;
+      const pinned = lockedRef.current;
+      if (!pinned) {
+        setHoveredCol((cur) => (cur ? null : cur));
+        return;
+      }
+      const rect = thRefs.current.get(pinned)?.getBoundingClientRect();
+      if (rect) setHoverAnchor(rect);
+    });
+  }, []);
+  useEffect(
+    () => () => {
+      if (scrollRaf.current !== null) cancelAnimationFrame(scrollRaf.current);
+    },
+    [],
+  );
+
   const activeChatCol = lockedCol ?? hoveredCol;
   const hoveredMeta = activeChatCol ? (metaByName.get(activeChatCol) ?? null) : null;
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="min-h-0 flex-1 overflow-auto rounded border border-border bg-bg">
+      <div
+        ref={gridScrollRef}
+        onScroll={onGridScroll}
+        // overscroll-x-contain keeps a horizontal swipe inside the grid
+        // instead of letting it become a browser back/forward gesture.
+        className="min-h-0 flex-1 overflow-auto overscroll-x-contain rounded border border-border bg-bg"
+      >
         <table className="w-full border-collapse font-mono text-xs">
           <thead className="sticky top-0 z-10 bg-bg-1">
             <tr>
-              <th className="border-b border-border px-2 py-1.5 text-right text-[10px] text-fg-dim">
+              {/* Row-number gutter. Sticky on BOTH axes so it survives a
+                  horizontal pan (z above the body's sticky gutter cells,
+                  which are themselves above the scrolling columns). */}
+              <th className="sticky left-0 z-30 border-b border-r border-border bg-bg-1 px-2 py-1.5 text-right text-[10px] text-fg-dim">
                 #
               </th>
               {dataset.columns.map((c) => {
@@ -1168,7 +1259,7 @@ function DataGrid({
             {slice.map((row, i) => (
               // biome-ignore lint/suspicious/noArrayIndexKey: rows are positional in an immutable paginated slice; there's no primary key to use.
               <tr key={start + i} className="odd:bg-bg even:bg-bg-1">
-                <td className="border-b border-border px-2 py-1 text-right text-[10px] text-fg-dim">
+                <td className="sticky left-0 z-10 border-b border-r border-border bg-bg-1 px-2 py-1 text-right text-[10px] text-fg-dim">
                   {start + i + 1}
                 </td>
                 {dataset.columns.map((c) => {
@@ -1207,7 +1298,17 @@ function DataGrid({
         </table>
       </div>
       <div className="flex shrink-0 items-center justify-between border-t border-border bg-bg-1 px-2 py-1 font-mono text-[10px] text-fg-mute">
-        <span>
+        <span className="flex items-center gap-2">
+          {overflowsX && (
+            // Says the grid goes on sideways, and how to get there — the
+            // gesture is invisible otherwise.
+            <span
+              className="shrink-0 rounded border border-border px-1 text-fg-dim"
+              title="Two-finger swipe (trackpad) or shift + scroll (mouse) to pan across the columns"
+            >
+              ⇆ {dataset.columns.length} cols
+            </span>
+          )}
           {rows.length === 0
             ? "no rows match current filters"
             : `rows ${start + 1}–${Math.min(start + PAGE_SIZE, rows.length)} of ${rows.length}`}
