@@ -45,7 +45,15 @@ export function ResizablePanel({
   /** Tailwind text-colour class for the rotated badge + accent dot. */
   accentClass?: string;
   children: ReactNode;
-  /** Extra classes on the inner content wrapper (e.g. `overflow-auto`). */
+  /** Extra classes on the inner content wrapper (e.g. `overflow-auto`).
+   *
+   *  Contract when you pass a scrolling class: the wrapper is a flex column,
+   *  and flexbox shrinks items to fit BEFORE a container scrolls — so every
+   *  direct child must carry `shrink-0`, or it will be compressed instead of
+   *  scrolled. Children that also set `overflow-hidden` are the dangerous
+   *  case: CSS drops their automatic minimum height to 0, so they can be
+   *  squashed to nothing (this is what sliced the Soft Data column-summary
+   *  header in half). */
   innerClassName?: string;
 }) {
   const [width, setWidth] = useState(defaultWidth);

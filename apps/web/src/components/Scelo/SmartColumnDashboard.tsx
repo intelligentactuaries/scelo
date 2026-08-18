@@ -1724,7 +1724,12 @@ export function SmartColumnDashboard({
   const missingPct = meta.count > 0 ? (100 * meta.missing) / meta.count : 0;
 
   return (
-    <div className="flex flex-col gap-3 p-3">
+    // shrink-0: this is a flex item of the panel's scrolling column, and a
+    // flex column shrinks its items before the container scrolls. Without it
+    // the dashboard (and anything inside it that hides overflow) can be
+    // compressed instead of scrolled — the same trap that used to slice the
+    // header above in half.
+    <div className="flex shrink-0 flex-col gap-3 p-3">
       <header className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <div className="flex items-center gap-2">

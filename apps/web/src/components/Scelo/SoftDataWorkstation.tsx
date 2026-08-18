@@ -37,6 +37,13 @@ import {
   useState,
 } from "react";
 import { useNavigate } from "react-router-dom";
+import {
+  capacityCheck,
+  estimateBytesPerRow,
+  estimateDatasetBytes,
+  fmtBytes,
+  rowBudget,
+} from "../../lib/machineCapacity";
 import { ChatInputPill } from "./ChatInputPill";
 import { CombineDiagram } from "./CombineDiagram";
 import { ExportButton } from "./ExportScreen";
@@ -45,16 +52,8 @@ import { SceloChatMarkdown } from "./SceloChatMarkdown";
 import { SimulateScenarioModal } from "./SimulateScenarioModal";
 import { SmartColumnDashboard } from "./SmartColumnDashboard";
 import { type ChatAction, StageChatPanel } from "./StageChatPanel";
-import {
-  capacityCheck,
-  estimateBytesPerRow,
-  estimateDatasetBytes,
-  fmtBytes,
-  rowBudget,
-} from "../../lib/machineCapacity";
-import { TableIdeasStrip, TablesShelf } from "./actuarialTableUi";
-import { useActuarialTableChat } from "./useActuarialTableChat";
 import { UploadIndicator, type UploadState, nextPaint, useMinVisible } from "./UploadIndicator";
+import { TableIdeasStrip, TablesShelf } from "./actuarialTableUi";
 import { auditRequest, formatAutoCleanReport } from "./autoCleanReport";
 import {
   AUTO_CLEAN_MAX_PASSES,
@@ -103,6 +102,7 @@ import {
 import { type ExportFormat, exportDataset } from "./exportDataset";
 import { compileFormula, previewFormula, validateColumnName } from "./formulaEvaluator";
 import { type HistoryScope, useScelo } from "./sceloContext";
+import { useActuarialTableChat } from "./useActuarialTableChat";
 import { useNodeChat } from "./useNodeChat";
 import { columnRelevance, numericColumns as workspaceNumericColumns } from "./workspace";
 
@@ -129,13 +129,14 @@ echarts.use([
 // the .tsx layer keep working — the pure .ts modules import the package
 // directly.
 import {
+  SAMPLES as CORE_SAMPLES,
   type CellValue,
   type ColumnMeta,
   type ColumnType,
+  DEFAULT_IMPORT_ROW_CAP,
   type Dataset,
   type Filter,
   type Row,
-  DEFAULT_IMPORT_ROW_CAP,
   applyFilters,
   coerceCsvCell,
   describeFilter,
@@ -144,7 +145,6 @@ import {
   minMax,
   summarise,
   summariseDataset,
-  SAMPLES as CORE_SAMPLES,
 } from "@scelo/core";
 import type { SampleKey } from "@scelo/core";
 
@@ -372,7 +372,6 @@ const CATEGORICAL_PALETTE_DARK = [
 const CATEGORICAL_PALETTE_LIGHT = ["#009669", "#3760cc", "#7649c7", "#ae6614", "#b73a3a"];
 const OTHER_COLOR_DARK = "#5a5a5a";
 const OTHER_COLOR_LIGHT = "#a8a8a4";
-
 
 export type Palette = {
   primary: string;
@@ -3432,18 +3431,20 @@ export function SoftDataWorkstation() {
           actuarial tables follow from these columns, each with a prompt the
           user can send to the chat or build in one press. Below it, the
           shelf of tables already built this session. */}
-      {dataset && uploadState.kind !== "loading" && (tableChat.suggestions.length > 0 || tables.length > 0) && (
-        <div className="flex shrink-0 flex-col gap-2 border-b border-border bg-bg px-3 py-2">
-          {tableChat.suggestions.length > 0 && (
-            <TableIdeasStrip
-              suggestions={tableChat.suggestions}
-              onBuild={tableChat.buildSuggestion}
-              chatId="soft-stage"
-            />
-          )}
-          <TablesShelf />
-        </div>
-      )}
+      {dataset &&
+        uploadState.kind !== "loading" &&
+        (tableChat.suggestions.length > 0 || tables.length > 0) && (
+          <div className="flex shrink-0 flex-col gap-2 border-b border-border bg-bg px-3 py-2">
+            {tableChat.suggestions.length > 0 && (
+              <TableIdeasStrip
+                suggestions={tableChat.suggestions}
+                onBuild={tableChat.buildSuggestion}
+                chatId="soft-stage"
+              />
+            )}
+            <TablesShelf />
+          </div>
+        )}
 
       {/* filter chip strip — only rendered when filters exist */}
       {filters.length > 0 && (
@@ -3864,9 +3865,20 @@ function ColumnSummaryHeader({ meta }: { meta: ColumnMeta | null }) {
   // it. The 3 px accent bar lives at `left: 0` and is rendered through
   // the negative left-margin trick below, since the chevron occupies the
   // area immediately to the right of it.
+  //
+  // `shrink-0` is load-bearing, not decoration. This header is a flex item
+  // of the panel's scrolling column (`ResizablePanel innerClassName
+  // "overflow-auto"`), and the dashboard below it is always taller than the
+  // panel. Flexbox resolves that overflow by shrinking items BEFORE the
+  // container scrolls, and per CSS the automatic minimum size (min-height:
+  // auto) collapses to 0 for any item whose `overflow` is not `visible` —
+  // which the selected-column branch below sets. The header was therefore
+  // squashed to a few pixels and its label / type badge sliced in half,
+  // while the unselected branch (no overflow-hidden, so min-height: auto
+  // still protects it) rendered fine. Keep shrink-0 on BOTH branches.
   if (!meta) {
     return (
-      <div className="relative border-b border-border px-3 py-1.5 pl-8 font-mono text-[10px] uppercase tracking-wider text-fg-dim">
+      <div className="relative shrink-0 border-b border-border px-3 py-1.5 pl-8 font-mono text-[10px] uppercase tracking-wider text-fg-dim">
         column · summary
       </div>
     );
@@ -3875,7 +3887,9 @@ function ColumnSummaryHeader({ meta }: { meta: ColumnMeta | null }) {
     meta.type === "number" ? "accent-2" : meta.type === "date" ? "warn" : "accent-3";
   const tone = HEADER_ACCENTS[accent];
   return (
-    <div className={`relative overflow-hidden border-b ${tone.wrap} bg-bg-1 px-3 py-1.5 pl-8`}>
+    <div
+      className={`relative shrink-0 overflow-hidden border-b ${tone.wrap} bg-bg-1 px-3 py-1.5 pl-8`}
+    >
       <span className={`absolute inset-y-0 left-0 w-[3px] ${tone.bar}`} />
       <div className="flex items-baseline justify-between gap-2">
         <span className={`font-mono text-[10px] uppercase tracking-wider ${tone.label}`}>
