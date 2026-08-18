@@ -278,7 +278,7 @@ $$
   // from the Scelo result to the Python source on github.com/lifelib-dev.
 
   "basicterm-projection": `
-**BasicTerm · monthly projection** is a faithful port of [lifelib's basiclife / BasicTerm_M](https://github.com/lifelib-dev/lifelib) to TypeScript. It walks a model-point file forward month-by-month, decrementing each policy by mortality and lapse, and accumulating premium income, claim outflow, expenses, and reserves into a present value of net cash flow.
+**BasicTerm · monthly projection** is a faithful port of [lifelib's basiclife / BasicTerm_ME](https://github.com/lifelib-dev/lifelib) to TypeScript (BasicTerm_M is the new-business special case; \`_ME\` honours \`duration_mth\` for in-force business). It walks a model-point file forward month-by-month, decrementing each policy by mortality and lapse, and accumulating premium income, claim outflow, expenses, and reserves into a present value of net cash flow.
 
 **Mechanics**
 - Policies-in-force \`pols_if(t)\` decremented by mortality \`q_m\` (annual Makeham → monthly via \`1 - (1-q_x)^(1/12)\`) and a constant lapse \`λ_m = 1 - (1-λ)^(1/12)\`.
@@ -290,7 +290,7 @@ $$
 \\text{PV}(\\text{net CF}) = \\sum_{t=0}^{T} \\big(\\text{premiums}_t - \\text{claims}_t - \\text{expenses}_t\\big) \\cdot v^{t/12}
 $$
 
-**Caveat** — the in-browser port samples to 2000 MPs for sub-100ms response; download the full lifelib notebook (Hard Data → "Export · lifelib notebook") for runs on 100k+ MPs.
+**Caveat** — the in-browser port samples to 2000 MPs for sub-100ms response. Inside Scelo IDE the card is computed by the real BasicTerm_ME on the bundled CPython (lifelib pinned in \`@scelo/core\`, premiums taken from the file's \`premium_pp\` when present); download the lifelib notebook (Hard Data → "Export · lifelib notebook") for runs on 100k+ MPs.
 `.trim(),
 
   "cashvalue-savings": `
@@ -301,11 +301,11 @@ $$
 - Lapses drive a surrender-value payment, mortality drives a death benefit \`max(AV, GMDB)\`.
 - Insurer margin is the spread between earned-rate and credited-rate, less expenses.
 
-**Caveat** — the in-app proxy uses a flat crediting / margin assumption; real lifelib runs use a path-dependent earned rate. Use the notebook export for stochastic / nested.
+**Caveat** — the in-app proxy uses a flat crediting / margin assumption; real lifelib runs use a path-dependent earned rate (CashValue_ME draws one of ten pre-generated investment-return scenarios; the \`_EX1\` / \`_EX2\` examples run all of them for option values). Use the notebook export for stochastic runs.
 `.trim(),
 
   "ifrs17-csm": `
-**IFRS 17 · CSM roll-forward** maps to [lifelib's ifrs17sim](https://github.com/lifelib-dev/lifelib). The CSM is the unearned profit at recognition that's released to P&L over the coverage period in proportion to coverage units provided.
+**IFRS 17 · CSM roll-forward** maps to [lifelib's ifrs17sim](https://github.com/lifelib-dev/lifelib) — a **legacy** library since lifelib 0.12.0 (built on the deprecated simplelife projection; still shipped, still runs). The active IFRS 17 engine is \`ifrs17a\`, driven from nominal-cash-flow workbooks rather than a model-point file, which is why Scelo still answers a model-point question with ifrs17sim and says so on the card. The CSM is the unearned profit at recognition that's released to P&L over the coverage period in proportion to coverage units provided.
 
 **Mechanics (BBA)**
 - At issue: \`CSM_0 = PV_fulfilment_cashflows + RA - PV_premiums\` (flipped sign so positive = unearned profit).
@@ -316,21 +316,21 @@ $$
 \\text{release}_t = \\text{CSM}_t \\cdot \\frac{\\text{CU}_t}{\\sum_{s \\geq t} \\text{CU}_s \\cdot v^{s-t}}
 $$
 
-**Caveat** — coverage-unit choice (face amount vs. policy count vs. expected claims) materially shifts the release pattern. Document the choice.
+**Caveat** — coverage-unit choice (face amount vs. policy count vs. expected claims) materially shifts the release pattern. Document the choice. ifrs17sim's \`RiskAdjustment(t)\` is a library stub returning 0, so its CSM(0) is the full PV of future cash flows — the IDE card reports exactly that rather than inventing a loading.
 `.trim(),
 
   "solvency2-life": `
-**Solvency II · life SCR** maps to [lifelib's solvency2 library](https://github.com/lifelib-dev/lifelib). Standard formula life-underwriting SCR aggregates capital charges from five sub-modules (mortality, longevity, disability, lapse, expense, life-CAT) through the EIOPA correlation matrix.
+**Solvency II · life SCR** maps to [lifelib's annuallife / TradLife_A_EX1](https://github.com/lifelib-dev/lifelib) (lifelib 0.13.0+, the successor to the deprecated \`solvency2\` project). Standard formula life-underwriting SCR aggregates capital charges from seven sub-modules (mortality, longevity, disability, lapse — worst of up / down / mass —, expense, revision, life-CAT) through the EIOPA correlation matrix.
 
 **Mechanics**
-- Each sub-module: shock the relevant assumption, re-value, take ΔBOF.
-- Aggregate: \`SCR_life = sqrt(Σ_i Σ_j ρ_{i,j} · SCR_i · SCR_j)\`.
+- Each sub-module: shock the relevant assumption in an inner projection anchored at valuation time \`t\`, re-value, take \`max(PV_base − PV_shocked, 0)\` (\`risk_life_sub(t, risk)\`).
+- Aggregate: \`SCR_life(t) = sqrt(Σ_i Σ_j ρ_{i,j} · SCR_i · SCR_j)\` with the model's own \`life_corr\` matrix (\`risk_life(t)\`).
 
-**Caveat** — standard formula is calibrated to a *typical* EU portfolio; the Internal Model option (Article 112) is required where the SF doesn't fit. The in-app proxy uses a single 0.25 cross-correlation in place of the full matrix.
+**Caveat** — standard formula is calibrated to a *typical* EU portfolio; the Internal Model option (Article 112) is required where the SF doesn't fit. The in-app proxy uses toy shock factors and a single 0.25 cross-correlation; inside Scelo IDE the card is the real TradLife_A_EX1 run (per-policy charges summed, so floored per policy rather than at portfolio level — stated on the card).
 `.trim(),
 
   "nested-stochastic": `
-**Nested stochastic** maps to [lifelib's nestedlife](https://github.com/lifelib-dev/lifelib). An outer real-world simulation (1,000+ paths) carries the cash flows; at each outer node a smaller inner risk-neutral simulation (100+ paths) values the embedded guarantees → produces a time-value-of-options-and-guarantees (TVOG).
+**Nested stochastic** maps to [lifelib's nestedlife](https://github.com/lifelib-dev/lifelib) — a **legacy** library since lifelib 0.12.0 (simplelife-based; still shipped, kept as the reference nested design). An outer real-world simulation (1,000+ paths) carries the cash flows; at each outer node a smaller inner risk-neutral simulation (100+ paths) values the embedded guarantees → produces a time-value-of-options-and-guarantees (TVOG).
 
 **Mechanics**
 - Outer: ESG paths drive policyholder behavior + asset returns.
@@ -399,7 +399,7 @@ The Hard Data card relabels M / T / R per source family.
 `.trim(),
 
   "economic-curves": `
-**Economic curves** maps to [lifelib's economic / economic_curves libraries](https://github.com/lifelib-dev/lifelib). Bootstraps zero, forward, and discount curves from quoted swap / bond rates with interpolation methods (linear, log-linear, cubic spline).
+**Economic curves** maps to [lifelib's economic_curves scripts and economic / BasicHullWhite](https://github.com/lifelib-dev/lifelib). Bootstraps zero, forward, and discount curves from quoted swap / bond rates with interpolation methods (linear, log-linear, cubic spline); \`economic_curves/smith_wilson\` is the plain-numpy Smith-Wilson, \`BasicHullWhite\` a one-factor Hull-White short-rate simulator.
 
 **Mechanics**
 - Bootstrap zeros from par swaps tenor-by-tenor (no-arbitrage).

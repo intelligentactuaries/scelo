@@ -188,7 +188,7 @@ the Google Fonts `<link>` in `index.html`.
 - [x] macOS signing + notarisation config (env-driven CSC_LINK / APPLE_ID / hardenedRuntime + entitlements.mac.plist)
 - [x] Windows signing config (env-driven CSC_LINK)
 - [x] First-run `/runtime-check` screen — probes the bundled Python + R for per-package import / library status
-- [x] Renderer → bundled Python proof: `runModelAsync("basicterm-projection")` delegates to real lifelib via `bridges/lifelibBasicTermPython.ts`, falls back to the TS port
+- [x] Renderer → bundled Python proof: `runModelAsync("basicterm-projection")` delegates to real lifelib (`basiclife/BasicTerm_ME` via modelx) via `bridges/lifelibBasicTermPython.ts`, falls back to the TS port
 
 ### Phase 2.5 (bring-your-own AI)
 - [x] Real Anthropic / OpenAI / Gemini / OpenAI-compatible providers in `packages/ia-agents/ia_agents/providers/`
@@ -216,7 +216,13 @@ the Google Fonts `<link>` in `index.html`.
 - [x] node-pty terminal with graceful spawn() fallback — full readline/curses (ipython, R REPL, vim) when the native module loads; bundled binaries via @homebridge/node-pty-prebuilt-multiarch + @electron/rebuild
 - [x] Token-level cost tracking — providers emit `usage` AgentEvents (Anthropic `message_delta.usage`, OpenAI `[DONE].usage` via `stream_options.include_usage`, Gemini `usageMetadata`); orchestrator router records tokens + USD via a per-model price table; /settings/ai shows tokens-in/out + today/7-day USD
 - [x] Lee-Carter Python bridge — numpy SVD + statsmodels SARIMAX(0,1,0) on κ(t) with 95 % CI, replaces the in-browser linear-decay stub
-- [x] IFRS 17 CSM Python bridge — lifelib `ifrs17sim` (with an inlined BBA fallback when the optional sub-library is missing)
+- [x] IFRS 17 CSM Python bridge — real lifelib `ifrs17sim` (`OuterProj[pid].CSM(t)` per policy; legacy library since lifelib 0.12.0, reported as such — no invented fallback numbers)
+- [x] Solvency II life SCR Python bridge — lifelib `annuallife/TradLife_A_EX1` (0.13.0+, successor to the deprecated `solvency2` project): per-policy life stresses aggregated with the model's own correlation matrix
+
+### lifelib pin (0.14.0 / modelx 0.32.0)
+- The bundled Python stack is pinned in `runtime/python-requirements.in` (headline libraries hard-pinned) and locked per platform in `runtime/python-requirements-{linux,macos,windows}.txt` (`uv pip compile`); `scripts/bundle-runtimes.sh` installs the lock and fails the build if the lifelib / modelx that landed differ from the pin. `resources/runtime/manifest.json` records the versions.
+- The renderer-side twin of that pin is `packages/scelo-core/src/lifelib.ts` (`LIFELIB_VERSION`, `MODELX_VERSION`, `LIFELIB_TARGETS`) — the catalog, notebook export, bridges and runtime probe read it; `apps/web`'s `lifelibNotebookExport.test.ts` asserts the two agree and, with `SCELO_LIFELIB_PYTHON=<python with lifelib>`, executes every generated notebook and bridge script for real.
+- Bridges spawn the bundled CPython with `PYTHONNOUSERSITE=1` and no inherited `PYTHONPATH` (`bundledPythonEnv()` in `src/main.ts`) so the pinned lifelib is the one that runs; lifelib's model libraries are copied on first use into `<userData>/lifelib/<version>/` (`SCELO_LIFELIB_HOME`).
 
 ### Phase 6 (LSP-lite, GLM, live cost meter)
 - [x] Pyright diagnostics on save — `scelo:fs:lintPython` shells to bundled `pyright --outputjson`; EditorPanel converts to Monaco markers (red squiggles + hover messages). Bundled via `pip install pyright` in `bundle:runtime`. Full persistent LSP deferred (its own multi-session item).

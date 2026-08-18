@@ -568,3 +568,21 @@ export {
   WORKSPACE_DEMO_READOUTS,
   WORKSPACE_DEMO_REFLEXIVE,
 } from "./samples";
+
+// lifelib manifest — the pinned lifelib / modelx versions and the life-family
+// model → lifelib library mapping. See ./lifelib.ts.
+export {
+  LIFELIB_VERSION,
+  MODELX_VERSION,
+  LIFELIB_PYTHON_MIN,
+  LIFELIB_PIP_REQUIREMENTS,
+  LIFELIB_LIBRARIES,
+  LIFELIB_TARGETS,
+  lifelibLibrary,
+  lifelibTargetFor,
+  isLifelibModel,
+  lifelibProvenance,
+  type LifelibLibrary,
+  type LifelibLibraryStatus,
+  type LifelibTarget,
+} from "./lifelib";

@@ -993,9 +993,9 @@ export const SAMPLES: SampleSpec[] = [
   {
     key: "lifelib-mp",
     title: "Lifelib · model points",
-    subtitle: "term life MP file · lifelib basiclife/BasicTerm_M",
+    subtitle: "term life MP file · lifelib basiclife/BasicTerm_ME",
     blurb:
-      "100-row in-force model-point file shaped like lifelib's basic_term_sample: policy_id, age_at_entry, sex, sum_assured, policy_term, duration_mth, premium_pp. Loads straight into the lifelib BasicTerm_M projection (in-browser TS port) and routes the AI picker to the `life` family. Same structure works for CashValue / IFRS17 / Solvency II life nodes.",
+      "100-row in-force model-point file shaped like lifelib's basic_term_sample: policy_id, age_at_entry, sex, sum_assured, policy_term, duration_mth, premium_pp. Loads straight into the lifelib BasicTerm_ME projection (in-browser TS port; the real lifelib model inside Scelo IDE) and routes the AI picker to the `life` family. Same structure works for CashValue / IFRS17 / Solvency II life nodes.",
     rows: 100,
     cols: 7,
     build: () => syntheticLifelibMP(),

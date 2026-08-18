@@ -1413,12 +1413,12 @@ function runBasicTermProjectionRunner({ dataset }: Args): RunResult {
       y: annualNet,
     },
     blurb:
-      `Lifelib BasicTerm_M monthly projection across ${proj.modelPointsTotal} ` +
+      `Lifelib BasicTerm_ME monthly projection across ${proj.modelPointsTotal} ` +
       `model points produced PV(net CF) = ${fmt(proj.pvNetCf)} ` +
       `(${fmt(proj.totalPremiums)} premiums − ${fmt(proj.totalClaims)} claims − ` +
       `${fmt(proj.totalExpenses)} expenses, discounted @ 3% pa).`,
     detail: {
-      lifelib: "basiclife/BasicTerm_M",
+      lifelib: "basiclife/BasicTerm_ME",
       monthly: proj.monthly,
       byPolicy: proj.byPolicy.slice(0, 20),
     },
@@ -1504,7 +1504,7 @@ function runIfrs17Csm({ dataset }: Args): RunResult {
     ],
     series: { kind: "bar", x: series.map((_, i) => `y${i + 1}`), y: series },
     blurb:
-      `Lifelib ifrs17sim · CSM at issue ${fmt(csm0)} ` +
+      `Lifelib ifrs17sim (legacy) · CSM at issue ${fmt(csm0)} ` +
       `(PV profit ${fmt(pvProfit)} − RA ${fmt(ra)}); BBA straight-line release over ${years} y.`,
     detail: { lifelib: "ifrs17sim", releasePerYear: series, csmBalance },
   };
@@ -1552,9 +1552,9 @@ function runSolvency2Life({ dataset }: Args): RunResult {
       rows: Object.entries(subs).map(([k, v]) => [k, fmt(v)]),
     },
     blurb:
-      `Lifelib solvency2 · life underwriting SCR ${fmt(scr)}. ` +
+      `Lifelib annuallife/TradLife_A_EX1 (in-browser proxy) · life underwriting SCR ${fmt(scr)}. ` +
       `Dominant module: ${dominantOf(subs)} (${fmt(Math.max(...vals))}).`,
-    detail: { lifelib: "solvency2", subs, correl: 0.25 },
+    detail: { lifelib: "annuallife/TradLife_A_EX1", subs, correl: 0.25 },
   };
 }
 
@@ -1601,7 +1601,7 @@ function runNestedStochastic({ dataset }: Args): RunResult {
     ],
     series: { kind: "bar", x: tailBins, y: tail },
     blurb:
-      `Lifelib nestedlife · TVOG ${fmt(tvog)} on ${outer} outer × ${inner} inner paths; ` +
+      `Lifelib nestedlife (legacy) · TVOG ${fmt(tvog)} on ${outer} outer × ${inner} inner paths; ` +
       `p99 liability is ${(tailFactor[4]).toFixed(2)}× the mean.`,
     detail: { lifelib: "nestedlife", outer, inner, tail },
   };
@@ -2017,6 +2017,7 @@ export const BRIDGED_MODEL_IDS: ReadonlySet<string> = new Set([
   "lee-carter",
   "ifrs17-csm",
   "basicterm-projection",
+  "solvency2-life",
   "workspace-bottleneck",
 ]);
 
@@ -2385,12 +2386,18 @@ export async function runModelAsync(
       bridgeError = bridgeErrorMessage(e);
     }
   }
-  // Life family — IFRS 17 CSM via lifelib ifrs17sim (or its inlined BBA fallback).
+  // Life family — IFRS 17 CSM via lifelib ifrs17sim (legacy library, real
+  // model: OuterProj CSM(t) / TransServices(t) per policy on the bundled
+  // CPython). The card names the library status and the lifelib version.
   if (modelId === "ifrs17-csm") {
     try {
       const { runIfrs17CsmPython } = await import("./bridges/ifrs17CsmPython");
       const py = await runIfrs17CsmPython(dataset);
       if (py) {
+        const coverage =
+          py.modelPointsUsed < py.modelPointsTotal
+            ? `${py.modelPointsUsed.toLocaleString()} of ${py.modelPointsTotal.toLocaleString()} (time budget)`
+            : py.modelPointsTotal.toLocaleString();
         return {
           modelId,
           family: "life",
@@ -2398,16 +2405,21 @@ export async function runModelAsync(
           startedAt: Date.now(),
           finishedAt: Date.now(),
           headline: {
-            label: "CSM at issue · ifrs17sim-python",
+            label: "CSM at issue · ifrs17sim (lifelib)",
             value: py.csm0,
             precision: 0,
           },
           secondary: [
-            { label: "PV profit", value: fmt(py.pvProfit) },
-            { label: "Risk adjustment", value: fmt(py.riskAdjustment) },
+            { label: "PV net CF", value: fmt(py.pvProfit) },
+            { label: "PV premiums", value: fmt(py.pvPremiums) },
+            { label: "PV benefits", value: fmt(py.pvBenefits) },
+            { label: "Risk adjustment", value: `${fmt(py.riskAdjustment)} (stub in ifrs17sim)` },
             { label: "Release period", value: `${py.years}y (coverage-units)` },
-            { label: "model points", value: py.modelPointsTotal.toLocaleString() },
-            { label: "runtime", value: "bundled CPython (ifrs17sim)" },
+            { label: "model points", value: coverage },
+            {
+              label: "runtime",
+              value: `lifelib ${py.lifelibVersion} · ifrs17sim (legacy → ${py.successor})`,
+            },
           ],
           series: {
             kind: "bar",
@@ -2415,14 +2427,75 @@ export async function runModelAsync(
             y: py.release,
           },
           blurb:
-            `Bundled-CPython ifrs17sim · CSM at issue ${fmt(py.csm0)} ` +
-            `(PV profit ${fmt(py.pvProfit)} − RA ${fmt(py.riskAdjustment)}); ` +
-            `coverage-units release over ${py.years} y.`,
+            `lifelib ${py.lifelibVersion} ifrs17sim · CSM at issue ${fmt(py.csm0)} ` +
+            `on ${coverage} model points (PV net CF ${fmt(py.pvProfit)}; ` +
+            `RA ${fmt(py.riskAdjustment)} — ifrs17sim leaves RiskAdjustment unimplemented); ` +
+            `coverage-units release over ${py.years} y. ifrs17sim is a legacy lifelib ` +
+            `library (deprecated 0.12.0); ${py.successor} is the active IFRS 17 engine.`,
           detail: { ...py },
           source: "python-bridge",
         };
       }
       bridgeError = bridgeReturnedNothing("ifrs17sim");
+    } catch (e) {
+      bridgeError = bridgeErrorMessage(e);
+    }
+  }
+  // Life family — Solvency II life SCR via lifelib annuallife/TradLife_A_EX1
+  // (the active successor to the deprecated solvency2 project): per-policy
+  // life stresses as inner projections, aggregated with the model's own
+  // correlation matrix.
+  if (modelId === "solvency2-life") {
+    try {
+      const { runSolvency2LifeScrPython, SCR_SUB_RISKS } = await import(
+        "./bridges/solvency2LifeScrPython"
+      );
+      const py = await runSolvency2LifeScrPython(dataset);
+      if (py) {
+        const coverage =
+          py.modelPointsUsed < py.modelPointsTotal
+            ? `${py.modelPointsUsed.toLocaleString()} of ${py.modelPointsTotal.toLocaleString()} (time budget)`
+            : py.modelPointsTotal.toLocaleString();
+        const subs = SCR_SUB_RISKS.map((k) => [k, py.subs[k]] as const);
+        const dominant = subs.reduce((a, b) => (b[1] > a[1] ? b : a));
+        return {
+          modelId,
+          family: "life",
+          status: "done",
+          startedAt: Date.now(),
+          finishedAt: Date.now(),
+          headline: { label: "Life SCR · TradLife_A_EX1 (lifelib)", value: py.scrLife, precision: 0 },
+          secondary: [
+            { label: "PV net CF (base)", value: fmt(py.pvNetCf) },
+            { label: "dominant", value: `${dominant[0]} (${fmt(dominant[1])})` },
+            { label: "Σ per-policy SCR", value: fmt(py.scrLifePolicySum) },
+            { label: "model points", value: coverage },
+            {
+              label: "runtime",
+              value: `lifelib ${py.lifelibVersion} · annuallife/TradLife_A_EX1`,
+            },
+          ],
+          tableSpec: {
+            headers: ["sub-module", "shock charge"],
+            rows: subs.map(([k, v]) => [k, fmt(v)]),
+          },
+          series: {
+            kind: "bar",
+            x: subs.map(([k]) => k),
+            y: subs.map(([, v]) => v),
+          },
+          blurb:
+            `lifelib ${py.lifelibVersion} annuallife/TradLife_A_EX1 · life underwriting SCR ` +
+            `${fmt(py.scrLife)} on ${coverage} model points, valued at t=0: sub-risk charges ` +
+            `(mortality / longevity / disability / lapse up-down-mass / expense / revision / CAT) ` +
+            `summed across policies (per-policy floor at 0) and aggregated with the model's ` +
+            `life correlation matrix. Dominant module: ${dominant[0]} (${fmt(dominant[1])}). ` +
+            `Replaces the deprecated solvency2 project.`,
+          detail: { ...py },
+          source: "python-bridge",
+        };
+      }
+      bridgeError = bridgeReturnedNothing("annuallife/TradLife_A_EX1");
     } catch (e) {
       bridgeError = bridgeErrorMessage(e);
     }
@@ -2446,27 +2519,49 @@ export async function runModelAsync(
           startedAt: Date.now(),
           finishedAt: Date.now(),
           headline: {
-            label: "PV (net cash flow) · lifelib-python",
+            label: "PV (net cash flow) · BasicTerm_ME (lifelib)",
             value: py.pvNetCf,
             precision: 0,
           },
           secondary: [
-            { label: "model points", value: py.modelPointsTotal.toLocaleString() },
+            {
+              label: "model points",
+              value:
+                py.modelPointsUnpriced > 0
+                  ? `${py.modelPointsUsed.toLocaleString()} of ${py.modelPointsTotal.toLocaleString()} (${py.modelPointsUnpriced} outside lifelib's premium table)`
+                  : py.modelPointsTotal.toLocaleString(),
+            },
             { label: "PV premiums (∑)", value: fmt(py.totalPremiums) },
             { label: "PV claims (∑)", value: fmt(py.totalClaims) },
             { label: "PV expenses (∑)", value: fmt(py.totalExpenses) },
+            { label: "PV commissions (∑)", value: fmt(py.totalCommissions) },
+            {
+              label: "premiums",
+              value:
+                py.premiumSource === "model-point-file"
+                  ? "premium_pp from the MP file"
+                  : "lifelib premium table",
+            },
             {
               label: "break-even",
               value: py.breakEvenMonth === null ? "—" : `${py.breakEvenMonth}m`,
             },
-            { label: "runtime", value: "bundled CPython (lifelib)" },
+            { label: "runtime", value: `lifelib ${py.lifelibVersion} · basiclife/BasicTerm_ME` },
           ],
           series: { kind: "line", x: years.map((y) => `y${y}`), y: annualNet },
           blurb:
-            `Bundled-CPython lifelib BasicTerm_M projection across ` +
-            `${py.modelPointsTotal} model points produced PV(net CF) = ` +
-            `${fmt(py.pvNetCf)} (canonical lifelib, not the in-browser port).`,
-          detail: { source: "lifelib-python", monthly: py.monthly.slice(0, 360) },
+            `lifelib ${py.lifelibVersion} basiclife/BasicTerm_ME projection across ` +
+            `${py.modelPointsUsed} model points produced PV(net CF) = ` +
+            `${fmt(py.pvNetCf)} (canonical lifelib on the bundled CPython, not the in-browser port; ` +
+            `${py.premiumSource === "model-point-file" ? "premiums from the file's premium_pp column" : "premiums from lifelib's premium table"}).`,
+          detail: {
+            source: "lifelib-python",
+            model: py.model,
+            lifelibVersion: py.lifelibVersion,
+            modelxVersion: py.modelxVersion,
+            premiumSource: py.premiumSource,
+            monthly: py.monthly.slice(0, 360),
+          },
           source: "python-bridge",
         };
       }
