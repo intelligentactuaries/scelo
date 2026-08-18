@@ -1,7 +1,7 @@
 // Multi-dataset combine engine for the Soft Data workstation.
 //
-// Up to three offline imports can be loaded at once (the active dataset plus
-// two staged ones); this module decides HOW they fit together and executes
+// Any number of offline imports can be staged beside the active dataset (the
+// machine's memory is the only cap); this module decides HOW they fit together and executes
 // the combination:
 //
 //   * append      — same (or near-same) schema: stack rows. Column names
@@ -493,8 +493,9 @@ export function combinePair(
   };
 }
 
-/** Combine the base with up to two staged datasets, sequentially. The cap
- *  keeps the result inside the same renderer budget as imports. */
+/** Combine the base with the staged datasets, sequentially. `rowCap` bounds
+ *  the result — callers pass what the machine can hold (Infinity for no cap);
+ *  anything beyond it is dropped and reported as truncated. */
 export function combineAll(
   base: Dataset,
   others: Array<{ dataset: Dataset; step: CombineStep }>,

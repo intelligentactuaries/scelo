@@ -313,10 +313,10 @@ type SceloState = {
    *  to its target's runner. */
   modelWires: ModelWire[];
   setModelWires: (w: ModelWire[] | ((prev: ModelWire[]) => ModelWire[])) => void;
-  // Additional offline imports staged for combining with the active dataset
-  // (at most 2 staged + 1 active = 3). Session-only — deliberately NOT
-  // persisted: staged files can be big, and a combine is expected to happen
-  // in the same sitting it was staged in.
+  // Additional offline imports staged for combining with the active dataset.
+  // No count cap — the machine's memory is the limit (lib/machineCapacity.ts).
+  // Session-only — deliberately NOT persisted: staged files can be big, and a
+  // combine is expected to happen in the same sitting it was staged in.
   stagedDatasets: Dataset[];
   setStagedDatasets: (d: Dataset[] | ((prev: Dataset[]) => Dataset[])) => void;
   // Results from the (mock) model runner — keyed by model id. Cleared

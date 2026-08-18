@@ -239,7 +239,6 @@ export function ChatTableCard({ raw }: { raw: string }) {
     pushHistory,
     setFilters,
     logEvent,
-    stagedDatasets,
     setStagedDatasets,
   } = useScelo();
   const parsed = useMemo(() => safeParseSpec(raw), [raw]);
@@ -277,7 +276,7 @@ export function ChatTableCard({ raw }: { raw: string }) {
   }
   const t = state.table;
   const kept = tables.some((x) => x.id === t.id);
-  const canStage = Boolean(dataset) && stagedDatasets.length < 2;
+  const canStage = Boolean(dataset);
   return (
     <Shell tone="ok">
       <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
@@ -549,12 +548,11 @@ export function TablesShelf() {
     setFilters,
     logEvent,
     dataset,
-    stagedDatasets,
     setStagedDatasets,
   } = useScelo();
   const [open, setOpen] = useState<string | null>(null);
   if (tables.length === 0) return null;
-  const canStage = Boolean(dataset) && stagedDatasets.length < 2;
+  const canStage = Boolean(dataset);
   return (
     <section className="rounded border border-border bg-bg-1 px-3 py-2.5">
       <div className="flex items-baseline justify-between gap-2">

@@ -45,6 +45,13 @@ import { SceloChatMarkdown } from "./SceloChatMarkdown";
 import { SimulateScenarioModal } from "./SimulateScenarioModal";
 import { SmartColumnDashboard } from "./SmartColumnDashboard";
 import { type ChatAction, StageChatPanel } from "./StageChatPanel";
+import {
+  capacityCheck,
+  estimateBytesPerRow,
+  estimateDatasetBytes,
+  fmtBytes,
+  rowBudget,
+} from "../../lib/machineCapacity";
 import { TableIdeasStrip, TablesShelf } from "./actuarialTableUi";
 import { useActuarialTableChat } from "./useActuarialTableChat";
 import { UploadIndicator, type UploadState, nextPaint, useMinVisible } from "./UploadIndicator";
@@ -143,9 +150,11 @@ import type { SampleKey } from "@scelo/core";
 
 export type { CellValue, ColumnMeta, ColumnType, Dataset, Filter, Row };
 
-/** How many extra datasets may be staged for combining. UI capacity, not
- *  dataset logic, so it stays with the component. */
-const MAX_STAGED_DATASETS = 2;
+// There is no cap on how many datasets can be staged for combining. The
+// old "active + 2 staged = 3" was a UI convenience; the real limit is the
+// machine — see lib/machineCapacity.ts, which refuses a stage only when the
+// renderer's heap would actually run out, and sizes the combined result to
+// what fits rather than to a fixed row count.
 export { applyFilters, coerceCsvCell, describeFilter, formatNumber, minMax, summariseDataset };
 
 function rowsFromCsvCells(header: string[], cells: string[][]): Row[] {
@@ -1275,7 +1284,7 @@ const SOFT_STAGE_FRAME = [
   "## SHARED VOCABULARY (these are TOOLS, not text, pick one and emit it)",
   "Banner ops (string match these exactly): trim whitespace · collapse internal whitespace · fix encoding artefacts · normalise missing markers · parse numeric strings · parse date strings · standardise booleans · replace sentinel numerics · impute missing values · cap outliers · merge case-only duplicates · rename to snake_case · drop near-empty columns · drop constant columns · drop duplicate rows.",
   'Column ops (same family, scoped to ONE column — point the user at these by key): `coerce-numeric` (column) parses the numeric prefix of mixed cells in a number column ("6+" -> 6) and nulls what\'s left over — the fix for columns flagged with a `mixed` badge. `recode-value` (column, from, to) recodes one categorical label to another — the fix for typo categories like "Seperated" -> "Separated".',
-  "Combining datasets: up to 3 OFFLINE files can be loaded at once (the active dataset + 2 staged) and combined via the '+ combine data' toolbar button — smart append (schema-aligned row stacking, optional exact-duplicate drop) or key join (left / inner on a shared id-like column). When the user asks to merge / join / concatenate / stack / combine another file with this one, point them at that button; its review panel suggests a strategy and key per staged file with match evidence before applying.",
+  "Combining datasets: any number of OFFLINE files can be staged (limited only by this machine's memory) and combined via the '+ combine data' toolbar button — smart append (schema-aligned row stacking, optional exact-duplicate drop) or key join (left / inner on a shared id-like column). When the user asks to merge / join / concatenate / stack / combine another file with this one, point them at that button; its review panel suggests a strategy and key per staged file with match evidence before applying.",
   "",
   "Dataset-wide cleaning: when the user asks to run a banner op (drop duplicate ROWS, drop empty/constant columns, normalise missing markers, fix encoding, trim/collapse whitespace, parse numeric/date strings, standardise booleans, replace sentinel numerics, impute missing values, cap outliers, merge case-only duplicates, rename headers to snake_case), DO NOT just name it — EMIT a fenced `clean` block. The client runs the deterministic cleaning engine immediately and renders a real before/after card:",
   "```clean",
@@ -3049,20 +3058,19 @@ export function SoftDataWorkstation() {
         });
         return;
       }
-      if (stagedDatasets.length >= MAX_STAGED_DATASETS) {
-        setUploadState({
-          kind: "error",
-          message: "3 datasets loaded — combine or remove one first.",
-        });
-        return;
-      }
       setUploadOp("stage");
       setUploadState({ kind: "loading", name: file.name });
       try {
         const { dataset: staged, malformedRows } = await parseFileToDataset(file);
-        setStagedDatasets((prev) =>
-          prev.length >= MAX_STAGED_DATASETS ? prev : [...prev, staged],
-        );
+        // The only limit is the machine: refuse when holding this file (plus
+        // the working copy a combine needs) would run the renderer's heap
+        // out, and say so in bytes. No heap numbers → nothing refused.
+        const verdict = capacityCheck(estimateDatasetBytes(staged));
+        if (!verdict.ok) {
+          setUploadState({ kind: "error", message: verdict.message ?? "not enough memory" });
+          return;
+        }
+        setStagedDatasets((prev) => [...prev, staged]);
         setCombineSteps((prev) => [...prev, suggestCombine(dataset, staged).step]);
         setCombineOpen(true);
         setUploadState({ kind: "idle" });
@@ -3076,11 +3084,18 @@ export function SoftDataWorkstation() {
           });
         }
       } catch (err) {
-        const msg = err instanceof Error ? err.message : "Unknown error parsing file.";
+        // A parse that dies of memory is the machine's limit showing up
+        // uninvited — name it, so it doesn't read as a broken file.
+        const oom = err instanceof RangeError || /allocation|out of memory|heap/i.test(String(err));
+        const msg = oom
+          ? "This machine ran out of memory while reading that file — combine or remove some loaded data first, or load a smaller sample of it."
+          : err instanceof Error
+            ? err.message
+            : "Unknown error parsing file.";
         setUploadState({ kind: "error", message: msg });
       }
     },
-    [dataset, stagedDatasets, parseFileToDataset, setStagedDatasets],
+    [dataset, parseFileToDataset, setStagedDatasets],
   );
 
   const updateCombineStep = useCallback((index: number, step: CombineStep) => {
@@ -3121,7 +3136,15 @@ export function SoftDataWorkstation() {
     await nextPaint();
     const startedAt = performance.now();
     try {
-      const result = combineAll(dataset, others, DEFAULT_IMPORT_ROW_CAP);
+      // Size the result to what this machine can hold rather than a fixed
+      // row cap: the budget is heap headroom over the bytes-per-row of the
+      // inputs (Infinity when the platform exposes no heap numbers).
+      const bytesPerRow = Math.max(
+        estimateBytesPerRow(dataset),
+        ...others.map((o) => estimateBytesPerRow(o.dataset)),
+      );
+      const budget = rowBudget(bytesPerRow);
+      const result = combineAll(dataset, others, budget);
       commitDataset("combine datasets", result.dataset);
       setFilters([]);
       setStagedDatasets([]);
@@ -3129,7 +3152,7 @@ export function SoftDataWorkstation() {
       setCombineOpen(false);
       const stepLines = result.stats.map((s, i) => describeCombineStat(s, others[i].dataset.name));
       const truncNote = result.truncated
-        ? ` Result truncated to the first ${DEFAULT_IMPORT_ROW_CAP.toLocaleString()} of ${result.totalRows.toLocaleString()} rows (import row cap).`
+        ? ` Result truncated to the first ${result.dataset.rows.length.toLocaleString()} of ${result.totalRows.toLocaleString()} rows — that is what this machine's memory can hold (about ${fmtBytes(bytesPerRow)} per row).`
         : "";
       setImportNotice({
         dataset: result.dataset.name,
@@ -3216,18 +3239,12 @@ export function SoftDataWorkstation() {
             <button
               type="button"
               onClick={() => setCombineModalOpen(true)}
-              disabled={
-                uploadState.kind === "loading" || stagedDatasets.length >= MAX_STAGED_DATASETS
-              }
-              title={
-                stagedDatasets.length >= MAX_STAGED_DATASETS
-                  ? "3 datasets loaded — combine or remove one first"
-                  : "Stage another CSV / Parquet file to combine with the active dataset (max 3 total)"
-              }
+              disabled={uploadState.kind === "loading"}
+              title="Stage another CSV / Parquet file to combine with the active dataset — as many as this machine's memory can hold"
               className="rounded border border-border bg-bg-2 px-2 py-1 font-mono text-[11px] text-fg-mute hover:border-primary hover:text-primary disabled:cursor-not-allowed disabled:opacity-50"
             >
               + combine data
-              {stagedDatasets.length > 0 ? ` (${stagedDatasets.length + 1}/3)` : ""}
+              {stagedDatasets.length > 0 ? ` (${stagedDatasets.length + 1} loaded)` : ""}
             </button>
           )}
           <button
@@ -4136,7 +4153,9 @@ function CombineBanner({
   // preview runs against the MATERIALISED result of the previous step —
   // previewing file 2 against the original dataset would report the wrong
   // result size (and wrong duplicate counts) whenever file 1 changes the
-  // data. Bounded work: at most two staged files → one intermediate build.
+  // data. Work grows with the number of staged files (one intermediate build
+  // per step) — the number of files is unbounded now, so a very long chain
+  // will take a moment; the overlay covers it.
   const previews = useMemo(() => {
     let current = base;
     let currentLabel = "current data";
@@ -4378,7 +4397,7 @@ function CombineBanner({
             </button>
             <div className="flex-1" />
             <span className="font-mono text-[10px] text-fg-dim">
-              {staged.length + 1} of 3 datasets loaded
+              {staged.length + 1} datasets loaded
             </span>
           </div>
         </div>
