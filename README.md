@@ -77,7 +77,7 @@ Caveats worth knowing before you download:
 | Path | What |
 |---|---|
 | [`apps/scelo-ide/`](apps/scelo-ide/) | The Electron desktop wrapper. Bundles Python 3.13 + R 4.3 + Pyright + R-LSP + ripgrep + git plumbing. Owns OS-touching surfaces (file I/O, exec, terminal, dataset downloads, OS keychain, auto-update). |
-| [`apps/swarm/`](apps/swarm/) | The swarm — a Bun + React decision-support cockpit: a stratified 192-agent council + 1000-agent society simulator over a WMTR forecast. Scelo's "Convene council" / "simulate from scenario" call its API (:3010) and the swarm panel embeds its UI (:5190). Not bundled into the installer yet — `bun run dev:swarm` starts it. |
+| [`apps/swarm/`](apps/swarm/) | The swarm — a Bun + React decision-support cockpit: a stratified 192-agent council + 1000-agent society simulator over a WMTR forecast. Scelo's "Convene council" / "simulate from scenario" call its API and the swarm panel embeds its UI. **Bundled into Scelo IDE**: the installer ships it as a compiled server + built client and the IDE starts it with the app (loopback :3010) and stops it on quit; `bun run dev:swarm` remains the dev pair. |
 | [`apps/web/`](apps/web/) | The React + Vite renderer. Workspace shell (Monaco editor + file tree + xterm terminal + sidebar panels: files, search, outline, git, problems, tests), the Scelo brain layer (soft → tools → hard workstations), the workspace AI panel, the welcome view, the swarm route. |
 | [`LICENSE`](LICENSE) | Scelo IDE Source-Available License v1.1. See [License](#license). |
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | How to file bugs, propose changes, set up locally, the commit / PR conventions. |

@@ -1,9 +1,14 @@
 # SWARM COUNCIL
 
 Part of [Scelo](../../README.md) — this is `apps/swarm`, the swarm the IDE's
-Hard Data workstation convenes and the **swarm** panel embeds. It runs as its
-own Bun + Vite pair (api **:3010**, ui **:5190**) and is not bundled into the
-installer; from the repo root, `bun run dev:swarm` starts it on any OS.
+Hard Data workstation convenes and the **swarm** panel embeds. **Scelo IDE
+bundles it**: `apps/scelo-ide/scripts/bundle-swarm.sh` compiles the server to a
+single executable (`bun build --compile`) and builds the client, and the IDE's
+main process (`apps/scelo-ide/src/swarm.ts`) starts it with the app on
+loopback (:3010, serving API and UI on one origin, data under the user's
+app-data dir) and stops it on quit. For development it still runs as its own
+Bun + Vite pair (api **:3010**, ui **:5190**): from the repo root,
+`bun run dev:swarm` starts it on any OS, and a running IDE adopts it.
 
 A decision-support cockpit. The professor inputs a finance / investment scenario, two simulated populations deliberate, and the system surfaces multi-perspective input — consensus, dissent, and reasoning. **The system does not make decisions. It surfaces inputs so the professor can decide.**
 
@@ -44,6 +49,16 @@ Production build:
 ```bash
 bun run build                    # outputs to dist/
 ```
+
+## Environment (server)
+
+| Variable | Meaning | Default |
+| --- | --- | --- |
+| `PORT` | API port | `3010` |
+| `HOST` | Interface to bind (the IDE sets `127.0.0.1`) | Bun default |
+| `SWARM_DATA_DIR` | Writable dir for `swarm.db` and the canon stub (the IDE sets `<userData>/swarm`) | `apps/swarm/data` from a checkout; `./data` when compiled |
+| `SWARM_STATIC_DIR` | Built client to serve on the same origin (the IDE sets `<resources>/swarm/ui`) | unset → API only (Vite serves the UI in dev) |
+| `OLLAMA_HOST` | Ollama base URL | `http://localhost:11434` |
 
 ## Requirements
 

@@ -17,6 +17,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { SceloLogo } from "../components/Scelo/SceloLogo";
 import { SwarmLiveDot } from "../components/SwarmLiveDot";
 import { SwarmNavLink, useSwarmProbe } from "../components/SwarmStatus";
+import { swarmApiLabel, swarmIsBundled } from "../lib/swarmConfig";
 import ToastTray from "../components/workspace/ToastTray";
 import { SAMPLE_WORKSPACES, type SampleWorkspaceSpec } from "../lib/sampleWorkspaces";
 import { type WorkspaceRecord, isDesktopIDE } from "../lib/sceloIDE";
@@ -179,8 +180,10 @@ export default function Welcome() {
               }
               hint={
                 swarmProbe === "up"
-                  ? "The council deliberation UI — server is live on :3010."
-                  : "Stratified-persona councils on your results. Server not detected on :3010 — the view shows how to start it."
+                  ? `The council deliberation UI — server is live on ${swarmApiLabel()}.`
+                  : swarmIsBundled()
+                    ? `Stratified-persona councils on your results. The bundled swarm server is starting on ${swarmApiLabel()} — the view shows its status.`
+                    : `Stratified-persona councils on your results. Server not detected on ${swarmApiLabel()} — the view shows how to start it.`
               }
               onClick={() => navigate("/swarm")}
             />

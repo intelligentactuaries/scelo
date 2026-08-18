@@ -154,8 +154,7 @@ export function clearChatLog(): void {
 
 // ── swarm merge ───────────────────────────────────────────────────────────
 
-/** Same origin convention as councilClient / SimulateScenarioModal. */
-const SWARM_BASE = "http://localhost:3010";
+import { swarmApiUrl } from "../../lib/swarmConfig";
 
 type SwarmLogRow = {
   id: string;
@@ -171,7 +170,7 @@ type SwarmLogRow = {
  *  showing Scelo's own. */
 export async function fetchSwarmChatLog(signal?: AbortSignal): Promise<ChatLogEntry[]> {
   try {
-    const res = await fetch(`${SWARM_BASE}/api/chat-log?limit=2000`, { signal });
+    const res = await fetch(`${swarmApiUrl()}/api/chat-log?limit=2000`, { signal });
     if (!res.ok) return [];
     const body = (await res.json()) as { entries?: SwarmLogRow[] };
     return (body.entries ?? []).map((r) => ({

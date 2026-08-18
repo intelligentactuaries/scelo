@@ -28,7 +28,7 @@
     "web:online": "bun run --cwd apps/web build && bun run --cwd apps/web-online start",
     "build": "bun run --cwd apps/scelo-ide build",
     "check": "bun run --cwd apps/web check && bun run --cwd apps/scelo-ide build:main && bun run --cwd apps/swarm typecheck",
-    "test": "bun run --cwd apps/web test && bun run --cwd apps/swarm test",
+    "test": "bun run --cwd apps/web test && bun run --cwd apps/swarm test && bun run --cwd apps/scelo-ide test",
     "ide:dist:linux": "bun run --cwd apps/scelo-ide dist:linux",
     "ide:dist:mac": "bun run --cwd apps/scelo-ide dist:mac",
     "ide:dist:win": "bun run --cwd apps/scelo-ide dist:win"

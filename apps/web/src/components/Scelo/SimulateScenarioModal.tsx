@@ -10,11 +10,10 @@
 
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { swarmStartCommand } from "../workspace/SwarmPanel";
 import { EditableNumber } from "./EditableNumber";
 import type { CellValue, Dataset, Row } from "./SoftDataWorkstation";
 
-const SWARM_BASE = "http://localhost:3010";
+import { swarmApiLabel, swarmApiUrl, swarmStartHint } from "../../lib/swarmConfig";
 
 // Augment serialises EVERY dataset row into a single JSON request body.
 // Past ~100k rows that stops being viable: a default Bun server severs
@@ -54,8 +53,8 @@ export function describeNetworkFailure(requestBytes: number): SwarmFailure {
       ? ` Note: the request body was ~${Math.round(mb)} MB — a default Bun server severs bodies over ~128 MB, which surfaces as this same network error; reduce rows first.`
       : "";
   return {
-    message: "swarm server unreachable at :3010 — is it running?",
-    hint: `Start it from a Scelo checkout (it lives in apps/swarm, not in the installer): \`${swarmStartCommand()}\` — it listens on 3010 by default. See docs: swarm/running.${sizeNote}`,
+    message: `swarm server unreachable at ${swarmApiLabel()} — is it running?`,
+    hint: `${swarmStartHint()}${sizeNote}`,
   };
 }
 
@@ -200,7 +199,7 @@ export function SimulateScenarioModal({
     const body = JSON.stringify({ ...(payload as object), stream: true });
     let r: Response;
     try {
-      r = await fetch(`${SWARM_BASE}${endpoint}`, {
+      r = await fetch(`${swarmApiUrl()}${endpoint}`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body,
@@ -361,7 +360,7 @@ export function SimulateScenarioModal({
         role="presentation"
       >
         <div className="mb-3 flex items-baseline justify-between">
-          <h2 className="text-base font-medium text-fg">simulate from scenario · swarm @ :3010</h2>
+          <h2 className="text-base font-medium text-fg">simulate from scenario · swarm @ {swarmApiLabel()}</h2>
           <button
             type="button"
             onClick={onClose}

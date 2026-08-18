@@ -9,7 +9,7 @@
 
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { swarmApiUrl } from "./Scelo/forecast/councilClient";
+import { swarmApiLabel, swarmApiUrl } from "../lib/swarmConfig";
 import { SwarmLiveDot } from "./SwarmLiveDot";
 
 export type SwarmProbe = "probing" | "up" | "down";
@@ -55,8 +55,8 @@ export function SwarmNavLink({ className }: { className?: string }) {
       className={`ia-btn ia-btn-sm ia-btn-ghost inline-flex items-center gap-1.5 ${className ?? ""}`}
       title={
         probe === "up"
-          ? "Swarm server is live on :3010 — open the deliberation view"
-          : "Open the Swarm view (server not detected on :3010 — it shows start instructions)"
+          ? `Swarm server is live on ${swarmApiLabel()} — open the deliberation view`
+          : `Open the Swarm view (server not detected on ${swarmApiLabel()} — it shows its status)`
       }
     >
       <SwarmLiveDot probe={probe} className="text-[10px]" />
