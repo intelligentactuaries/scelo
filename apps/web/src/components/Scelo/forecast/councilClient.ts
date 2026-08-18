@@ -28,17 +28,12 @@ export type CouncilSynthesis = {
   blurb: string;
 };
 
-const DEFAULT_SWARM_URL = "http://localhost:3010";
-
-// Exported so the council CTA can probe the SAME base URL the calls will
-// hit — including the ?swarmUrl= override — instead of hardcoding its own.
-export function swarmApiUrl(): string {
-  if (typeof window === "undefined") return DEFAULT_SWARM_URL;
-  // Allow the user to override at runtime via a URL param for staging /
-  // demo flows. e.g. `?swarmUrl=https://swarms.intelligentactuaries.com`.
-  const sp = new URLSearchParams(window.location.search);
-  return sp.get("swarmUrl") ?? DEFAULT_SWARM_URL;
-}
+// The swarm's API base is decided in ONE place (lib/swarmConfig.ts): the
+// bundled, supervised server inside the IDE, or the dev pair / ?swarmUrl=
+// override in a browser. Re-exported so existing callers keep importing it
+// from here.
+import { swarmApiUrl } from "../../../lib/swarmConfig";
+export { swarmApiUrl };
 
 export interface ConveneOpts {
   /** Scenario text passed to the swarm. Scelo synthesises this from

@@ -37,6 +37,7 @@ import {
   shell,
 } from "electron";
 import log from "electron-log/main";
+import { SwarmSupervisor } from "./swarm";
 import { autoUpdater } from "electron-updater";
 import {
   type WorkspaceUIState,
@@ -628,6 +629,33 @@ function buildMenu(): void {
 
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
+
+// ─── Swarm (council + society simulator) — starts with the app ──────────
+//
+// See ./swarm.ts. Created here (module scope) so preload's synchronous
+// `endpoints` query has an answer from the first render; started from
+// app.whenReady() BEFORE the window is created so the port is decided by
+// the time the renderer asks; stopped on quit.
+const swarm = new SwarmSupervisor({
+  resourceDir: resourceDir(),
+  // Unpackaged: __dirname is apps/scelo-ide/dist → repo root is three up.
+  repoRoot: app.isPackaged ? null : join(__dirname, "..", "..", ".."),
+  userDataDir: app.getPath("userData"),
+  isPackaged: app.isPackaged,
+  isWin,
+  log,
+});
+
+ipcMain.on("scelo:swarm:endpoints", (event) => {
+  event.returnValue = swarm.endpoints();
+});
+ipcMain.handle("scelo:swarm:status", () => swarm.status());
+ipcMain.handle("scelo:swarm:restart", () => swarm.restart());
+ipcMain.handle("scelo:swarm:openLogs", () => {
+  const st = swarm.status();
+  if (st.logFile && existsSync(st.logFile)) return shell.openPath(st.logFile).then(() => ({ ok: true }));
+  return { ok: false };
+});
 
 // ─── IPC: bundled-runtime exec ──────────────────────────────────────────
 //
@@ -3025,6 +3053,16 @@ ipcMain.handle("scelo:lsp:send", (_event, lang: LspLang, message: unknown) => {
 
 // Graceful shutdown on app quit so we don't leave orphan LSP processes.
 app.on("before-quit", () => _stopLsp());
+// …nor an orphan swarm server. SIGTERM, SIGKILL after 3 s (see swarm.ts).
+let _swarmStopping = false;
+app.on("before-quit", (e) => {
+  if (_swarmStopping) return;
+  const st = swarm.status();
+  if (!st.managed || st.pid === null) return;
+  _swarmStopping = true;
+  e.preventDefault();
+  void swarm.stop().finally(() => app.quit());
+});
 
 // ─── Bundled developer tools ───────────────────────────────────────────
 //
@@ -3620,8 +3658,18 @@ function maybeScheduleUpdateCheck(): void {
 
 // ─── App lifecycle ──────────────────────────────────────────────────────
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   registerSceloProtocol();
+  // Decide the swarm's endpoints (adopt a running dev pair, or spawn the
+  // bundled server on a free loopback port) BEFORE the window exists, so
+  // the renderer's synchronous endpoints() query is already right. This
+  // resolves as soon as the port is chosen — it does not wait for the
+  // server to be healthy.
+  try {
+    await swarm.start();
+  } catch (e) {
+    log.warn("swarm: start failed", e);
+  }
   runStartupMigrations(
     { userDataDir: app.getPath("userData"), log },
     {

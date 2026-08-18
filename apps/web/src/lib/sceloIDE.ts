@@ -223,6 +223,30 @@ interface UpdaterBridge {
 
 export type LspLang = "python" | "r";
 
+/** The swarm supervisor in the main process (apps/scelo-ide/src/swarm.ts):
+ *  the swarm server starts with the app and stops with it. `endpoints` is
+ *  synchronous — decided before this window existed. */
+export interface SwarmStatus {
+  state: "starting" | "running" | "external" | "stopped" | "error";
+  url: string;
+  apiUrl: string;
+  port: number;
+  managed: boolean;
+  pid: number | null;
+  error: string | null;
+  logTail: string;
+  source: "bundled" | "dev-source" | "external" | "none";
+  logFile: string | null;
+  dataDir: string | null;
+}
+
+interface SwarmBridge {
+  endpoints(): { ui: string; api: string };
+  status(): Promise<SwarmStatus>;
+  restart(): Promise<SwarmStatus>;
+  openLogs(): Promise<{ ok: boolean }>;
+}
+
 interface LspBridge {
   start(lang: LspLang): Promise<{ ok: boolean; error?: string }>;
   stop(lang?: LspLang): Promise<{ ok: boolean }>;
@@ -360,6 +384,8 @@ interface SceloBridge {
   fs: FsBridge;
   updater: UpdaterBridge;
   lsp: LspBridge;
+  /** Optional: older preloads (pre-swarm-bundle) don't expose it. */
+  swarm?: SwarmBridge;
   data: DataBridge;
   tools: ToolsBridge;
 }

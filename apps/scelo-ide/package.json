@@ -13,13 +13,15 @@
   "scripts": {
     "build:renderer": "bun run --cwd ../web build && node -e \"const fs=require('fs');fs.rmSync('resources/renderer',{recursive:true,force:true});fs.cpSync('../web/dist','resources/renderer',{recursive:true})\"",
     "build:main": "tsc -p tsconfig.json",
-    "build": "bun run build:renderer && bun run build:main",
+    "build": "bun run build:renderer && bun run build:main && bun run bundle:swarm",
     "bundle:runtime": "bash scripts/bundle-runtimes.sh",
+    "bundle:swarm": "bash scripts/bundle-swarm.sh",
     "dev": "bun run build:main && electron .",
     "dist:linux": "bun run build && electron-builder --linux AppImage deb",
     "dist:mac": "bun run build && electron-builder --mac dmg",
     "dist:win": "bun run build && electron-builder --win nsis",
-    "smoke:pty": "node --experimental-strip-types scripts/smoke-pty.ts"
+    "smoke:pty": "node --experimental-strip-types scripts/smoke-pty.ts",
+    "test": "bun test src"
   },
   "dependencies": {
     "@homebridge/node-pty-prebuilt-multiarch": "^0.13.1",

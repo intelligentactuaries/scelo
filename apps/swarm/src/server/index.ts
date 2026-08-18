@@ -39,6 +39,7 @@ import type { CanonWork, SimulationAgentResult } from '../shared/types';
 import { sampleSAPopulation } from './agents/saPopulation';
 import { runSimulation, type SimulationProgress } from './agents/simulation';
 import { findMember, listInterviews, readInterview, streamMemberChat } from './memberChat';
+import { bindHost, dataDir, staticDir } from './paths';
 import { aggregateMacro, SA_MACRO_PROVENANCE } from './macroMap';
 import { fetchReferenceBundle, formatReferenceBlock, type ReferenceBundle } from './refdata';
 
@@ -1300,8 +1301,58 @@ await router.init();
 const canonInit = await initCanon();
 console.log(`[swarm-council] canon: ${canonInit.source} (${canonInit.count} works)`);
 
+// Built client to serve on this origin (bundled in the Scelo IDE). Null in
+// dev, where Vite serves it on :5190 and proxies /api here.
+const STATIC_DIR = staticDir();
+const MIME: Record<string, string> = {
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8',
+  '.mjs': 'text/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.svg': 'image/svg+xml',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
+  '.ico': 'image/x-icon',
+  '.woff': 'font/woff',
+  '.woff2': 'font/woff2',
+  '.ttf': 'font/ttf',
+  '.map': 'application/json',
+  '.txt': 'text/plain; charset=utf-8',
+  '.webmanifest': 'application/manifest+json',
+};
+
+async function serveStatic(pathname: string): Promise<Response | null> {
+  if (!STATIC_DIR) return null;
+  // Path traversal guard: normalise and refuse anything that escapes the dir.
+  const rel = decodeURIComponent(pathname).replace(/^\/+/, '');
+  if (rel.includes('..')) return null;
+  const tryFile = async (p: string): Promise<Response | null> => {
+    const f = Bun.file(p);
+    if (!(await f.exists())) return null;
+    const ext = p.slice(p.lastIndexOf('.')).toLowerCase();
+    const isAsset = /\/assets\//.test(p);
+    return new Response(f, {
+      headers: {
+        'content-type': MIME[ext] ?? 'application/octet-stream',
+        // Vite hashes asset filenames, so they can be cached hard; index.html
+        // must not be, or a new build would keep serving old chunks.
+        'cache-control': isAsset ? 'public, max-age=31536000, immutable' : 'no-cache',
+      },
+    });
+  };
+  const direct = rel ? await tryFile(`${STATIC_DIR}/${rel}`) : null;
+  if (direct) return direct;
+  // SPA fallback — the client owns its routes and query params (?runId=…).
+  return tryFile(`${STATIC_DIR}/index.html`);
+}
+
 const server = Bun.serve({
   port: PORT,
+  hostname: bindHost(),
   // Bun's default idleTimeout is 10s, which kills any response that goes
   // quiet — observed in the wild on SSE streams whose next event (an LLM
   // call) took longer than that. 255 is the maximum Bun accepts.
@@ -1341,12 +1392,22 @@ const server = Bun.serve({
       return new Response(resp.body, { status: resp.status, headers });
     }
 
+    if (req.method === 'GET' && !url.pathname.startsWith('/api/')) {
+      const staticResp = await serveStatic(url.pathname);
+      if (staticResp) return staticResp;
+    }
     return new Response('not found', { status: 404 });
   },
 });
 
 const info = router.info();
-console.log(`[swarm-council] api on http://localhost:${server.port}`);
+console.log(`[swarm-council] api on http://${bindHost() ?? 'localhost'}:${server.port}`);
+console.log(`[swarm-council] data dir: ${dataDir()}`);
+console.log(
+  STATIC_DIR
+    ? `[swarm-council] serving client from ${STATIC_DIR} on the same origin`
+    : '[swarm-council] api only (client served by vite in dev)',
+);
 console.log(
   `[swarm-council] ollama models: ${info.ollamaModels.length} (selected: ${info.ollamaSelected ?? 'none'})`,
 );

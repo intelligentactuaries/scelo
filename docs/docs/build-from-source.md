@@ -77,13 +77,17 @@ product name **Scelo IDE**).
     platforms, build each on its own OS (or in CI). End users on Windows/macOS can
     also use the [finish-on-your-OS](installation/windows-macos.md) path.
 
-## Run the swarm
+## The swarm
 
 The swarm lives in this repo (`apps/swarm`) and is installed by the root
-`bun install`, but it is its own server, not bundled into the installer:
+`bun install`. `bun run --cwd apps/scelo-ide build` also runs
+`bundle:swarm`, which compiles the swarm server to a single executable and
+builds its client into `apps/scelo-ide/resources/swarm/` — the IDE starts that
+with the app. To hack on the swarm itself run the dev pair instead:
 
 ```bash
 bun run dev:swarm
 ```
 
-See [Running the swarm](swarm/running.md).
+(the IDE adopts a running dev pair rather than starting its own). See
+[Running the swarm](swarm/running.md).

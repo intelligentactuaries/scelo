@@ -40,6 +40,13 @@ extraResources:
   - from: resources/icons
     to: icons
     filter: ["**/*"]
+  # The swarm (council + society simulator) — a `bun build --compile`
+  # server executable plus its built client, produced by
+  # scripts/bundle-swarm.sh. The main process starts it with the app and
+  # stops it on quit; the renderer's swarm panel loads it on loopback.
+  - from: resources/swarm
+    to: swarm
+    filter: ["**/*"]
 
 # The main process .js + node_modules. We keep dependencies minimal — most
 # code is in the renderer (apps/web) and the bundled runtimes.

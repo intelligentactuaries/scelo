@@ -1,10 +1,10 @@
 import { Database } from 'bun:sqlite';
 import { mkdirSync } from 'node:fs';
-import { dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
+import { dataDir } from './paths';
 
-const DB_PATH = fileURLToPath(new URL('../../data/swarm.db', import.meta.url));
-mkdirSync(dirname(DB_PATH), { recursive: true });
+const DB_PATH = join(dataDir(), 'swarm.db');
+mkdirSync(dataDir(), { recursive: true });
 
 export const db = new Database(DB_PATH, { create: true });
 db.exec('PRAGMA journal_mode = WAL;');

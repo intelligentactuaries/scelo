@@ -6,7 +6,7 @@
 //   1. SwarmPanel updates the iframe src to the run-specific URL.
 //   2. The workspace shell flips its sidebar to the swarm tab.
 
-const SWARM_URL = "http://localhost:5190";
+import { swarmUiUrl } from "./swarmConfig";
 
 export interface OpenInSwarmRequest {
   /** Optional run id. When absent the panel loads the swarm root. */
@@ -19,7 +19,8 @@ const listeners = new Set<Listener>();
 let lastRequest: OpenInSwarmRequest | null = null;
 
 export function urlFor(req: OpenInSwarmRequest): string {
-  return req.runId ? `${SWARM_URL}/?runId=${req.runId}` : SWARM_URL;
+  const base = swarmUiUrl();
+  return req.runId ? `${base}/?runId=${req.runId}` : base;
 }
 
 export function getLastSwarmRequest(): OpenInSwarmRequest | null {

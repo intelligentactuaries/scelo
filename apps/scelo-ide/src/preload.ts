@@ -58,6 +58,20 @@ interface SecretsStatus {
   backend: string;
 }
 
+interface SwarmStatus {
+  state: "starting" | "running" | "external" | "stopped" | "error";
+  url: string;
+  apiUrl: string;
+  port: number;
+  managed: boolean;
+  pid: number | null;
+  error: string | null;
+  logTail: string;
+  source: "bundled" | "dev-source" | "external" | "none";
+  logFile: string | null;
+  dataDir: string | null;
+}
+
 interface LlmChatRequest {
   provider: string;
   apiKey?: string;
@@ -349,6 +363,15 @@ contextBridge.exposeInMainWorld("scelo", {
   tools: {
     ripgrepPath: (): Promise<{ path: string | null }> =>
       ipcRenderer.invoke("scelo:tools:ripgrepPath"),
+  },
+  swarm: {
+    // Synchronous on purpose: the swarm panel, the council client and the
+    // chat log all need the base URL at module-evaluation time, and the main
+    // process decided it before this window was created.
+    endpoints: (): { ui: string; api: string } => ipcRenderer.sendSync("scelo:swarm:endpoints"),
+    status: (): Promise<SwarmStatus> => ipcRenderer.invoke("scelo:swarm:status"),
+    restart: (): Promise<SwarmStatus> => ipcRenderer.invoke("scelo:swarm:restart"),
+    openLogs: (): Promise<{ ok: boolean }> => ipcRenderer.invoke("scelo:swarm:openLogs"),
   },
   lsp: {
     start: (lang: "python" | "r"): Promise<{ ok: boolean; error?: string }> =>

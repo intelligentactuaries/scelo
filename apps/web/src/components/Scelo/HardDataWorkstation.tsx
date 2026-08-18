@@ -43,6 +43,7 @@ import { emitWorkspaceFact } from "@/lib/workspaceFactsBus";
 import { SwarmLiveDot } from "../SwarmLiveDot";
 import { useSwarmProbe } from "../SwarmStatus";
 import { SWARM_DOCS_URL, swarmStartCommand } from "../workspace/SwarmPanel";
+import { swarmApiLabel, swarmIsBundled, swarmStartHint } from "../../lib/swarmConfig";
 import { ChatInputPill } from "./ChatInputPill";
 import { ClimateDataPanel, isClimateFamilyModel } from "./ClimateDataPanel";
 import { CouncilDeliberationOverlay } from "./CouncilDeliberationOverlay";
@@ -2686,13 +2687,23 @@ function CouncilAttachCta({ focused }: { focused: RunResult }) {
       </p>
       {probe === "down" && !synth && (
         <div className="mt-2 rounded border border-border bg-bg-2 p-2 text-[10px] text-fg-mute">
-          The swarm (apps/swarm in the Scelo repo, not bundled into the installer) isn't running —
-          nothing is listening on :3010. Start it from a Scelo checkout:
-          <code className="mt-1 block select-all rounded bg-bg-1 px-1.5 py-1 font-mono text-fg">
-            {swarmStartCommand()}
-          </code>
+          {swarmIsBundled() ? (
+            <>
+              The swarm isn't answering on {swarmApiLabel()} yet. It ships inside Scelo IDE and
+              starts with it — give it a moment; if it stays offline, open the swarm view for its
+              status, log and a restart button.
+            </>
+          ) : (
+            <>
+              The swarm (apps/swarm in the Scelo repo) isn't running — nothing is listening on{" "}
+              {swarmApiLabel()}. Start it from a Scelo checkout:
+              <code className="mt-1 block select-all rounded bg-bg-1 px-1.5 py-1 font-mono text-fg">
+                {swarmStartCommand()}
+              </code>
+            </>
+          )}
           <span className="mt-1 block text-fg-dim">
-            It listens on 3010 by default. This panel re-probes every 5 seconds.{" "}
+            This panel re-probes every 5 seconds.{" "}
             <a
               href={SWARM_DOCS_URL}
               target="_blank"
@@ -2814,12 +2825,12 @@ function CouncilAttachCta({ focused }: { focused: RunResult }) {
       )}
       {error && (
         <div className="mt-1.5 text-[10px] text-error">
-          {/failed to fetch/i.test(error) ? "swarm server unreachable at :3010" : error}
+          {/failed to fetch/i.test(error) ? `swarm server unreachable at ${swarmApiLabel()}` : error}
           <div className="text-[9px] text-fg-dim mt-0.5">
             {/timed out/i.test(error)
               ? "A large council (192 agents + society) on a local model can take a long time. Try a smaller agent count, enable “Skip society pulse”, or point the swarm at a faster provider — the run may still be finishing server-side."
               : /failed to fetch/i.test(error)
-                ? `The swarm isn't running — start it from a Scelo checkout with \`${swarmStartCommand()}\` (it listens on 3010 by default).`
+                ? swarmStartHint()
                 : "The swarm server responded but the run failed — check the swarm app's own logs for the run error."}
           </div>
         </div>
