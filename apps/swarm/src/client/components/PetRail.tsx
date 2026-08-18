@@ -90,9 +90,12 @@ export function PetRail({
             className={`pet-item ${active ? 'is-active' : ''} ${p.id === 'canon' ? 'is-canon' : ''}`}
             onClick={() => onSelect(p.id)}
             aria-pressed={active}
-            // At rest the label is beside the icon and carries the name. Once
-            // a surface is chosen the labels go, so the title has to hold it.
-            title={active && !expanded ? `Open ${p.label}` : p.label}
+            // No `title`: the floating chip label already names the surface
+            // on hover, so the browser's own tooltip was the same text a
+            // second time, half a second later. Screen readers get the name
+            // from aria-label (the label span is clipped to 0 width when the
+            // rail is focused).
+            aria-label={active && !expanded ? `Open ${p.label}` : p.label}
           >
             <img className="pet-icon" data-pet={p.id} src={p.src} alt="" aria-hidden />
             {/* The active label wears the surface's own colour — it is the
