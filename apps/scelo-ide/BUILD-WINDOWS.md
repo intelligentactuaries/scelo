@@ -1,66 +1,77 @@
 # Building the Scelo IDE Windows installer (`.exe`)
 
-This produces the Windows NSIS installer (`Scelo IDE-<version>-x64.exe`) for the
-**exact same version** as the Linux `.deb` / `.AppImage`. It must be run **on a
-real Windows machine** (Windows 10/11, x64).
+Produces the Windows NSIS installer (`Scelo IDE-<version>-x64.exe`) for the
+**same version as the current Linux release**, and publishes it onto that same
+release. Must be run **on a real Windows machine** (Windows 10/11, x64).
+
+Nothing in this document names a version. Step 0 resolves it from the releases
+API, because Windows and Linux have drifted apart before (Windows sat on 0.1.2
+while Linux shipped 0.1.6) and a hard-coded version here is how that goes
+unnoticed.
 
 ## Why this can't be done on the Linux host
 
-The app itself cross-compiles fine on Linux, but electron-builder finishes an
-NSIS installer by *running the (32-bit) installer under Wine to generate the
-uninstaller*, which needs **32-bit Wine (`wine32:i386`)**. That host only has
-64-bit Wine, so the installer step fails. Building natively on Windows avoids
-Wine entirely.
+The app cross-compiles fine, but electron-builder finishes an NSIS installer by
+*running the (32-bit) installer under Wine to generate the uninstaller*, which
+needs **32-bit Wine (`wine32:i386`)**. The Linux host has only 64-bit Wine, so
+the step fails. Building natively on Windows avoids Wine entirely.
 
-## What "exactly identical version" means
+## What "the same version" means
 
-- **App code is identical**: build from the same git commit (the one that
-  contains this file). The renderer + main-process bundle are byte-for-byte the
-  same regardless of build OS.
+- **App code is identical**: build from the same git tag. The renderer and
+  main-process bundles do not depend on the build OS.
 - **The bundled Python/R runtime is OS-specific by design**: `resources/runtime`
   is git-ignored and staged per-platform by `scripts/bundle-runtimes.sh`. The
-  Linux build bundles Linux CPython/R; the Windows build bundles **Windows**
-  CPython/R. Versions are pinned (CPython 3.11.10, R 4.4.2), so this is
-  reproducible — it is the correct Windows equivalent, not a difference in the
-  app.
+  Linux build bundles Linux CPython/R, the Windows build bundles **Windows**
+  CPython/R. Versions are pinned (CPython 3.11.10, R 4.4.2), so this is the
+  correct Windows equivalent, not a difference in the app.
+- **The swarm is also staged per-platform** (see step 4). `bundle-swarm.sh`
+  cross-compiles the swarm server to `swarm-server.exe` for a Windows target.
 
-The version number comes from `apps/scelo-ide/package.json` → `version`
-(currently **0.1.3**). Don't change it unless you intend a new release.
+The version comes from `apps/scelo-ide/package.json` -> `version`, which the tag
+already carries. **Do not change it here**; bumping the version is part of
+cutting a release, not part of building for a second platform.
 
 ---
 
 ## Prerequisites (install once)
 
-1. **Git for Windows** — https://git-scm.com/download/win
-   (installs **Git Bash**, which is required for the runtime bundler script).
-2. **Bun for Windows** ≥ 1.1 — https://bun.sh (PowerShell: `irm bun.sh/install.ps1 | iex`).
-3. **Internet access** — the build downloads node deps, the Electron binary,
-   portable CPython, and the R installer.
-4. **~8 GB free disk** — the staged runtime is ~1.5 GB and the outputs are
-   ~700 MB each.
-5. **A compiler is usually NOT needed.** `@homebridge/node-pty-prebuilt-multiarch`
-   and `@vscode/ripgrep` ship Windows prebuilt binaries. Only if the native
-   rebuild step errors, install **Visual Studio 2022 Build Tools** with the
-   "Desktop development with C++" workload, then retry.
-6. **No Wine, no WSL** — this is a native Windows build.
+1. **Git for Windows** — <https://git-scm.com/download/win> (installs **Git
+   Bash**, which steps 3 and 4 both require).
+2. **Bun for Windows** >= 1.1 — <https://bun.sh> (PowerShell: `irm bun.sh/install.ps1 | iex`).
+3. **GitHub CLI** — <https://cli.github.com>, authenticated (`gh auth login`),
+   for step 7. A browser upload works as a fallback.
+4. **Internet access** — the build downloads node deps, Electron, portable
+   CPython and the R installer.
+5. **~8 GB free disk** — the staged runtime is ~1.5 GB and the output is ~1 GB.
+6. **A compiler is usually NOT needed.** `@homebridge/node-pty-prebuilt-multiarch`
+   and `@vscode/ripgrep` ship Windows prebuilts. Only if the native rebuild step
+   errors, install **Visual Studio 2022 Build Tools** with the "Desktop
+   development with C++" workload, then retry.
+7. **No Wine, no WSL.** This is a native Windows build.
 
 ---
 
 ## Steps
 
-Run these in **PowerShell** (or CMD) except where it says **Git Bash**.
+### 0. Resolve which version to build
 
-### 1. Get the exact code
+Read <https://api.github.com/repos/intelligentactuaries/scelo/releases> and take
+the newest **published** (not draft, not pre-release) release carrying a `.deb`
+or `.AppImage` asset. Its `tag_name` (e.g. `scelo-ide-v0.1.6`) is what you
+build. **Do not download the Linux artifacts**: a Windows installer is built
+from the same source, not from the Linux binary.
+
+### 1. Get that exact code
 
 ```powershell
-git clone git@github.com:intelligentactuaries/scelo.git
+git clone https://github.com/intelligentactuaries/scelo
 cd scelo
-git checkout main
-# For a guaranteed-identical build, pin the exact commit instead of the branch tip:
-#   git checkout <COMMIT_SHA>
-# (the SHA of the commit that added this BUILD-WINDOWS.md — see the chat/release notes)
-git rev-parse HEAD    # record this; it should match the Linux build's commit
+git checkout <TAG>          # from step 0
+git rev-parse HEAD          # record; should match the Linux build's commit
 ```
+
+Confirm `apps/scelo-ide/package.json` `version` matches the tag.
 
 ### 2. Install JS dependencies (repo root)
 
@@ -70,110 +81,163 @@ bun install
 
 ### 3. Stage the Windows Python + R runtime  — **run in Git Bash**
 
-The runtime is git-ignored and must be staged for Windows. `TARGET_OS=win` is
-auto-detected under Git Bash (MINGW), but set it explicitly to be safe:
-
 ```bash
 cd apps/scelo-ide
 TARGET_OS=win bun run bundle:runtime
 ```
 
-This downloads portable **CPython 3.11.10** (windows-msvc) + **R 4.4.2** (win)
-and installs the IA actuarial stack into `resources/runtime/`. It is idempotent
-(re-running skips already-staged, checksum-matched components).
-
-Verify it staged:
+Downloads portable **CPython 3.11.10** (windows-msvc) and **R 4.4.2** (win) and
+installs the IA actuarial stack into `resources/runtime/`. Idempotent
+(re-running skips already-staged, checksum-matched components). Verify:
 
 ```bash
 ls resources/runtime/python/python.exe
-ls resources/runtime/r/bin/x64/R.exe   # path may be r/bin/R.exe depending on the R layout
+ls resources/runtime/r/bin/x64/R.exe   # may be r/bin/R.exe depending on layout
 cat resources/runtime/manifest.json
 ```
 
-### 4. Build the installer
+Skipping this step produces an installer with a broken runtime, and nothing
+fails loudly until the app is running.
 
-```powershell
-cd apps\scelo-ide
+### 4. Build the installer — **also in Git Bash, not PowerShell**
+
+```bash
+cd apps/scelo-ide
 bun run dist:win
 ```
 
-`dist:win` runs `bun run build` (rebuilds the renderer + main) then
-`electron-builder --win nsis`. Output lands in `apps/scelo-ide/build/`:
+`dist:win` runs `bun run build` then `electron-builder --win nsis`.
 
-- **`Scelo IDE-0.1.3-x64.exe`** — the NSIS installer (this is the deliverable)
+> **Why Git Bash.** Since 0.1.6, `build` ends with `bundle:swarm`, which is
+> `bash scripts/bundle-swarm.sh`. From PowerShell that fails with
+> `bash: command not found` unless `C:\Program Files\Git\bin` happens to be on
+> PATH. Git Bash also gives `bundle-swarm.sh` the `MINGW*` uname it needs to
+> select the `bun-windows-x64` target and name the binary `swarm-server.exe`.
+>
+> If electron-builder itself misbehaves under Git Bash, split the two halves:
+>
+> ```
+> Git Bash:    bun run build
+> PowerShell:  cd apps\scelo-ide ; bunx electron-builder --win nsis
+> ```
+
+Output lands in `apps/scelo-ide/build/`:
+
+- **`Scelo IDE-<version>-x64.exe`** — the NSIS installer (the deliverable)
 - `win-unpacked/` — the unpacked app
-- `*.blockmap` / `latest.yml` — auto-update metadata
+- `*.blockmap` / `latest.yml` — auto-update metadata (see step 7 before
+  publishing `latest.yml`)
 
-*(Optional)* a portable zip too: `bunx electron-builder --win zip`.
+*(Optional)* a portable zip: `bunx electron-builder --win zip`.
 
 ---
 
-## Verify the result
+## 5. Verify the build
 
-1. `apps/scelo-ide/build/Scelo IDE-0.1.3-x64.exe` exists (~700 MB).
-2. Run it → the installer opens (you can choose the install directory) → it
-   installs and launches the **Welcome** screen.
-3. Confirm the **0.1.3** changes are present:
-   - Right-click anywhere in the app — the context menu has **no "Inspect
-     Element"** entry.
-   - **Soft Data** → load a table with gaps and outliers → ask the chat to
-     clean it: it imputes missing values and caps outliers, and the write-up
-     names the columns it touched instead of claiming a blanket clean.
-   - **Tools** → load the Synthetic claims sample → a **"why these models"**
-     bubble floats over the canvas naming the pick's evidence; removing any
-     model makes it disappear.
-   - **Hard Data** → run the reserving stack → the board-pack narrative's
-     Mack line shows a **sane CV (tens of %, not thousands)** and the
-     forest plot's axis brackets the reserve estimates readably.
-   - **Hard Data** → select a model → **Convene council** → the overlay is
-     the swarm-style persona BLOOM (mirrored crowd of coloured circles with
-     round pips and a labelled SOCIETY bar), not the old seat ring.
-   - Open any model's theory panel — display formulas render **without a
-     scrollbar pill** beside them (Windows-specific regression).
+1. `apps/scelo-ide/build/Scelo IDE-<version>-x64.exe` exists, roughly 1 GB
+   (0.1.2 was 937 MB before the swarm was bundled; the swarm adds ~100 MB).
+2. **The swarm was bundled** (this is what makes it a >= 0.1.6 build):
+   `build\win-unpacked\resources\swarm\swarm-server.exe` exists, and
+   `resources\swarm\ui\` is populated.
+3. Run the installer, let it install, and launch Scelo:
+   - the **Welcome** screen loads;
+   - the header **swarm** LED goes ● live on its own, with no second terminal
+     and no `bun run dev:swarm`;
+   - **Soft Data** loads a sample table and the grid scrolls.
+4. Skim the release notes for the tag you built and spot-check anything called
+   out there. (Deliberately not enumerated here: a per-version checklist in this
+   file goes stale the moment the next version ships.)
 
-4. Confirm the earlier features are still there (cumulative — these were new
-   in 0.1.0, not in this build):
-   - **Soft Data** → `load sample` → **Workspace demo** → the `◈ workspace`
-     toolbar button opens the decision-relevance preview.
-   - The **Sample workspaces** list on Welcome has **no "SOA exams" card**
-     (removed in 0.1.0).
-   - Open `/workspace` → the sidebar has a **`facts`** tab (the global-workspace
-     panel).
-   - **Tools** → add **Workspace bottleneck** (family `workspace`); **Hard Data**
-     → a result → **`◈ extract + validate`** renders the workspace card
-     (participation ratio, workspace-vs-PCA, swap consistency, selectivity).
+## 6. Rename to the release convention
+
+```powershell
+cd apps\scelo-ide\build
+copy "Scelo IDE-<version>-x64.exe" "Scelo-IDE-<version>-x64.exe"
+```
+
+electron-builder writes a **space**; GitHub converts it to a dot on upload,
+which is exactly how the stale `Scelo.IDE-0.1.2-x64.exe` asset got its name.
+Every Linux asset since 0.1.3 uses the hyphenated form, so match it. Leave the
+space-named original in place.
+
+## 7. Publish onto the existing release
+
+```powershell
+gh release upload <TAG> "Scelo-IDE-<version>-x64.exe" --repo intelligentactuaries/scelo
+```
+
+**Do not create a new tag or release.** Windows joins the release Linux already
+shipped from; the website resolves each platform independently and expects to
+find them together.
+
+> **Upload only the `.exe`.** Do **not** upload `latest.yml`. `electron-updater`
+> is wired into `src/main.ts` and `electron-builder.yml` publishes to this repo,
+> so shipping that file switches on Windows auto-update for the first time.
+> That is a deliberate product decision, not a side effect of a build. The
+> `.blockmap` is harmless but pointless without it.
+
+## 8. Prove it works for a signed-out visitor
+
+```powershell
+curl.exe -I -L "https://github.com/intelligentactuaries/scelo/releases/download/<TAG>/Scelo-IDE-<version>-x64.exe"
+```
+
+Expect `200` and `content-disposition: attachment`. **A 404 here means the
+download is broken for everyone who is not you**: check that
+`intelligentactuaries/scelo` is still public, because a signed-in browser will
+happily download from a private repo and hide the problem. See the
+`scelo-downloads` skill in the website repo.
+
+Nothing needs deploying afterwards. The site re-resolves installers live from
+the releases API in the visitor's browser, so the new Windows build appears
+within minutes; the committed fallback table refreshes on the next daily
+Action or deploy.
 
 ---
 
 ## Notes & troubleshooting
 
-- **Unsigned installer**: code-signing isn't configured, so Windows SmartScreen
-  will warn on first run — click **More info → Run anyway**. To sign, add a code
-  cert and `win.signtoolOptions` in `electron-builder.yml`.
-- **Native rebuild fails** (`@electron/rebuild` / node-gyp errors): install the
-  VS 2022 C++ Build Tools (step 5) and re-run `bun run dist:win`.
-- **`bash: command not found`** on step 3: run it from **Git Bash**, not
-  PowerShell (the bundler is a bash script).
-- **R or Python download fails**: re-run `TARGET_OS=win bun run bundle:runtime`
-  (idempotent); check the URLs in `scripts/bundle-runtimes.sh` are reachable.
-- **Empty/broken runtime in the app**: you skipped step 3 — `resources/runtime`
-  must be staged for `win` *before* `dist:win`.
+- **Unsigned installer**: code-signing isn't configured, so SmartScreen warns on
+  first run (**More info -> Run anyway**). To sign, add a code cert and
+  `win.signtoolOptions` in `electron-builder.yml`.
+- **`bash: command not found`** in step 3 or 4: you are in PowerShell. Use Git
+  Bash.
+- **Native rebuild fails** (`@electron/rebuild` / node-gyp): install the VS 2022
+  C++ Build Tools, re-run `bun run dist:win`.
+- **R or Python download fails**: re-run step 3, it is idempotent; check the URLs
+  in `scripts/bundle-runtimes.sh` are reachable.
+- **Empty or broken runtime in the app**: step 3 was skipped, or was run for the
+  wrong `TARGET_OS`.
+- **Swarm LED never lights** in the installed app: check
+  `resources\swarm\swarm-server.exe` shipped (step 5.2), then the log at
+  `%APPDATA%\Scelo IDE\logs\swarm.log`.
 
 ---
 
 ## One-shot prompt for an AI coding agent on Windows
 
-> You are on a Windows 10/11 x64 machine. Build the Scelo IDE Windows installer.
-> Prereqs: Git for Windows (Git Bash), Bun ≥ 1.1, internet, ~8 GB free disk.
-> Steps:
-> 1. `git clone git@github.com:intelligentactuaries/scelo.git`, `cd scelo`,
->    `git checkout main` (or the exact
->    commit SHA given to you), then `bun install`.
-> 2. In **Git Bash**: `cd apps/scelo-ide && TARGET_OS=win bun run bundle:runtime`.
+> You are on a Windows 10/11 x64 machine. Build and publish the Scelo IDE
+> Windows installer, matching the current Linux release. Follow
+> `apps/scelo-ide/BUILD-WINDOWS.md` in the repo; the summary is:
+>
+> 1. Resolve the newest published Linux release tag from
+>    `https://api.github.com/repos/intelligentactuaries/scelo/releases`. Do not
+>    download the Linux artifacts. Windows builds from source, not from them.
+> 2. `git clone https://github.com/intelligentactuaries/scelo`, `cd scelo`,
+>    `git checkout <TAG>`, `bun install`. Do not change `package.json` version.
+> 3. **In Git Bash**: `cd apps/scelo-ide && TARGET_OS=win bun run bundle:runtime`.
 >    Verify `resources/runtime/python/python.exe` and an `R.exe` exist.
-> 3. In PowerShell: `cd apps\scelo-ide && bun run dist:win`.
-> 4. Confirm `apps/scelo-ide/build/Scelo IDE-0.1.3-x64.exe` was produced, then
->    run it and check the Welcome screen loads and there is no "SOA exams" sample
->    card. Report the artifact path, its size, and the commit SHA you built from.
-> Do not change `package.json` `version`. Do not install Wine. If the native
-> rebuild step errors, install VS 2022 C++ Build Tools and retry.
+> 4. **In Git Bash** (not PowerShell, the build runs a bash script):
+>    `cd apps/scelo-ide && bun run dist:win`.
+> 5. Verify `build/Scelo IDE-<version>-x64.exe` (~1 GB) and
+>    `build/win-unpacked/resources/swarm/swarm-server.exe` both exist.
+> 6. Copy the artifact to the hyphenated name `Scelo-IDE-<version>-x64.exe`.
+> 7. `gh release upload <TAG> "Scelo-IDE-<version>-x64.exe" --repo intelligentactuaries/scelo`.
+>    Upload only the `.exe`; do NOT upload `latest.yml` (it would switch on
+>    Windows auto-update). Do NOT create a new tag or release.
+> 8. Verify anonymously with `curl.exe -I -L` on the public download URL: expect
+>    200 and `content-disposition: attachment`.
+>
+> Report the commit SHA, artifact path and size, whether `swarm-server.exe` was
+> bundled, and the verified download URL. Do not install Wine or WSL, and do not
+> touch the website repo.
