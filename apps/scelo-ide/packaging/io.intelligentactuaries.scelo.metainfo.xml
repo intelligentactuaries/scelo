@@ -90,6 +90,25 @@
     abandoned. Dates are the release publication dates on GitHub.
   -->
   <releases>
+    <release version="0.1.6" date="2026-08-20">
+      <description>
+        <p>
+          The agent swarm now ships inside Scelo. It starts when the app opens
+          and stops when it quits, so the 192-agent council and the society
+          simulator no longer need a checkout, a second terminal or a manual
+          server on port 3010. You can also interview any council or society
+          member about a position it recorded.
+        </p>
+        <p>
+          Soft Data gains actuarial tables, with an agent that suggests the
+          right one and a shared table vocabulary in every stage chat. Datasets
+          combined in one step are no longer capped, the machine's memory is
+          the only limit, the grid pans horizontally with two fingers, and the
+          column summary header no longer squashes its label. The life models
+          target lifelib 0.14.0 and modelx 0.32.0 and run the real models.
+        </p>
+      </description>
+    </release>
     <release version="0.1.5" date="2026-08-17">
       <description>
         <p>
