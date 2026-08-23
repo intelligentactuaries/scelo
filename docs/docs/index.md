@@ -46,6 +46,23 @@ scoped to each stage of the work. It runs **fully offline** once installed.
 - **Reproducible.** Every action you take can be exported as a runnable Python,
   R, or C++ script.
 
+## Prefer code to an app?
+
+The workbench's brain layer ships as two libraries — the same logic and
+the same numbers as the IDE, no installation of Scelo required:
+
+```bash
+pip install scelo
+```
+
+```r
+install.packages("scelo", repos = c("https://intelligentactuaries.com/r", getOption("repos")))
+```
+
+Both are documented in [Python & R libraries](libraries/index.md), from
+[install](libraries/install.md) to a
+[function-by-function reference](libraries/reference.md).
+
 ## How this manual is organised
 
 | Section | What's in it |
@@ -55,6 +72,7 @@ scoped to each stage of the work. It runs **fully offline** once installed.
 | [The workspace](workspace/index.md) | Editor, terminal, Git, search, command palette |
 | [The pipeline](pipeline/index.md) | Soft Data, Tools, Hard Data in depth |
 | [The swarm](swarm/index.md) | Council, society pulse, and simulation |
+| [Python & R libraries](libraries/index.md) | The brain layer as installable packages: `sc.` / `sc_` |
 | [AI providers](ai-providers.md) | Ollama and hosted providers |
 | [Chat](chat.md) | The scoped assistants throughout the app |
 | [Exporting](exporting.md) | Code export and the board-pack PDF |
