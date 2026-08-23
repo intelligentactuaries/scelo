@@ -3,7 +3,7 @@
 First release: the Scelo IDE brain layer as an R package.
 
 * Soft data: `sc_load`, `sc_profile`, `sc_describe`, `sc_tab`, `sc_suggest`, `sc_clean` (the IDE's 18 cleaning ops with their thresholds), `sc_combine`.
-* Life: `sc_life_table`, `sc_commutation`, `sc_factors`, `sc_premium`, `sc_ae`, `sc_model_points`, `sc_graduate`, `sc_lee_carter`, `sc_kaplan_meier`, `sc_exposure`, `sc_basicterm`, `sc_epv`.
+* Life: `sc_life_table`, `sc_commutation`, `sc_factors`, `sc_premium`, `sc_ae`, `sc_model_points`, `sc_graduate`, `sc_lee_carter`, `sc_kaplan_meier`, `sc_exposure`, `sc_basicterm` (with shock dials), `sc_scr_life`, `sc_csm`, `sc_lifelib_run`, `sc_epv`.
 * Reserving: `sc_triangle`, `sc_chain_ladder`, `sc_mack`, `sc_bf`, `sc_cape_cod`, `sc_bootstrap`, `sc_tail`, `sc_reserve`.
 * Finance: `sc_discount_curve`, `sc_smith_wilson`, `sc_nelson_siegel`, `sc_nss`, `sc_hull_white`, the Exam-FM helpers.
 * Risk: `sc_var`, `sc_tvar`, `sc_aggregate_loss` (Panjer / FFT / Monte Carlo), `sc_fit`, `sc_credibility`, `sc_aggregate_scr`, `sc_risk_margin`.

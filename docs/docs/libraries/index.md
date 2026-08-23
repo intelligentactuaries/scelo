@@ -50,7 +50,7 @@ and a client for the bundled swarm.
 | Stage | Python | R |
 |---|---|---|
 | Soft data | `load` `profile` `describe` `tab` `suggest` `clean` `combine` | `sc_load` `sc_profile` `sc_describe` `sc_tab` `sc_suggest` `sc_clean` `sc_combine` |
-| Life | `life_table` `commutation` `factors` `premium` `ae` `model_points` `graduate` `lee_carter` `kaplan_meier` `exposure` `basicterm` | the same with `sc_` |
+| Life | `life_table` `commutation` `factors` `premium` `ae` `model_points` `graduate` `lee_carter` `kaplan_meier` `exposure` `basicterm` `scr_life` `csm` `lifelib_run` | the same with `sc_` |
 | Reserving | `triangle` `chain_ladder` `mack` `bf` `cape_cod` `bootstrap` `tail` `reserve` | the same with `sc_` |
 | Finance | `discount_curve` `smith_wilson` `nelson_siegel` `hull_white` `pv` `irr` `annuity_certain` `duration` | the same with `sc_` |
 | Risk | `var` `tvar` `aggregate_loss` `fit` `credibility` `aggregate_scr` | the same with `sc_` |

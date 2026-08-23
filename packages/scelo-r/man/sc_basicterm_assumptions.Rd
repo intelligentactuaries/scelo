@@ -12,7 +12,14 @@ sc_basicterm_assumptions(
   expense_acq_pp = 100,
   expense_maint_pp_mth = 5,
   disc_rate = 0.03,
-  pricing_loading = 1.12
+  pricing_loading = 1.12,
+  mort_mult = 1,
+  lapse_mult = 1,
+  mass_lapse = 0,
+  expense_mult = 1,
+  expense_inflation = 0,
+  cat_add = 0,
+  premium_mult = 1
 )
 }
 \arguments{
@@ -27,6 +34,20 @@ sc_basicterm_assumptions(
 \item{disc_rate}{Annual discount rate.}
 
 \item{pricing_loading}{Loading on SA q / 12 when premiums are derived.}
+
+\item{mort_mult}{Multiplier on every qx (the mortality / longevity shocks).}
+
+\item{lapse_mult}{Multiplier on the annual lapse rate.}
+
+\item{mass_lapse}{Share of policies lapsing at once at the valuation date.}
+
+\item{expense_mult}{Multiplier on both expenses.}
+
+\item{expense_inflation}{Annual growth of the maintenance expense.}
+
+\item{cat_add}{Addition to qx in the first projection year (the CAT shock).}
+
+\item{premium_mult}{Multiplier on premiums.}
 }
 \value{
 A named list.

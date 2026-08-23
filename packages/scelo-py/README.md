@@ -89,6 +89,9 @@ sc.graduate(crude_qx, h=100)       # Whittaker–Henderson
 sc.lee_carter(rates_df)            # SVD fit + random-walk-with-drift forecast, 95 % interval
 sc.kaplan_meier(df)                # S(t), Greenwood SE, log-log bounds
 sc.basicterm(model_points)         # lifelib BasicTerm_ME monthly projection, pure numpy
+sc.scr_life(model_points)          # Solvency II life SCR: standard-formula shocks on that projection
+sc.csm(model_points, ra=0.05)      # IFRS 17 general-model CSM and its coverage-unit roll-forward
+sc.lifelib_run("basiclife", "BasicTerm_ME", model_points)   # the real lifelib model (pip install "scelo[life]")
 
 # ── reserving ────────────────────────────────────────────────────────────
 tri = sc.triangle(claims)          # origin × development, cumulative, from a long file
@@ -103,7 +106,7 @@ sc.fit(losses); sc.var(x, .995); sc.tvar(x, .995)
 sc.credibility(df, "group", "loss_ratio"); sc.aggregate_scr({"mortality": 100, "lapse": 200})
 
 # ── pricing & fairness ──────────────────────────────────────────────────
-m = sc.glm(df, "claims ~ C(region) + age", "poisson", offset="exposure")
+m = sc.glm(df, "claims ~ C(region) + age", "poisson", offset="exposure")   # base="first" for R / statsmodels reference levels
 m.relativities(); m.predict(new); sc.lift(y, m.fitted)
 sc.fairness(df, "y", "score", "group"); sc.fairness_audit(df, "score", "protected", ["age"])
 

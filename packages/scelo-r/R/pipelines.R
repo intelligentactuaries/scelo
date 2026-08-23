@@ -138,6 +138,7 @@ SC_CHEATSHEET <- paste(c(
   "        sc_suggest(df)              sc_clean(df)     sc_clean(df, \"all\")  sc_combine(a, b)",
   "TOOLS   life      sc_life_table()  sc_commutation(i = .04)  sc_factors(i = .04, n = 10)  sc_premium()",
   "                  sc_ae(df)  sc_ae_test(a, e)  sc_graduate(qx)  sc_lee_carter(df)  sc_kaplan_meier(df)  sc_basicterm(mp)",
+  "                  sc_scr_life(mp)  sc_csm(mp, ra = .05)  sc_lifelib_run(\"basiclife\", \"BasicTerm_ME\", mp)",
   "                  sc_epv(cf, x, i = .04)  sc_mx_to_qx(m)  sc_exposure(df, \"start\", \"end\")",
   "        reserving sc_triangle(df)  sc_chain_ladder(tri)  sc_mack(tri)  sc_bf(tri)  sc_bootstrap(tri)",
   "                  sc_reserve(\"claims.csv\")",

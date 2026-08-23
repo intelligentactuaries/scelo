@@ -252,6 +252,9 @@ sc_lifelib_run <- function(library = "basiclife", model = "BasicTerm_ME", model_
     mx <- py$mx
     pd <- reticulate::import("pandas", convert = FALSE)
     lib_dir <- .sc_library_dir(lifelib, library)
+    # re-reading a model renames the old one with a warning; close it instead
+    existing <- reticulate::py_to_r(reticulate::import_builtins()$list(mx$get_models()$values()))
+    for (old in existing) if (identical(as.character(reticulate::py_to_r(reticulate::py_get_attr(old, "name"))), model)) old$close()
     m <- mx$read_model(file.path(lib_dir, model))
     P <- reticulate::py_get_attr(m, space)
     meta <- list(library = library, model = model, lifelib = py$version,

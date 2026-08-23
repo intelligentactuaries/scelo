@@ -224,3 +224,16 @@ test_that("loss ratio and burning cost", {
   expect_equal(sc_burning_cost(data.frame(loss = c(100, 200), exposure = c(10, 10))), 15)
   expect_equal(sc_burning_cost(data.frame(loss = c(100, 200), exposure = c(10, 10), year = c(2020, 2021)), trend = 0.1, years = "year"), (110 + 200) / 20)
 })
+
+test_that("sc_glm base levels: frequent, first, given", {
+  g <- golden()$glm
+  motor <- split_df(g$data)
+  m_first <- sc_glm(motor, "claims ~ C(region) + age", "poisson", offset = "exposure", base = "first")
+  for (nm in names(g$poisson_base_first$params)) expect_close(m_first$params[[nm]], g$poisson_base_first$params[[nm]], 1e-6, nm)
+  m_freq <- sc_glm(motor, "claims ~ C(region) + age", "poisson", offset = "exposure")
+  expect_close(m_first$fitted, m_freq$fitted, 1e-8)
+  m_given <- sc_glm(motor, "claims ~ C(region) + age", "poisson", offset = "exposure", base = list(region = "KZN"))
+  expect_false("region[KZN]" %in% names(m_given$params))
+  expect_close(m_given$fitted, m_freq$fitted, 1e-8)
+  expect_match(sc_notes(m_first$coef)[2], "alphabetically first")
+})

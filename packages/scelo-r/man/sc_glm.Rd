@@ -11,7 +11,8 @@ sc_glm(
   offset = NULL,
   weights = NULL,
   link = NULL,
-  power = 1.5
+  power = 1.5,
+  base = "frequent"
 )
 }
 \arguments{
@@ -29,6 +30,9 @@ categorical whose base level is its most frequent level.}
 \item{link}{Link override: log / identity / logit.}
 
 \item{power}{Tweedie variance power (needs the statmod package).}
+
+\item{base}{Reference level of each categorical: \code{"frequent"} (most common,
+the default), \code{"first"} (alphabetical, as \code{\link[stats:glm]{stats::glm()}}) or a named list.}
 }
 \value{
 A \code{scelo_glm}: \code{family}, \code{link}, \code{formula}, \code{coef} (a

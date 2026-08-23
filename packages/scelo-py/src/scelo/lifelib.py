@@ -154,6 +154,9 @@ def lifelib_run(library: str = "basiclife", model: str = "BasicTerm_ME", model_p
     """
     lifelib, mx = _require_lifelib()
     lib_dir = _library_dir(lifelib, library)
+    for existing in list(mx.get_models().values()):  # re-reading a model renames the old one with a warning; close it instead
+        if existing.name == model:
+            existing.close()
     m = mx.read_model(str(lib_dir / model))
     P = getattr(m, space)
     meta: Dict[str, Any] = {"library": library, "model": model, "lifelib": lifelib.__version__, "modelx": mx.__version__}
@@ -180,7 +183,9 @@ def lifelib_run(library: str = "basiclife", model: str = "BasicTerm_ME", model_p
     cf.index.name = "t"
     t = Table(cf.reset_index(), title=f"{library} / {model} · {meta.get('model_points', '?')} model points", basis=lifelib_provenance(library, model), stage="hard", notes=[
         f"lifelib {meta['lifelib']} · modelx {meta['modelx']} · premiums from {meta.get('premium_source', 'model')}.",
-        f"PV net cash flow {float(pd.DataFrame(pv).get('Net Cashflow', pd.Series(dtype=float)).sum()):,.0f}." if "Net Cashflow" in pd.DataFrame(pv).columns else "See attrs['pv'] for the per-policy present values.",
+        next((f"PV net cash flow {float(pd.DataFrame(pv)[c].sum()):,.0f} (premiums {float(pd.DataFrame(pv)[p].sum()):,.0f}, claims {float(pd.DataFrame(pv)[k].sum()):,.0f})."
+              for c, p, k in (("PV Net Cashflow", "PV Premiums", "PV Claims"), ("Net Cashflow", "Premiums", "Claims")) if c in pd.DataFrame(pv).columns),
+             "See attrs['pv'] for the per-policy present values."),
     ])
     t.attrs.update(pv=pd.DataFrame(pv), meta=meta, library_dir=str(lib_dir / model))
     return t  # the live modelx model is not attached (pandas deep-copies attrs); re-open it with mx.read_model(attrs["library_dir"])

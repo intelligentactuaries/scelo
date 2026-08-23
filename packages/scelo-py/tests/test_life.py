@@ -124,3 +124,43 @@ def test_mx_qx_epv_ae_test():
     assert abs(sc.epv([1.0] * 200, 65, i=0.04, on_death=True) - A65) < 1e-6  # whole-life assurance = Ax
     t = sc.ae_test(120, 100)
     assert abs(t["ae"] - 1.2) < 1e-12 and t["p_value"] < 0.05 and t["lower95"] < 1.2 < t["upper95"]
+
+
+def test_scr_life_and_csm_structure():
+    mp = sc.sample("lifelib-mp")
+    s = sc.scr_life(mp)
+    ch = s.attrs["charges"]
+    assert s.attrs["scr"] <= sum(ch.values()) and s.attrs["scr"] > 0
+    assert ch["disability"] == 0 and ch["revision"] == 0 and ch["longevity"] == 0  # term assurance: lighter mortality releases liability
+    assert ch["lapse"] == max(0.0, max(s.attrs["lapse"].values()))
+    assert abs(s.loc["SCR", "charge"] - s.attrs["scr"]) < 1e-9
+    c = sc.csm(mp)
+    assert c.attrs["csm0"] == 0 and c.attrs["loss_component"] > 0  # the sample is under-priced
+    c2 = sc.csm(mp, sc.BasicTermAssumptions(premium_mult=3.0), ra=0.05)
+    assert c2.attrs["csm0"] > 0 and abs(c2.attrs["csm0"] + c2.attrs["fcf"]) < 1e-6
+    assert c2["csm_open"].iloc[0] == c2.attrs["csm0"] and (c2["release"] >= 0).all()
+    assert abs(c2["csm_close"].iloc[:-1].to_numpy() - c2["csm_open"].iloc[1:].to_numpy()).max() < 1e-6
+    assert c2["csm_close"].iloc[-1] < 1e-6 * c2.attrs["csm0"] + 1e-6  # fully released by the end of coverage
+
+
+def test_basicterm_shock_dials():
+    mp = sc.sample("lifelib-mp")
+    base = sc.basicterm(mp).attrs["pv"]
+    heavier = sc.basicterm(mp, sc.BasicTermAssumptions(mort_mult=1.15)).attrs["pv"]
+    assert heavier["claims"] > base["claims"]
+    mass = sc.basicterm(mp, sc.BasicTermAssumptions(mass_lapse=0.4)).attrs["pv"]
+    assert abs(mass["premiums"] / base["premiums"] - 0.6) < 1e-9
+    infl = sc.basicterm(mp, sc.BasicTermAssumptions(expense_inflation=0.05)).attrs["pv"]
+    assert infl["expenses"] > base["expenses"]
+    assert "inforce_sum_assured" in sc.basicterm(mp).columns
+
+
+def test_glm_base_levels():
+    df = sc.sample("claims").assign(n=lambda d: (d.paid > 20000).astype(int))
+    m_freq = sc.glm(df, "n ~ C(line)", "poisson", engine="numpy")
+    m_first = sc.glm(df, "n ~ C(line)", "poisson", engine="numpy", base="first")
+    m_given = sc.glm(df, "n ~ C(line)", "poisson", engine="numpy", base={"line": "motor"})
+    assert np.allclose(m_freq.fitted, m_first.fitted) and np.allclose(m_freq.fitted, m_given.fitted)
+    assert "line[marine]" in m_first.params.index and "line[marine]" not in m_freq.params.index  # marine is the most frequent level
+    assert "line[motor]" not in m_given.params.index
+    assert np.allclose(m_first.predict(df), m_freq.predict(df))

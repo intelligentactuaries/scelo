@@ -30,7 +30,8 @@ from ._table import Table
 __all__ = [
     "ILLUSTRATIVE_MAKEHAM", "makeham", "gompertz", "qx", "life_table", "commutation", "factors", "annuity", "assurance",
     "premium", "ae", "model_points", "graduate", "lee_carter", "kaplan_meier", "exposure", "survival", "life_expectancy",
-    "close_table", "basicterm", "BasicTermAssumptions", "Basis", "mx_to_qx", "qx_to_mx", "epv", "ae_test",
+    "close_table", "basicterm", "BasicTermAssumptions", "Basis", "mx_to_qx", "qx_to_mx", "epv", "ae_test", "scr_life", "csm",
+    "SII_LIFE_SHOCKS",
 ]
 
 ILLUSTRATIVE_MAKEHAM = {"A": 0.00022, "B": 2.7e-6, "c": 1.124}
@@ -706,7 +707,14 @@ def exposure(df: pd.DataFrame, start: str, end: str, *, birth: Optional[str] = N
 
 @dataclass
 class BasicTermAssumptions:
-    """Scelo's illustrative BasicTerm assumptions (apps/web lifelibBasicTerm.ts DEFAULT_ASSUMPTIONS)."""
+    """Scelo's illustrative BasicTerm assumptions (apps/web lifelibBasicTerm.ts DEFAULT_ASSUMPTIONS), plus the shock dials the SCR uses.
+
+    ``mort_mult`` scales every qx, ``lapse_mult`` the annual lapse rate,
+    ``mass_lapse`` lapses that share of policies at once at the valuation
+    date, ``expense_mult`` scales both expenses, ``expense_inflation`` grows
+    the maintenance expense each year, ``cat_add`` adds to qx in the first
+    year (the CAT shock), ``premium_mult`` scales premiums.
+    """
 
     mort_A: float = 0.00022
     mort_B: float = 2.7e-6
@@ -716,6 +724,13 @@ class BasicTermAssumptions:
     expense_maint_pp_mth: float = 5.0
     disc_rate: float = 0.03
     pricing_loading: float = 1.12
+    mort_mult: float = 1.0
+    lapse_mult: float = 1.0
+    mass_lapse: float = 0.0
+    expense_mult: float = 1.0
+    expense_inflation: float = 0.0
+    cat_add: float = 0.0
+    premium_mult: float = 1.0
 
 
 @tool
@@ -729,7 +744,11 @@ def basicterm(mp: pd.DataFrame, assumptions: Optional[BasicTermAssumptions] = No
     to SA·q/12·loading when the file has none. Returns the aggregate monthly
     cash flows with PVs and the break-even month in the notes.
     """
-    asm = assumptions or BasicTermAssumptions()
+    return _basicterm_core(mp, assumptions or BasicTermAssumptions(), max_months)
+
+
+def _basicterm_core(mp: pd.DataFrame, asm: BasicTermAssumptions, max_months: int = 1200) -> Table:
+    """The projection itself (not audited: scr_life / csm call it many times)."""
     a = infer(mp, "age", None)
     sa = infer(mp, "sum_assured", None)
     tm = infer(mp, "policy_term", None, exclude=[a])
@@ -749,7 +768,7 @@ def basicterm(mp: pd.DataFrame, assumptions: Optional[BasicTermAssumptions] = No
         raise ValueError("no usable model points: need age_at_entry, sum_assured and policy_term > 0")
 
     def q_annual(x: np.ndarray) -> np.ndarray:
-        return np.clip(asm.mort_A + asm.mort_B * asm.mort_c ** x, 0, 0.95)
+        return np.clip((asm.mort_A + asm.mort_B * asm.mort_c ** x) * asm.mort_mult, 0, 0.95)
 
     if prem:
         premium_pp = pd.to_numeric(mp.loc[ok, prem], errors="coerce").fillna(0).to_numpy(dtype=float)
@@ -759,34 +778,42 @@ def basicterm(mp: pd.DataFrame, assumptions: Optional[BasicTermAssumptions] = No
     else:
         premium_pp = np.maximum(sum_assured * (q_annual(age0) / 12) * asm.pricing_loading, 0.01)
         source = "SA × q(x0)/12 × loading"
+    premium_pp = premium_pp * asm.premium_mult
     term_m = np.floor(term_y * 12) - duration
     horizon = int(min(max_months, max(1, np.nanmax(term_m))))
-    lapse_m = 1 - (1 - asm.lapse_rate) ** (1 / 12)
-    pols = count.astype(float).copy()
+    lapse_m = 1 - (1 - min(max(asm.lapse_rate * asm.lapse_mult, 0.0), 0.999)) ** (1 / 12)
+    pols = count.astype(float) * (1 - asm.mass_lapse)
     prem_cf = np.zeros(horizon)
     claim_cf = np.zeros(horizon)
     exp_cf = np.zeros(horizon)
     net_cf = np.zeros(horizon)
+    inforce_sa = np.zeros(horizon)
+    inforce_pols = np.zeros(horizon)
     disc = (1 + asm.disc_rate) ** (-np.arange(horizon) / 12)
     for t in range(horizon):
         active = (t < term_m) & (pols > 1e-8)
         if not active.any():
             prem_cf, claim_cf, exp_cf, net_cf = prem_cf[:t], claim_cf[:t], exp_cf[:t], net_cf[:t]
+            inforce_sa, inforce_pols = inforce_sa[:t], inforce_pols[:t]
             disc = disc[:t]
             break
+        inforce_sa[t] = float(np.sum(np.where(active, pols * sum_assured, 0.0)))
+        inforce_pols[t] = float(np.sum(np.where(active, pols, 0.0)))
         age_now = age0 + (duration + t) / 12
-        qm = 1 - (1 - q_annual(age_now)) ** (1 / 12)
+        qa = q_annual(age_now) + (asm.cat_add if t < 12 else 0.0)
+        qm = 1 - (1 - np.clip(qa, 0, 0.999)) ** (1 / 12)
         pd_ = np.where(active, pols * qm, 0.0)
         pl = np.where(active, (pols - pd_) * lapse_m, 0.0)
         claims = pd_ * sum_assured
         prems = np.where(active, pols * premium_pp, 0.0)
-        acq = np.where(active & (t == 0) & (duration == 0), asm.expense_acq_pp * pols, 0.0)
-        exps = acq + np.where(active, pols * asm.expense_maint_pp_mth, 0.0)
+        acq = np.where(active & (t == 0) & (duration == 0), asm.expense_acq_pp * asm.expense_mult * pols, 0.0)
+        infl = (1 + asm.expense_inflation) ** (t // 12)
+        exps = acq + np.where(active, pols * asm.expense_maint_pp_mth * asm.expense_mult * infl, 0.0)
         prem_cf[t], claim_cf[t], exp_cf[t] = prems.sum(), claims.sum(), exps.sum()
         net_cf[t] = prem_cf[t] - claim_cf[t] - exp_cf[t]
         pols = np.where(active, pols - pd_ - pl, pols)
     out = pd.DataFrame({"month": np.arange(len(net_cf)), "premiums": prem_cf, "claims": claim_cf, "expenses": exp_cf, "net_cf": net_cf,
-                        "discount": disc, "pv_net_cf": net_cf * disc})
+                        "discount": disc, "pv_net_cf": net_cf * disc, "inforce_policies": inforce_pols, "inforce_sum_assured": inforce_sa})
     pv = {k: float((v * disc).sum()) for k, v in (("premiums", prem_cf), ("claims", claim_cf), ("expenses", exp_cf), ("net", net_cf))}
     cum = np.cumsum(net_cf)
     be = next((int(t) for t in range(1, len(cum)) if cum[t] >= 0), None)
@@ -796,4 +823,128 @@ def basicterm(mp: pd.DataFrame, assumptions: Optional[BasicTermAssumptions] = No
     ] + ([f"{dropped} model points dropped (missing or non-positive age / sum assured / term)."] if dropped else []))
     t.attrs["pv"] = pv
     t.attrs["break_even_month"] = be
+    t.attrs["assumptions"] = asm
+    t.attrs["model_points"] = n
+    return t
+
+
+# ── Solvency II life SCR and IFRS 17 CSM on the BasicTerm projection ───────
+
+SII_LIFE_SHOCKS: Dict[str, float] = {
+    "mortality": 0.15,        # +15 % on every qx
+    "longevity": -0.20,       # −20 % on every qx
+    "lapse_up": 0.50,         # +50 % on the lapse rate
+    "lapse_down": -0.50,      # −50 % on the lapse rate
+    "lapse_mass": 0.40,       # 40 % of policies lapse at once
+    "expense": 0.10,          # +10 % expenses
+    "expense_inflation": 0.01,  # +1 % p.a. expense inflation
+    "cat": 0.0015,            # +0.15 % absolute mortality in year 1
+}
+"""Solvency II standard-formula life underwriting shocks (Delegated Regulation, Arts. 137-143)."""
+
+
+def _bel(mp: pd.DataFrame, asm: "BasicTermAssumptions", **kw: Any) -> float:
+    """Best-estimate liability of the book: PV(claims + expenses) − PV(premiums) from the BasicTerm projection."""
+    from dataclasses import replace as _replace
+
+    pv = _basicterm_core(mp, _replace(asm, **kw)).attrs["pv"]
+    return pv["claims"] + pv["expenses"] - pv["premiums"]
+
+
+@tool
+def scr_life(mp: pd.DataFrame, assumptions: Optional[BasicTermAssumptions] = None, *, shocks: Optional[Dict[str, float]] = None,
+             corr: Optional[pd.DataFrame] = None) -> Table:
+    """Solvency II standard-formula life underwriting SCR of a model-point file, on the BasicTerm projection.
+
+    Each sub-risk re-runs the projection under its shock (mortality +15 %,
+    longevity −20 %, lapse up / down 50 % and a 40 % mass lapse (the worst
+    of the three counts), expenses +10 % with 1 % inflation, CAT +0.15 %
+    mortality in year 1) and takes the increase in the best-estimate
+    liability, floored at zero; the charges are aggregated with the
+    standard-formula life correlation matrix. Disability and revision are
+    not modelled for term business and enter as zero.
+    """
+    from ._audit import _ENABLED, enable_audit
+    from .risk import SII_LIFE_CORR, aggregate_scr
+
+    asm = assumptions or BasicTermAssumptions()
+    sh = dict(SII_LIFE_SHOCKS)
+    if shocks:
+        sh.update(shocks)
+    base = _bel(mp, asm)
+    lapse = {
+        "up": _bel(mp, asm, lapse_mult=asm.lapse_mult * (1 + sh["lapse_up"])) - base,
+        "down": _bel(mp, asm, lapse_mult=asm.lapse_mult * (1 + sh["lapse_down"])) - base,
+        "mass": _bel(mp, asm, mass_lapse=sh["lapse_mass"]) - base,
+    }
+    worst = max(lapse, key=lambda k: lapse[k])
+    charges = {
+        "mortality": _bel(mp, asm, mort_mult=asm.mort_mult * (1 + sh["mortality"])) - base,
+        "longevity": _bel(mp, asm, mort_mult=asm.mort_mult * (1 + sh["longevity"])) - base,
+        "disability": 0.0,
+        "lapse": lapse[worst],
+        "expense": _bel(mp, asm, expense_mult=asm.expense_mult * (1 + sh["expense"]), expense_inflation=asm.expense_inflation + sh["expense_inflation"]) - base,
+        "revision": 0.0,
+        "cat": _bel(mp, asm, cat_add=asm.cat_add + sh["cat"]) - base,
+    }
+    charges = {k: max(float(v), 0.0) for k, v in charges.items()}
+    was = _ENABLED
+    enable_audit(False)
+    try:
+        agg = aggregate_scr(charges, corr if corr is not None else SII_LIFE_CORR)
+    finally:
+        enable_audit(was)
+    scr = float(agg.loc["SCR", "charge"])
+    t = Table(agg, title=f"Solvency II life SCR · {len(mp):,} model points · BasicTerm projection", stage="hard",
+              basis=f"standard-formula shocks on Scelo's illustrative BasicTerm basis · BEL {base:,.0f}",
+              notes=[
+                  f"SCR_life = {scr:,.0f} (undiversified {sum(charges.values()):,.0f}); BEL (PV outflows − PV premiums) {base:,.0f}. "
+                  f"Lapse charge is the worst of up / down / mass: {worst} ({lapse[worst]:,.0f}).",
+                  "Charges = ΔBEL under each shock, floored at 0, aggregated with the SII life correlation matrix; disability and revision are 0 for term assurance. "
+                  "The projection basis is illustrative: replace the assumptions before relying on the figure.",
+              ])
+    t.attrs.update(scr=scr, bel=base, charges=charges, lapse=lapse, shocks=sh)
+    return t
+
+
+@tool
+def csm(mp: pd.DataFrame, assumptions: Optional[BasicTermAssumptions] = None, *, ra: float = 0.0, ra_of: str = "claims") -> Table:
+    """IFRS 17 general-model CSM at initial recognition and its coverage-unit roll-forward, on the BasicTerm projection.
+
+    Fulfilment cash flows = PV(claims + expenses) − PV(premiums) + RA, with RA
+    given as a fraction ``ra`` of PV claims (``ra_of="claims"``) or of PV
+    outflows. CSM₀ = max(−FCF, 0); a negative value is the loss component.
+    The CSM accretes at the projection's discount rate and is released in
+    proportion to coverage units (in-force sum assured) each year.
+    """
+    asm = assumptions or BasicTermAssumptions()
+    proj = _basicterm_core(mp, asm)
+    pv = proj.attrs["pv"]
+    ra_base = pv["claims"] if ra_of == "claims" else pv["claims"] + pv["expenses"]
+    ra_amt = ra * ra_base
+    fcf = pv["claims"] + pv["expenses"] - pv["premiums"] + ra_amt
+    csm0 = max(-fcf, 0.0)
+    loss = max(fcf, 0.0)
+    cu = proj.groupby(proj["month"] // 12)["inforce_sum_assured"].mean()
+    years = cu.index.to_numpy()
+    v = 1 / (1 + asm.disc_rate)
+    rows = []
+    bal = csm0
+    for k, y in enumerate(years):
+        future = cu.iloc[k:].to_numpy()
+        w = future * v ** np.arange(future.size)
+        release = bal * (future[0] / w.sum()) if w.sum() > 0 else bal
+        accretion = (bal - release) * asm.disc_rate
+        close = bal - release + accretion
+        rows.append({"year": int(y) + 1, "coverage_units": float(future[0]), "csm_open": bal, "release": release, "accretion": accretion, "csm_close": close})
+        bal = close
+    out = pd.DataFrame(rows)
+    t = Table(out, title=f"IFRS 17 CSM · {len(mp):,} model points · BasicTerm projection", stage="hard",
+              basis=f"GMM at initial recognition · RA {ra:.1%} of PV {ra_of} · discount {asm.disc_rate:.1%}",
+              notes=[
+                  f"CSM₀ = {csm0:,.0f}" + (f" (loss component {loss:,.0f})" if loss > 0 else "") + f": PV premiums {pv['premiums']:,.0f} − PV claims {pv['claims']:,.0f} − PV expenses {pv['expenses']:,.0f} − RA {ra_amt:,.0f}.",
+                  "Release_t = CSM_t × CU_t / Σ_{s≥t} CU_s v^{s−t} with coverage units = mean in-force sum assured in the year; accretion at the locked-in rate on the post-release balance. "
+                  "Illustrative projection basis; no risk adjustment unless ``ra`` is given.",
+              ])
+    t.attrs.update(csm0=csm0, loss_component=loss, ra=ra_amt, pv=pv, fcf=fcf)
     return t

@@ -1024,14 +1024,23 @@ sc_exposure <- function(df, start, end, birth = NULL, age_col = NULL, event = NU
 #' @param expense_maint_pp_mth Maintenance expense per policy-month.
 #' @param disc_rate Annual discount rate.
 #' @param pricing_loading Loading on SA q / 12 when premiums are derived.
+#' @param mort_mult Multiplier on every qx (the mortality / longevity shocks).
+#' @param lapse_mult Multiplier on the annual lapse rate.
+#' @param mass_lapse Share of policies lapsing at once at the valuation date.
+#' @param expense_mult Multiplier on both expenses.
+#' @param expense_inflation Annual growth of the maintenance expense.
+#' @param cat_add Addition to qx in the first projection year (the CAT shock).
+#' @param premium_mult Multiplier on premiums.
 #' @return A named list.
 #' @examples
 #' sc_basicterm_assumptions(lapse_rate = 0.08)
 #' @export
 sc_basicterm_assumptions <- function(mort_A = 0.00022, mort_B = 2.7e-6, mort_c = 1.124, lapse_rate = 0.05, expense_acq_pp = 100, expense_maint_pp_mth = 5,
-                                     disc_rate = 0.03, pricing_loading = 1.12) {
+                                     disc_rate = 0.03, pricing_loading = 1.12, mort_mult = 1, lapse_mult = 1, mass_lapse = 0, expense_mult = 1,
+                                     expense_inflation = 0, cat_add = 0, premium_mult = 1) {
   list(mort_A = mort_A, mort_B = mort_B, mort_c = mort_c, lapse_rate = lapse_rate, expense_acq_pp = expense_acq_pp, expense_maint_pp_mth = expense_maint_pp_mth,
-       disc_rate = disc_rate, pricing_loading = pricing_loading)
+       disc_rate = disc_rate, pricing_loading = pricing_loading, mort_mult = mort_mult, lapse_mult = lapse_mult, mass_lapse = mass_lapse,
+       expense_mult = expense_mult, expense_inflation = expense_inflation, cat_add = cat_add, premium_mult = premium_mult)
 }
 
 #' BasicTerm monthly projection
@@ -1057,7 +1066,12 @@ sc_basicterm_assumptions <- function(mort_A = 0.00022, mort_B = 2.7e-6, mort_c =
 #' attr(bt, "pv")
 #' @export
 sc_basicterm <- function(mp, assumptions = NULL, max_months = 1200) {
-  .sc_tool("sc_basicterm", .sc_args(max_months = max_months), mp, {
+  .sc_tool("sc_basicterm", .sc_args(max_months = max_months), mp, .sc_basicterm_core(mp, assumptions, max_months))
+}
+
+# The projection itself (not audited: sc_scr_life / sc_csm call it many times).
+.sc_basicterm_core <- function(mp, assumptions = NULL, max_months = 1200) {
+  {
     defaults <- sc_basicterm_assumptions()
     extra <- setdiff(names(assumptions), names(defaults))
     if (length(extra)) stop(sprintf("unknown assumption(s): %s (know %s)", paste(extra, collapse = ", "), paste(names(defaults), collapse = ", ")), call. = FALSE)
@@ -1082,7 +1096,7 @@ sc_basicterm <- function(mp, assumptions = NULL, max_months = 1200) {
     duration <- duration[ok]
     n <- length(age0)
     if (n == 0) stop("no usable model points: need age_at_entry, sum_assured and policy_term > 0", call. = FALSE)
-    q_annual <- function(x) pmin(pmax(asm$mort_A + asm$mort_B * asm$mort_c^x, 0), 0.95)
+    q_annual <- function(x) pmin(pmax((asm$mort_A + asm$mort_B * asm$mort_c^x) * asm$mort_mult, 0), 0.95)
     if (!is.null(prem)) {
       premium_pp <- .sc_to_num(mp[[prem]])[ok]
       premium_pp[is.na(premium_pp)] <- 0
@@ -1092,11 +1106,12 @@ sc_basicterm <- function(mp, assumptions = NULL, max_months = 1200) {
       premium_pp <- pmax(sum_assured * (q_annual(age0) / 12) * asm$pricing_loading, 0.01)
       source <- "SA × q(x0)/12 × loading"
     }
+    premium_pp <- premium_pp * asm$premium_mult
     term_m <- floor(term_y * 12) - duration
     horizon <- as.integer(min(max_months, max(1, max(term_m, na.rm = TRUE))))
-    lapse_m <- 1 - (1 - asm$lapse_rate)^(1 / 12)
-    pols <- as.numeric(count)
-    prem_cf <- claim_cf <- exp_cf <- net_cf <- numeric(horizon)
+    lapse_m <- 1 - (1 - min(max(asm$lapse_rate * asm$lapse_mult, 0), 0.999))^(1 / 12)
+    pols <- as.numeric(count) * (1 - asm$mass_lapse)
+    prem_cf <- claim_cf <- exp_cf <- net_cf <- inforce_sa <- inforce_pols <- numeric(horizon)
     disc <- (1 + asm$disc_rate)^(-(seq_len(horizon) - 1) / 12)
     used <- horizon
     for (t in seq_len(horizon) - 1) {
@@ -1106,14 +1121,18 @@ sc_basicterm <- function(mp, assumptions = NULL, max_months = 1200) {
         break
       }
       act <- as.numeric(active)
+      inforce_sa[t + 1] <- sum(act * pols * sum_assured)
+      inforce_pols[t + 1] <- sum(act * pols)
       age_now <- age0 + (duration + t) / 12
-      qm <- 1 - (1 - q_annual(age_now))^(1 / 12)
+      qa <- q_annual(age_now) + if (t < 12) asm$cat_add else 0
+      qm <- 1 - (1 - pmin(pmax(qa, 0), 0.999))^(1 / 12)
       pd_ <- act * pols * qm
       pl <- act * (pols - pd_) * lapse_m
       claims <- pd_ * sum_assured
       prems <- act * pols * premium_pp
-      acq <- as.numeric(active & t == 0 & duration == 0) * asm$expense_acq_pp * pols
-      exps <- acq + act * pols * asm$expense_maint_pp_mth
+      acq <- as.numeric(active & t == 0 & duration == 0) * asm$expense_acq_pp * asm$expense_mult * pols
+      infl <- (1 + asm$expense_inflation)^(t %/% 12)
+      exps <- acq + act * pols * asm$expense_maint_pp_mth * asm$expense_mult * infl
       prem_cf[t + 1] <- sum(prems)
       claim_cf[t + 1] <- sum(claims)
       exp_cf[t + 1] <- sum(exps)
@@ -1127,8 +1146,11 @@ sc_basicterm <- function(mp, assumptions = NULL, max_months = 1200) {
       exp_cf <- exp_cf[keep]
       net_cf <- net_cf[keep]
       disc <- disc[keep]
+      inforce_sa <- inforce_sa[keep]
+      inforce_pols <- inforce_pols[keep]
     }
-    out <- data.frame(month = seq_along(net_cf) - 1L, premiums = prem_cf, claims = claim_cf, expenses = exp_cf, net_cf = net_cf, discount = disc, pv_net_cf = net_cf * disc)
+    out <- data.frame(month = seq_along(net_cf) - 1L, premiums = prem_cf, claims = claim_cf, expenses = exp_cf, net_cf = net_cf, discount = disc, pv_net_cf = net_cf * disc,
+                      inforce_policies = inforce_pols, inforce_sum_assured = inforce_sa)
     pv <- list(premiums = sum(prem_cf * disc), claims = sum(claim_cf * disc), expenses = sum(exp_cf * disc), net = sum(net_cf * disc))
     cum <- cumsum(net_cf)
     j <- which(cum[-1] >= 0)
@@ -1143,6 +1165,144 @@ sc_basicterm <- function(mp, assumptions = NULL, max_months = 1200) {
     ))
     attr(t, "pv") <- pv
     attr(t, "break_even_month") <- be
+    attr(t, "assumptions") <- asm
+    attr(t, "model_points") <- n
+    t
+  }
+}
+
+# ── Solvency II life SCR and IFRS 17 CSM on the BasicTerm projection ───────
+
+#' Solvency II standard-formula life underwriting shocks
+#'
+#' mortality +15 %, longevity -20 %, lapse up / down 50 %, mass lapse 40 %,
+#' expenses +10 % with +1 % p.a. inflation, CAT +0.15 % mortality in year 1
+#' (Delegated Regulation, Arts. 137-143).
+#' @format A named numeric vector.
+#' @export
+SC_SII_LIFE_SHOCKS <- c(mortality = 0.15, longevity = -0.20, lapse_up = 0.50, lapse_down = -0.50, lapse_mass = 0.40, expense = 0.10, expense_inflation = 0.01, cat = 0.0015)
+
+.sc_bel <- function(mp, asm, ...) {
+  pv <- attr(.sc_basicterm_core(mp, utils::modifyList(asm, list(...))), "pv")
+  pv$claims + pv$expenses - pv$premiums
+}
+
+#' Solvency II life SCR on the BasicTerm projection
+#'
+#' Each sub-risk re-runs the projection under its standard-formula shock
+#' (mortality +15 %, longevity -20 %, lapse up / down 50 % and a 40 % mass
+#' lapse (the worst of the three counts), expenses +10 % with 1 % inflation,
+#' CAT +0.15 % mortality in year 1) and takes the increase in the
+#' best-estimate liability (PV outflows - PV premiums), floored at zero; the
+#' charges are aggregated with the standard-formula life correlation matrix.
+#' Disability and revision are not modelled for term business and enter as
+#' zero.
+#'
+#' @param mp A model-point file.
+#' @param assumptions A list as from [sc_basicterm_assumptions()].
+#' @param shocks Named overrides of [SC_SII_LIFE_SHOCKS].
+#' @param corr Correlation matrix (default [SC_SII_LIFE_CORR]).
+#' @return A `scelo_table` (the [sc_aggregate_scr()] table) with attributes
+#'   `scr`, `bel`, `charges`, `lapse`, `shocks`.
+#' @examples
+#' s <- sc_scr_life(sc_sample("lifelib-mp"))
+#' attr(s, "scr")
+#' @export
+sc_scr_life <- function(mp, assumptions = NULL, shocks = NULL, corr = NULL) {
+  .sc_tool("sc_scr_life", list(), mp, {
+    asm <- utils::modifyList(sc_basicterm_assumptions(), as.list(assumptions %||% list()))
+    sh <- SC_SII_LIFE_SHOCKS
+    if (!is.null(shocks)) sh[names(shocks)] <- shocks
+    base <- .sc_bel(mp, asm)
+    lapse <- c(up = .sc_bel(mp, asm, lapse_mult = asm$lapse_mult * (1 + sh[["lapse_up"]])) - base,
+               down = .sc_bel(mp, asm, lapse_mult = asm$lapse_mult * (1 + sh[["lapse_down"]])) - base,
+               mass = .sc_bel(mp, asm, mass_lapse = sh[["lapse_mass"]]) - base)
+    worst <- names(lapse)[which.max(lapse)]
+    charges <- c(
+      mortality = .sc_bel(mp, asm, mort_mult = asm$mort_mult * (1 + sh[["mortality"]])) - base,
+      longevity = .sc_bel(mp, asm, mort_mult = asm$mort_mult * (1 + sh[["longevity"]])) - base,
+      disability = 0,
+      lapse = unname(lapse[worst]),
+      expense = .sc_bel(mp, asm, expense_mult = asm$expense_mult * (1 + sh[["expense"]]), expense_inflation = asm$expense_inflation + sh[["expense_inflation"]]) - base,
+      revision = 0,
+      cat = .sc_bel(mp, asm, cat_add = asm$cat_add + sh[["cat"]]) - base
+    )
+    charges <- pmax(charges, 0)
+    was <- .sc_env$enabled
+    .sc_env$enabled <- FALSE
+    agg <- tryCatch(sc_aggregate_scr(charges, corr %||% SC_SII_LIFE_CORR), finally = { .sc_env$enabled <- was })
+    scr <- agg$charge[agg$module == "SCR"]
+    t <- sc_table(agg, title = sprintf("Solvency II life SCR · %s model points · BasicTerm projection", .sc_int_comma(nrow(mp))), stage = "hard",
+                  basis = sprintf("standard-formula shocks on Scelo's illustrative BasicTerm basis · BEL %s", .sc_comma(base)), notes = c(
+      sprintf("SCR_life = %s (undiversified %s); BEL (PV outflows − PV premiums) %s. Lapse charge is the worst of up / down / mass: %s (%s).",
+              .sc_comma(scr), .sc_comma(sum(charges)), .sc_comma(base), worst, .sc_comma(lapse[[worst]])),
+      "Charges = ΔBEL under each shock, floored at 0, aggregated with the SII life correlation matrix; disability and revision are 0 for term assurance. The projection basis is illustrative: replace the assumptions before relying on the figure."
+    ))
+    attr(t, "scr") <- scr
+    attr(t, "bel") <- base
+    attr(t, "charges") <- charges
+    attr(t, "lapse") <- lapse
+    attr(t, "shocks") <- sh
+    t
+  })
+}
+
+#' IFRS 17 CSM on the BasicTerm projection
+#'
+#' General-model CSM at initial recognition and its coverage-unit
+#' roll-forward. Fulfilment cash flows = PV(claims + expenses) - PV(premiums)
+#' + RA, with RA a fraction `ra` of PV claims (`ra_of = "claims"`) or of PV
+#' outflows. CSM0 = max(-FCF, 0); a negative value is the loss component.
+#' The CSM accretes at the projection's discount rate and is released in
+#' proportion to coverage units (in-force sum assured) each year.
+#'
+#' @param mp A model-point file.
+#' @param assumptions A list as from [sc_basicterm_assumptions()].
+#' @param ra Risk adjustment as a fraction of `ra_of`.
+#' @param ra_of "claims" or "outflows".
+#' @return A `scelo_table` by year (coverage_units, csm_open, release,
+#'   accretion, csm_close) with attributes `csm0`, `loss_component`, `ra`,
+#'   `pv`, `fcf`.
+#' @examples
+#' c <- sc_csm(sc_sample("lifelib-mp"), ra = 0.05)
+#' attr(c, "csm0")
+#' @export
+sc_csm <- function(mp, assumptions = NULL, ra = 0, ra_of = "claims") {
+  .sc_tool("sc_csm", list(ra = ra), mp, {
+    asm <- utils::modifyList(sc_basicterm_assumptions(), as.list(assumptions %||% list()))
+    proj <- .sc_basicterm_core(mp, asm)
+    pv <- attr(proj, "pv")
+    ra_base <- if (ra_of == "claims") pv$claims else pv$claims + pv$expenses
+    ra_amt <- ra * ra_base
+    fcf <- pv$claims + pv$expenses - pv$premiums + ra_amt
+    csm0 <- max(-fcf, 0)
+    loss <- max(fcf, 0)
+    yr <- proj$month %/% 12
+    cu <- tapply(proj$inforce_sum_assured, yr, mean)
+    v <- 1 / (1 + asm$disc_rate)
+    bal <- csm0
+    rows <- vector("list", length(cu))
+    for (k in seq_along(cu)) {
+      future <- as.numeric(cu[k:length(cu)])
+      w <- future * v^(seq_along(future) - 1)
+      release <- if (sum(w) > 0) bal * (future[1] / sum(w)) else bal
+      accretion <- (bal - release) * asm$disc_rate
+      close <- bal - release + accretion
+      rows[[k]] <- data.frame(year = as.integer(names(cu)[k]) + 1L, coverage_units = future[1], csm_open = bal, release = release, accretion = accretion, csm_close = close)
+      bal <- close
+    }
+    out <- do.call(rbind, rows)
+    t <- sc_table(out, title = sprintf("IFRS 17 CSM · %s model points · BasicTerm projection", .sc_int_comma(nrow(mp))), stage = "hard",
+                  basis = sprintf("GMM at initial recognition · RA %.1f%% of PV %s · discount %.1f%%", ra * 100, ra_of, asm$disc_rate * 100), notes = c(
+      sprintf("CSM₀ = %s%s: PV premiums %s − PV claims %s − PV expenses %s − RA %s.", .sc_comma(csm0), if (loss > 0) sprintf(" (loss component %s)", .sc_comma(loss)) else "",
+              .sc_comma(pv$premiums), .sc_comma(pv$claims), .sc_comma(pv$expenses), .sc_comma(ra_amt)),
+      "Release_t = CSM_t × CU_t / Σ_{s≥t} CU_s v^{s−t} with coverage units = mean in-force sum assured in the year; accretion at the locked-in rate on the post-release balance. Illustrative projection basis; no risk adjustment unless `ra` is given."
+    ))
+    attr(t, "csm0") <- csm0
+    attr(t, "loss_component") <- loss
+    attr(t, "ra") <- ra_amt
+    attr(t, "pv") <- pv
+    attr(t, "fcf") <- fcf
     t
   })
 }

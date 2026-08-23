@@ -38,6 +38,9 @@
 #' @param df A data frame.
 #' @param formula A string or formula.
 #' @param drop_first Drop the base level of each categorical (`TRUE`).
+#' @param base Reference level of each categorical: `"frequent"` (the most
+#'   common level, Scelo's default), `"first"` (alphabetical, as [stats::glm()]
+#'   and statsmodels) or a named list `list(factor = level)`.
 #' @param levels Named list of the dummy levels to build per categorical
 #'   (used by [sc_predict()] to reproduce the training design).
 #' @return A list: `y`, `X` (numeric matrix), `terms`, `levels`.
@@ -45,7 +48,7 @@
 #' d <- sc_design_matrix(sc_sample("claims"), "paid ~ C(line) + age")
 #' colnames(d$X)
 #' @export
-sc_design_matrix <- function(df, formula, drop_first = TRUE, levels = NULL) {
+sc_design_matrix <- function(df, formula, drop_first = TRUE, levels = NULL, base = "frequent") {
   sides <- .sc_formula_sides(formula)
   terms <- trimws(strsplit(sides$rhs, "+", fixed = TRUE)[[1]])
   terms <- terms[nzchar(terms) & terms != "1"]
@@ -67,7 +70,15 @@ sc_design_matrix <- function(df, formula, drop_first = TRUE, levels = NULL) {
         use <- levels[[name]]
       } else {
         cnt <- table(s)
-        lv <- names(cnt)[order(-as.integer(cnt), names(cnt), method = "radix")]   # most common level first = base
+        if (is.list(base) && !is.null(base[[name]])) {
+          ref <- as.character(base[[name]])
+          if (!ref %in% names(cnt)) stop(sprintf("base level '%s' is not a level of '%s'", ref, name), call. = FALSE)
+          lv <- c(ref, sort(setdiff(names(cnt), ref), method = "radix"))
+        } else if (identical(base, "first")) {
+          lv <- sort(names(cnt), method = "radix")
+        } else {
+          lv <- names(cnt)[order(-as.integer(cnt), names(cnt), method = "radix")]   # most common level first = base
+        }
         use <- if (drop_first) lv[-1] else lv
       }
       for (l in use) cols[[sprintf("%s[%s]", name, l)]] <- as.numeric(s == l)
@@ -114,6 +125,8 @@ sc_design_matrix <- function(df, formula, drop_first = TRUE, levels = NULL) {
 #' @param weights Prior-weight column.
 #' @param link Link override: log / identity / logit.
 #' @param power Tweedie variance power (needs the statmod package).
+#' @param base Reference level of each categorical: `"frequent"` (most common,
+#'   the default), `"first"` (alphabetical, as [stats::glm()]) or a named list.
 #' @return A `scelo_glm`: `family`, `link`, `formula`, `coef` (a
 #'   `scelo_table` of term / estimate / std_err / z / p_value / exp),
 #'   `params`, `cov`, `deviance`, `null_deviance`, `aic`, `n`, `df_resid`,
@@ -124,13 +137,13 @@ sc_design_matrix <- function(df, formula, drop_first = TRUE, levels = NULL) {
 #' m
 #' sc_relativities(m)
 #' @export
-sc_glm <- function(df, formula, family = "poisson", offset = NULL, weights = NULL, link = NULL, power = 1.5) {
+sc_glm <- function(df, formula, family = "poisson", offset = NULL, weights = NULL, link = NULL, power = 1.5, base = "frequent") {
   formula <- .sc_formula_text(formula)
   .sc_tool("sc_glm", list(df = df, formula = formula, family = family, offset = offset, weights = weights, link = link, power = power), df, {
     family <- tolower(family)
     if (!family %in% names(.SC_FAMILY_LINKS)) stop(sprintf("family must be one of %s", paste(names(.SC_FAMILY_LINKS), collapse = ", ")), call. = FALSE)
     link <- link %||% .SC_FAMILY_LINKS[[family]]
-    d <- sc_design_matrix(df, formula)
+    d <- sc_design_matrix(df, formula, base = base)
     y <- d$y
     X <- d$X
     keep <- !is.na(y) & stats::complete.cases(X)
@@ -191,11 +204,11 @@ sc_glm <- function(df, formula, family = "poisson", offset = NULL, weights = NUL
                   stage = "hard", notes = c(
                     paste0(sprintf("n = %s, deviance %s on %d df (null %s), dispersion %.4g", format(n, big.mark = ","), .sc_fmt_comma(dev), df_resid, .sc_fmt_comma(null_dev), disp),
                            if (!is.na(aic)) sprintf(", AIC %s", .sc_fmt_comma(aic, 1)) else "", "."),
-                    "Categorical base levels are the most frequent level; with a log link, exp(estimate) is the multiplicative relativity."
+                    paste0(if (identical(base, "frequent")) "Categorical base levels are the most frequent level" else if (identical(base, "first")) "Categorical base levels are the alphabetically first level" else "Categorical base levels as given", "; with a log link, exp(estimate) is the multiplicative relativity.")
                   ))
     structure(list(family = family, link = link, formula = formula, coef = t, params = beta, cov = cov, deviance = dev, null_deviance = null_dev,
                    aic = aic, n = n, df_resid = df_resid, dispersion = disp, fitted = unname(mu), engine = eng, offset_col = offset,
-                   weights_col = weights, terms = d$terms, power = if (family == "tweedie") power else NULL, levels = d$levels, iterations = fit$iter),
+                   weights_col = weights, terms = d$terms, power = if (family == "tweedie") power else NULL, levels = d$levels, iterations = fit$iter, base = base),
               class = c("scelo_glm", "list"))
   })
 }
@@ -285,7 +298,7 @@ sc_relativities <- function(model) {
   rownames(out) <- NULL
   base <- exp(params[["Intercept"]])
   t <- sc_table(out, title = sprintf("Relativities · %s", model$formula), basis = sprintf("base rate exp(intercept) = %.6g", base), stage = "hard",
-                notes = "Multiply the base rate by one relativity per factor; the base level of each factor is its most frequent level.")
+                notes = paste0("Multiply the base rate by one relativity per factor; the base level of each factor is ", if (identical(model$base, "first")) "its alphabetically first level." else if (is.list(model$base)) "as given." else "its most frequent level."))
   attr(t, "base_rate") <- base
   t
 }
