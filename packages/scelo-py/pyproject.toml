@@ -1,0 +1,68 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "scelo"
+version = "0.1.0"
+description = "Scelo for Python — soft data → tools → hard data. The shortest path from a messy extract to a board-pack number, for actuaries who write code."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { file = "LICENSE" }
+authors = [{ name = "Intelligent Actuaries (Pty) Ltd", email = "scelo@intelligentactuaries.com" }]
+keywords = [
+  "actuarial", "actuary", "reserving", "chain-ladder", "life-table", "mortality",
+  "commutation", "solvency", "ifrs17", "lifelib", "pricing", "glm", "credibility",
+  "scelo", "insurance",
+]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Financial and Insurance Industry",
+  "Intended Audience :: Science/Research",
+  "License :: Other/Proprietary License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Office/Business :: Financial",
+  "Topic :: Scientific/Engineering :: Mathematics",
+  "Operating System :: OS Independent",
+]
+dependencies = [
+  "numpy>=1.23",
+  "pandas>=1.5",
+]
+
+[project.optional-dependencies]
+# statistical extras — GLMs via statsmodels, distribution fitting via scipy
+stats = ["scipy>=1.9", "statsmodels>=0.14"]
+# lifelib / modelx — run the pinned lifelib models Scelo IDE ships
+life = ["lifelib==0.14.0", "modelx==0.32.0", "openpyxl>=3.1"]
+# cross-check against the chainladder package
+reserving = ["chainladder>=0.8"]
+# parquet + Excel I/O
+io = ["pyarrow>=12", "openpyxl>=3.1"]
+all = ["scelo[stats,life,reserving,io]"]
+dev = ["pytest>=7", "scelo[stats,reserving,io]"]
+
+[project.urls]
+Homepage = "https://github.com/intelligentactuaries/scelo"
+Documentation = "https://docs.intelligentactuaries.com/scelo/"
+Repository = "https://github.com/intelligentactuaries/scelo"
+Issues = "https://github.com/intelligentactuaries/scelo/issues"
+
+[project.scripts]
+scelo = "scelo.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/scelo"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src/scelo", "tests", "README.md", "LICENSE", "pyproject.toml"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
