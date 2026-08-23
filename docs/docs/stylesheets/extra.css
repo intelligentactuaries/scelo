@@ -181,3 +181,17 @@
   font-size: 0.74rem;
   color: var(--md-default-fg-color--lighter);
 }
+
+/* The pet icons inline in prose (the surfaces table): the app's own SVGs
+   at word scale, sitting on the text baseline's middle. */
+img.pet-inline {
+  width: 26px;
+  height: 26px;
+  vertical-align: middle;
+  margin-right: 2px;
+}
+
+/* A pet and its name are one term: never split them across lines. */
+.md-typeset td:has(> img.pet-inline) {
+  white-space: nowrap;
+}

@@ -26,12 +26,12 @@ other surfaces read from, not another view of the run.
 
 | Pet | Surface | What it shows |
 | --- | --- | --- |
-| 🐰 bunny | **Forecast** | The WMTR survival projection: wealth trajectory, survival curve, outcome distribution, M/T/R components |
-| 🐶 dog | **Council Reactions** | The deliberation graph + a readback Sankey (profession → trust the forecast? → confidence) |
-| 🐹 hamster | **Society Pulse** | How a broader simulated society reacts |
-| 🐢 turtle | **Readback** | The synthesised narrative of the council |
-| 🐤 chick | **Simulation** | Population simulation of a scenario → macro impact |
-| 🐱 cat | **Canon** | The reference works injected into every agent's prompt |
+| ![bunny](../assets/img/pets/bunny.svg){ .pet-inline } bunny | **Forecast** | The WMTR survival projection: wealth trajectory, survival curve, outcome distribution, M/T/R components |
+| ![dog](../assets/img/pets/dog.svg){ .pet-inline } dog | **Council Reactions** | The deliberation graph + a readback Sankey (profession → trust the forecast? → confidence) |
+| ![hamster](../assets/img/pets/hamster.svg){ .pet-inline } hamster | **Society Pulse** | How a broader simulated society reacts |
+| ![turtle](../assets/img/pets/turtle.svg){ .pet-inline } turtle | **Readback** | The synthesised narrative of the council |
+| ![chick](../assets/img/pets/chick.svg){ .pet-inline } chick | **Simulation** | Population simulation of a scenario → macro impact |
+| ![cat](../assets/img/pets/cat.svg){ .pet-inline } cat | **Canon** | The reference works injected into every agent's prompt |
 
 ## It runs as its own server — started for you
 
