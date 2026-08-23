@@ -57,3 +57,23 @@ Saved/
 # (github.com/intelligentactuaries/soa-county-mortality), checked out here for
 # convenience. ~4GB of raw data; staging it would embed a broken gitlink.
 forSOA/
+
+# Python (packages/scelo-py)
+__pycache__/
+*.pyc
+*.egg-info/
+packages/scelo-py/build/
+packages/scelo-py/dist/
+.pytest_cache/
+.venv/
+
+# R (packages/scelo-r)
+.Rhistory
+.RData
+.Rproj.user/
+packages/*.Rcheck/
+packages/scelo-r/*.Rcheck/
+packages/scelo_*.tar.gz
+packages/scelo-r/*.tar.gz
+packages/scelo-r/doc/
+packages/scelo-r/Meta/

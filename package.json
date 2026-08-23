@@ -31,7 +31,9 @@
     "test": "bun run --cwd apps/web test && bun run --cwd apps/swarm test && bun run --cwd apps/scelo-ide test",
     "ide:dist:linux": "bun run --cwd apps/scelo-ide dist:linux",
     "ide:dist:mac": "bun run --cwd apps/scelo-ide dist:mac",
-    "ide:dist:win": "bun run --cwd apps/scelo-ide dist:win"
+    "ide:dist:win": "bun run --cwd apps/scelo-ide dist:win",
+    "test:py": "cd packages/scelo-py && python -m pytest -q",
+    "test:r": "cd packages/scelo-r && Rscript dev/run-tests.R"
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.0",
