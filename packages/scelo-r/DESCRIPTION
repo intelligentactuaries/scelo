@@ -1,0 +1,27 @@
+Package: scelo
+Type: Package
+Title: Soft Data, Tools, Hard Data: The Scelo Workbench for Actuaries Who Write Code
+Version: 0.1.0
+Authors@R: c(
+    person("Ali", "Denewade", email = "scelo@intelligentactuaries.com", role = c("aut", "cre")),
+    person("Intelligent Actuaries (Pty) Ltd", role = c("cph", "fnd")))
+Description: The Scelo IDE's brain layer as an R package: the same import typing,
+    cleaning rules, life tables, commutation functions, reserving engine (chain
+    ladder, Mack, Bornhuetter-Ferguson, ODP bootstrap), discount curves, Smith-Wilson,
+    aggregate-loss models, credibility, GLM relativities, fairness audits and the
+    W(M,T,R) survival forecast that the desktop workbench runs, plus a client for
+    the bundled decision-support swarm. Every function takes a data frame first,
+    infers the columns it needs from their names, and returns a table that carries
+    its basis, its caveats and, once stamped, a content hash: numbers that travel
+    with their provenance. Base R only; optional packages add speed and extras.
+License: file LICENSE
+Encoding: UTF-8
+URL: https://github.com/intelligentactuaries/scelo, https://docs.intelligentactuaries.com/scelo/
+BugReports: https://github.com/intelligentactuaries/scelo/issues
+Depends: R (>= 4.1)
+Imports: stats, utils, tools
+Suggests: jsonlite, curl, testthat (>= 3.0.0), data.table, ChainLadder, lifecontingencies, statmod, reticulate, knitr, rmarkdown
+Config/testthat/edition: 3
+Roxygen: list(markdown = TRUE)
+LazyData: false
+Config/roxygen2/version: 8.1.0
