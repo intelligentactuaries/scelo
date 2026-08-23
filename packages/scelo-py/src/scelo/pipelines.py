@@ -117,6 +117,8 @@ TOOLS   life      sc.life_table()  sc.commutation(i=.04)  sc.factors(i=.04,n=10)
         forecast  sc.wmtr("pension scheme, weakening covenant")  sc.sensitivity(...)
         swarm     sc.council("…")  sc.society("…")  sc.augment(df,"…")   (needs Scelo IDE / bun run dev:swarm)
 HARD    sc.hard(t)  sc.report(t1,t2,to="pack.html")  sc.export(t,"out.xlsx")  sc.audit()  sc.verify(t)
+CHARTS  sc.plot_rates(df,"country","lapsed")  sc.plot_relativities(glm)  sc.plot_projection(bt)  sc.plot_scr(s)  sc.plot_csm(c)
+        sc.plot_bars(series)  sc.plot_lines(df,"x",["a","b"])  sc.plot_triangle(tri)  sc.save_figure(fig,"x.png")   (matplotlib)
         df.sc.clean()  df.sc.triangle().sc.mack()     ← the same functions as methods
 """
 

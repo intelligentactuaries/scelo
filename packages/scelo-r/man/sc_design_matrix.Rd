@@ -27,7 +27,8 @@ common level, Scelo's default), \code{"first"} (alphabetical, as \code{\link[sta
 and statsmodels) or a named list \code{list(factor = level)}.}
 }
 \value{
-A list: \code{y}, \code{X} (numeric matrix), \code{terms}, \code{levels}.
+A list: \code{y}, \code{X} (numeric matrix), \code{terms}, \code{levels} (dummy levels
+per factor), \code{base_levels} (the reference level per factor).
 }
 \description{
 Parse \code{y ~ a + C(b) + c} into the response, a design matrix with an

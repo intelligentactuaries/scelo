@@ -153,6 +153,8 @@ SC_CHEATSHEET <- paste(c(
   "        forecast  sc_wmtr(\"pension scheme, weakening covenant\")  sc_sensitivity(...)",
   "        swarm     sc_council(\"…\")  sc_society(\"…\")  sc_augment(df, \"…\")   (needs Scelo IDE / bun run dev:swarm)",
   "HARD    sc_hard(t)  sc_report(t1, t2, to = \"pack.html\")  sc_export(t, \"out.csv\")  sc_audit()  sc_verify(t)",
+  "CHARTS  sc_plot_rates(df, \"country\", \"lapsed\")  sc_plot_relativities(glm)  sc_plot_projection(bt)  sc_plot_scr(s)  sc_plot_csm(c)",
+  "        sc_plot_bars(x)  sc_plot_lines(df, \"x\", c(\"a\", \"b\"))  sc_plot_triangle(tri)   (base graphics)",
   "        sc_experience(\"deaths.csv\")  sc_price(df, \"claims ~ C(region)\")  sc_quick(\"file\")   ← whole workflows, one call",
   ""
 ), collapse = "\n")

@@ -45,8 +45,10 @@ life = ["lifelib==0.14.0", "modelx==0.32.0", "openpyxl>=3.1"]
 reserving = ["chainladder>=0.8"]
 # parquet + Excel I/O
 io = ["pyarrow>=12", "openpyxl>=3.1"]
-all = ["scelo[stats,life,reserving,io]"]
-dev = ["pytest>=7", "scelo[stats,reserving,io]"]
+# the sc.plot_* chart family
+viz = ["matplotlib>=3.6"]
+all = ["scelo[stats,life,reserving,io,viz]"]
+dev = ["pytest>=7", "scelo[stats,reserving,io,viz]"]
 
 [project.urls]
 Homepage = "https://github.com/intelligentactuaries/scelo"

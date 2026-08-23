@@ -27,6 +27,7 @@ prints its basis, its caveats and a content hash.
 pip install scelo                  # numpy + pandas only
 pip install "scelo[stats]"         # + scipy, statsmodels (GLMs via statsmodels, scipy fits)
 pip install "scelo[life]"          # + lifelib 0.14.0 / modelx 0.32.0, the pair Scelo IDE ships
+pip install "scelo[viz]"          # + matplotlib for the sc.plot_* family
 pip install "scelo[all]"
 ```
 
@@ -114,6 +115,10 @@ sc.fairness(df, "y", "score", "group"); sc.fairness_audit(df, "score", "protecte
 sc.wmtr("pension scheme with a weakening sponsor covenant")   # W(M,T,R) Monte Carlo, same numbers as the IDE
 sc.council("…scenario…", subset=32)                            # convene the professional council (needs the swarm)
 sc.society("…scenario…", size=200)                             # simulate a population's response
+
+# ── charts (matplotlib) ─────────────────────────────────────────────────
+sc.plot_rates(df, "country", "lapsed", exposure="exposure")   # rate by group, 95 % intervals
+sc.plot_relativities(m); sc.plot_projection(bt); sc.plot_scr(scr); sc.plot_csm(csm); sc.plot_triangle(tri)
 
 # ── hard data ───────────────────────────────────────────────────────────
 t = sc.hard(sc.mack(tri).table, assumptions={"tail": 1.0})

@@ -57,6 +57,7 @@ and a client for the bundled swarm.
 | Pricing & fairness | `glm` `relativities` `freq_sev` `loss_ratio` `lift` `fairness` `fairness_audit` | the same with `sc_` |
 | Forecast & swarm | `wmtr` `sensitivity` `council` `society` `augment` | the same with `sc_` |
 | Hard data | `hard` `report` `export` `audit` `verify` | the same with `sc_` |
+| Charts | `plot_rates` `plot_relativities` `plot_projection` `plot_scr` `plot_csm` `plot_bars` `plot_lines` `plot_triangle` (matplotlib) | the same with `sc_plot_` (base graphics) |
 
 Both packages are tested against the same golden numbers: the IDE's own
 test fixtures, the published Mack / RAA results, and a fixture generated

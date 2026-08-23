@@ -10,3 +10,4 @@ First release: the Scelo IDE brain layer as an R package.
 * Pricing and fairness: `sc_glm`, `sc_relativities`, `sc_freq_sev`, `sc_loss_ratio`, `sc_lift`, `sc_gini`, `sc_fairness`, `sc_fairness_audit`.
 * Forecast and swarm: `sc_wmtr` (bit-exact with the IDE's engine), `sc_sensitivity`, `sc_council`, `sc_society`, `sc_augment`.
 * Hard data: `sc_hard`, `sc_report`, `sc_export`, `sc_audit`, `sc_verify`, snapshots.
+* Charts (base graphics): `sc_plot_bars`, `sc_plot_rates`, `sc_plot_relativities`, `sc_plot_projection`, `sc_plot_scr`, `sc_plot_csm`, `sc_plot_lines`, `sc_plot_triangle`, on a colour-vision-validated palette (`sc_palette`).
