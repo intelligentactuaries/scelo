@@ -14,18 +14,24 @@ You reach it two ways:
 - From **Hard Data → Convene council → Open in swarm** (the pipeline route).
 - Directly from the **swarm** view in the workspace.
 
-<div class="scelo-demo" data-scelo-demo="swarm"><p class="sd-fallback">The swarm: the Forecast tab and the deliberation tabs, with eight professional agents landing a stance over three rounds. The animated illustration needs JavaScript.</p></div>
+<div class="scelo-demo" data-scelo-demo="swarm"><p class="sd-fallback">The swarm: the pet rail — one animal per surface — beside the council, with eight professional agents landing a stance over three rounds. The animated illustration needs JavaScript.</p></div>
 
-## The tabs
+## The surfaces — and their pets
 
-| Tab | What it shows |
-| --- | --- |
-| **Forecast** | The WMTR survival projection: wealth trajectory, survival curve, outcome distribution, M/T/R components |
-| **Council reactions** | The deliberation graph + a readback Sankey (profession → trust the forecast? → confidence) |
-| **Society pulse** | How a broader simulated society reacts |
-| **Readback** | The synthesised narrative of the council |
-| **Simulation** | Population simulation of a scenario → macro impact |
-| **IAAI Canon** | The reference works injected into every agent's prompt |
+Navigation is the **pet rail** down the left edge: six animals, one per
+surface, and the animal is the only thing that identifies it. The active
+pet grows a step and wears its name in its own colour; the others step
+back to icons. The cat sits slightly apart — the Canon is the corpus the
+other surfaces read from, not another view of the run.
+
+| Pet | Surface | What it shows |
+| --- | --- | --- |
+| 🐰 bunny | **Forecast** | The WMTR survival projection: wealth trajectory, survival curve, outcome distribution, M/T/R components |
+| 🐶 dog | **Council Reactions** | The deliberation graph + a readback Sankey (profession → trust the forecast? → confidence) |
+| 🐹 hamster | **Society Pulse** | How a broader simulated society reacts |
+| 🐢 turtle | **Readback** | The synthesised narrative of the council |
+| 🐤 chick | **Simulation** | Population simulation of a scenario → macro impact |
+| 🐱 cat | **Canon** | The reference works injected into every agent's prompt |
 
 ## It runs as its own server — started for you
 

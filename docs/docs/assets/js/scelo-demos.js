@@ -43,6 +43,14 @@
 (function () {
   "use strict";
 
+  /* Where this script lives → where the pet icons live. Captured at eval
+     time (currentScript is null later); the fallback covers any host that
+     inlines the script, assuming the docs' one-level-deep demo pages. */
+  var ASSET_BASE = (function () {
+    var src = document.currentScript && document.currentScript.src;
+    return src ? src.replace(/js\/scelo-demos\.js.*$/, "") : "../assets/";
+  })();
+
   // ── pacing ──────────────────────────────────────────────────────────
   //
   // One dial for every demo on the page. Every `after` below is multiplied
@@ -306,15 +314,18 @@
   // beats the inherited uppercase, which is why `auto` / `?` / `settings`
   // render lowercase next to uppercase telemetry.
 
-  /** ViewTabs.tsx:15-20. Ids differ from labels: readback's id is
-   *  `synthesis`, society pulse's is `society`. */
-  var SWARM_TABS = [
-    { id: "forecast", label: "forecast" },
-    { id: "council", label: "council reactions" },
-    { id: "society", label: "society pulse" },
-    { id: "synthesis", label: "readback" },
-    { id: "simulation", label: "simulation" },
-    { id: "canon", label: "iaai canon" },
+  /** PetRail.tsx:35-42. The text tab strip is gone: the rail is the app's
+   *  whole navigation, one animal per surface, fixed order, Canon gapped
+   *  last. Ids still differ from labels (readback = `synthesis`, society
+   *  pulse = `society`); hues are the icons' own, used for the active
+   *  label. Labels are Title Case in the DOM — .pet-label never uppercases. */
+  var SWARM_PETS = [
+    { id: "forecast", label: "Forecast", icon: "bunny", hue: "#F3C6D1" },
+    { id: "council", label: "Council Reactions", icon: "dog", hue: "#C89B6A" },
+    { id: "society", label: "Society Pulse", icon: "hamster", hue: "#EBD9A6" },
+    { id: "synthesis", label: "Readback", icon: "turtle", hue: "#6CB04A" },
+    { id: "simulation", label: "Simulation", icon: "chick", hue: "#F7C948" },
+    { id: "canon", label: "Canon", icon: "cat", hue: "#F4A03C" },
   ];
 
   /** App.tsx:738-759. `api ok` is two spans, not one string; the middots
@@ -1689,20 +1700,10 @@
     add(live, el("i", "sd-livedot"), el("span", null, "live"));
     add(top, live);
 
-    // The swarm's own bar: wordmark, tabs, status cluster.
+    // The swarm's own bar: wordmark and status cluster. The tabs are gone —
+    // navigation lives in the pet rail down the left edge (PetRail.tsx).
     var bar = el("div", "sd-swarmbar");
     add(bar, el("div", "sd-wordmark", "swarm council"));
-
-    var tabs = el("div", "sd-tabs");
-    tabs.setAttribute("role", "group");
-    tabs.setAttribute("aria-label", "Swarm tabs");
-    var tabEls = {};
-    SWARM_TABS.forEach(function (t) {
-      var b = el("span", "sd-tab", t.label);
-      tabEls[t.id] = b;
-      add(tabs, b);
-    });
-    add(bar, tabs);
 
     var status = el("div", "sd-statuscluster");
     status.setAttribute("aria-hidden", "true");
@@ -1721,14 +1722,41 @@
 
     add(win, top, bar);
 
+    // The pet rail (PetRail.tsx + styles.css .pet-rail, focused state):
+    // icons only once a surface is chosen, the ACTIVE pet a scale step up
+    // with its label below in its own hue — "where am I" in one glyph.
+    // Below the pets, the Setup toggle the rail carries (App.tsx railTools).
+    var railBody = el("div", "sd-swarmbody");
+    var rail = el("div", "sd-petrail");
+    rail.setAttribute("aria-hidden", "true");
+    var petEls = {};
+    SWARM_PETS.forEach(function (p) {
+      var item = el("span", "sd-pet" + (p.id === "canon" ? " sd-pet-canon" : ""));
+      var img = document.createElement("img");
+      img.className = "sd-pet-icon";
+      img.src = ASSET_BASE + "img/pets/" + p.icon + ".svg";
+      img.alt = "";
+      img.loading = "lazy";
+      var lab = el("span", "sd-pet-label", p.label);
+      lab.style.setProperty("--pet-hue", p.hue);
+      add(item, img, lab);
+      petEls[p.id] = item;
+      add(rail, item);
+    });
+    var railTools = el("span", "sd-pet-tools sd-mono", "▤ setup");
+    add(rail, railTools);
+    var content = el("div", "sd-swarmcontent");
+    add(railBody, rail, content);
+    add(win, railBody);
+
     function setTab(id) {
-      SWARM_TABS.forEach(function (t) {
-        tabEls[t.id].classList.toggle("sd-tab-on", t.id === id);
+      SWARM_PETS.forEach(function (p) {
+        petEls[p.id].classList.toggle("sd-pet-on", p.id === id);
       });
     }
     setTab(active);
 
-    return { node: win, setTab: setTab, initial: active };
+    return { node: win, content: content, setTab: setTab, initial: active };
   }
 
   /** The decision sidebar, pinned right on every swarm tab. */
@@ -1795,7 +1823,7 @@
 
     var side = decisionSidebar(SIDEBAR_IDLE);
     add(split, main, side.node);
-    add(win, split);
+    add(shell.content, split);
 
     var body = {
       win: win,
@@ -1937,7 +1965,7 @@
     add(main, setup);
     var side = decisionSidebar(SIDEBAR_IDLE);
     add(split, main, side.node);
-    add(win, split);
+    add(shell.content, split);
 
     var body = {
       win: win,
@@ -2066,7 +2094,7 @@
     side.text.textContent =
       "The IAAI Canon is the knowledge base every agent reads from. Edits here propagate to the next run. The decision sidebar activates again when you switch to Council, Society or Synthesis.";
     add(split, main, side.node);
-    add(win, split);
+    add(shell.content, split);
 
     var body = {
       win: win,

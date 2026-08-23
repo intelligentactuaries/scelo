@@ -1,6 +1,11 @@
 # Council, society & simulation
 
-A tour of what each swarm tab does.
+A tour of the swarm's surfaces. Navigation is the **pet rail** down the
+left edge — one animal per surface, and the animal is the only thing on
+screen that identifies it: the bunny is Forecast, the dog Council
+Reactions, the hamster Society Pulse, the turtle Readback, the chick
+Simulation, and the cat — sitting slightly apart — the Canon. The active
+pet grows a step and wears its name; the rest step back to icons.
 
 ## Forecast
 
@@ -64,7 +69,7 @@ society members answer as ordinary people, in plain language.
 
 ## Simulation
 
-<div class="scelo-demo" data-scelo-demo="simulation"><p class="sd-fallback">The Simulation tab: scenario chips, drugs/compounds, sample size and population, then the macro impact tiles. The animated illustration needs JavaScript.</p></div>
+<div class="scelo-demo" data-scelo-demo="simulation"><p class="sd-fallback">The Simulation surface: scenario chips, drugs/compounds, sample size and population, then the macro impact tiles. The animated illustration needs JavaScript.</p></div>
 
 A standalone population simulator:
 
@@ -97,6 +102,6 @@ A fresh install starts with an **empty canon**. The **sample** button fills the
 box with a worked example for whichever format is selected, so you can see the
 shape before importing your own.
 
-!!! note "State persists across tabs"
-    Switching tabs keeps your scenario, slider values, and results — you resume
+!!! note "State persists across surfaces"
+    Switching surfaces keeps your scenario, slider values, and results — you resume
     exactly where you left off.
