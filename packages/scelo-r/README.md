@@ -105,6 +105,10 @@ sc_wmtr("pension scheme with a weakening sponsor covenant")   # same numbers as 
 sc_council("…scenario…", subset = 32)                          # needs the swarm (Scelo IDE / bun run dev:swarm)
 sc_society("…scenario…", size = 200)
 
+# ── charts (base graphics, no extra package) ────────────────────────────
+sc_plot_rates(df, "country", "lapsed", exposure = "exposure")  # rate by group, 95 % intervals
+sc_plot_relativities(m); sc_plot_projection(bt); sc_plot_scr(scr); sc_plot_csm(csm); sc_plot_triangle(tri)
+
 # ── hard data ───────────────────────────────────────────────────────────
 t <- sc_hard(sc_mack(tri)$table, assumptions = list(tail = 1))
 sc_report(t, sc_life_table(), to = "pack.html")

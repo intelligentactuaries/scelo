@@ -31,8 +31,8 @@ _TERM_RE = re.compile(r"^C\((.+)\)$")
 
 
 def design_matrix(df: pd.DataFrame, formula: str, *, drop_first: bool = True, base: Union[str, Dict[str, str]] = "frequent",
-                  levels: Optional[Dict[str, List[str]]] = None) -> Tuple[pd.Series, pd.DataFrame, List[str], Dict[str, List[str]]]:
-    """Parse ``y ~ a + C(b) + c`` into (y, X with intercept, term names, dummy levels per factor).
+                  levels: Optional[Dict[str, List[str]]] = None) -> Tuple[pd.Series, pd.DataFrame, List[str], Dict[str, List[str]], Dict[str, str]]:
+    """Parse ``y ~ a + C(b) + c`` into (y, X with intercept, term names, dummy levels per factor, base level per factor).
 
     Categoricals are one-hot with one level dropped as the base: the most
     frequent level (``base="frequent"``, Scelo's default), the alphabetically
@@ -48,6 +48,7 @@ def design_matrix(df: pd.DataFrame, formula: str, *, drop_first: bool = True, ba
     cols: Dict[str, np.ndarray] = {"Intercept": np.ones(len(df))}
     names: List[str] = []
     used_levels: Dict[str, List[str]] = {}
+    base_levels: Dict[str, str] = {}
     for t in terms:
         m = _TERM_RE.match(t)
         is_cat = bool(m)
@@ -59,6 +60,8 @@ def design_matrix(df: pd.DataFrame, formula: str, *, drop_first: bool = True, ba
             s_ = col.astype(str)
             if levels is not None and name in levels:
                 use = list(levels[name])
+                rest = [v for v in s_.unique() if v not in use]
+                base_levels[name] = rest[0] if rest else ""
             else:
                 counts = s_.value_counts()
                 if isinstance(base, dict) and name in base:
@@ -71,6 +74,7 @@ def design_matrix(df: pd.DataFrame, formula: str, *, drop_first: bool = True, ba
                 else:
                     ordered = sorted(counts.index, key=lambda v: (-int(counts[v]), v))  # most common level first = base
                 use = ordered[1:] if drop_first else ordered
+                base_levels[name] = ordered[0]
             for lv in use:
                 cols[f"{name}[{lv}]"] = (s_ == lv).to_numpy(dtype=float)
             used_levels[name] = use
@@ -79,7 +83,7 @@ def design_matrix(df: pd.DataFrame, formula: str, *, drop_first: bool = True, ba
             cols[name] = pd.to_numeric(col, errors="coerce").to_numpy(dtype=float)
             names.append(name)
     X = pd.DataFrame(cols, index=df.index)
-    return y, X, names, used_levels
+    return y, X, names, used_levels, base_levels
 
 
 # ── families ─────────────────────────────────────────────────────────────
@@ -128,6 +132,7 @@ class GLMResult:
     power: Optional[float] = None
     levels: Dict[str, List[str]] = field(default_factory=dict)
     base: Union[str, Dict[str, str]] = "frequent"
+    base_levels: Dict[str, str] = field(default_factory=dict)
 
     def __repr__(self) -> str:  # pragma: no cover
         head = (f"GLM {self.family} ({self.link}) · {self.formula} · n = {self.n:,} · deviance {self.deviance:,.2f}"
@@ -136,7 +141,7 @@ class GLMResult:
 
     def predict(self, df: pd.DataFrame, offset: Optional[Union[str, Sequence[float]]] = None) -> np.ndarray:
         """Predicted means for new data (offset column by name, or a sequence of exposures)."""
-        _, X, _, _ = design_matrix(df.assign(**{self.formula.split("~")[0].strip(): 0}), self.formula, levels=self.levels)
+        _, X, _, _, _ = design_matrix(df.assign(**{self.formula.split("~")[0].strip(): 0}), self.formula, levels=self.levels)
         X = X.reindex(columns=self.params.index, fill_value=0.0)
         eta = X.to_numpy() @ self.params.to_numpy()
         off = offset if offset is not None else self.offset_col
@@ -204,7 +209,7 @@ def glm(df: pd.DataFrame, formula: str, family: str = "poisson", *, offset: Opti
     if family not in _FAMILIES:
         raise ValueError(f"family must be one of {', '.join(_FAMILIES)}")
     link = link or _FAMILIES[family]["link"]
-    y, X, terms, used_levels = design_matrix(df, formula, base=base)
+    y, X, terms, used_levels, base_levels = design_matrix(df, formula, base=base)
     keep = y.notna() & X.notna().all(axis=1)
     if offset:
         off_vals = pd.to_numeric(df[offset], errors="coerce")
@@ -294,7 +299,7 @@ def glm(df: pd.DataFrame, formula: str, family: str = "poisson", *, offset: Opti
         + "; with a log link, exp(estimate) is the multiplicative relativity.",
     ])
     return GLMResult(family, link, formula, t, params, cov, dev, null_dev, aic, n, df_resid, disp, fitted, eng, offset, weights, terms,
-                     power if family == "tweedie" else None, used_levels, base)
+                     power if family == "tweedie" else None, used_levels, base, base_levels)
 
 
 def _norm_cdf(z: np.ndarray) -> np.ndarray:
@@ -313,7 +318,7 @@ def relativities(model: GLMResult) -> Table:
     for term in model.terms:
         levels = [(k, v) for k, v in model.params.items() if str(k).startswith(f"{term}[")]
         if levels:
-            rows.append({"factor": term, "level": "(base)", "relativity": 1.0, "estimate": 0.0})
+            rows.append({"factor": term, "level": f"{model.base_levels.get(term, '')} (base)".strip(), "relativity": 1.0, "estimate": 0.0})
             for k, v in levels:
                 rows.append({"factor": term, "level": str(k)[len(term) + 1:-1], "relativity": math.exp(v), "estimate": v})
         elif term in model.params.index:

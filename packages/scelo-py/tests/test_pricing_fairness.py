@@ -37,14 +37,14 @@ def test_numpy_irls_matches_statsmodels(motor, family, formula, kw):
 def test_relativities_predict_lift(motor):
     m = sc.glm(motor, "claims ~ C(region) + age", "poisson", offset="exposure", engine="numpy")
     rel = m.relativities()
-    assert rel[rel["level"] == "(base)"]["relativity"].tolist() == [1.0]
+    assert rel[rel["level"].str.endswith("(base)")]["relativity"].tolist() == [1.0]
     assert abs(rel[rel["level"] == "WC"]["relativity"].iloc[0] - np.exp(0.3)) < 0.15
     pred = m.predict(motor.head(5))
     assert np.allclose(pred, m.fitted[:5])
     lift = sc.lift(motor.claims, m.fitted, bins=5, exposure=motor.exposure)
     assert len(lift) == 5 and lift["actual"].iloc[-1] > lift["actual"].iloc[0]
     assert 0 < sc.gini(motor.claims, m.fitted) < 1
-    assert sc.rate_table(m).loc["(base)"].notna().any()
+    assert sc.rate_table(m).loc["GP (base)"].notna().any()
 
 
 def test_freq_sev_loss_ratio(motor):

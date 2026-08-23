@@ -50,7 +50,7 @@ test_that("price: frequency and severity relativities with the models attached",
   expect_false("estimate" %in% names(t))
   expect_false(is.null(attr(t, "severity")))
   expect_false(is.null(attr(t, "frequency")))
-  expect_equal(t$frequency[t$level == "(base)"], 1)
+  expect_equal(t$frequency[endsWith(t$level, "(base)")], 1)
   expect_equal(t$pure_premium, t$frequency * t$severity)
   expect_equal(t$frequency, sc_relativities(attr(t, "frequency"))$relativity)
   expect_equal(t$severity, sc_relativities(attr(t, "severity"))$relativity)

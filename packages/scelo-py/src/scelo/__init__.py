@@ -34,12 +34,13 @@ from .workspace import *  # noqa: F401,F403
 from .lifelib import *  # noqa: F401,F403
 from .hard import *  # noqa: F401,F403
 from .pipelines import *  # noqa: F401,F403
+from .viz import *  # noqa: F401,F403
 import importlib as _importlib  # noqa: E402
 
 _importlib.import_module("scelo.accessor")  # registers df.sc
 
 _MODULES = ("io", "profile", "clean", "combine", "life", "reserving", "finance", "risk", "pricing", "fairness", "climate", "wmtr", "swarm",
-            "workspace", "lifelib", "hard", "pipelines")
+            "workspace", "lifelib", "hard", "pipelines", "viz")
 __all__ = sorted(
     {n for m in _MODULES for n in getattr(_importlib.import_module(f"scelo.{m}"), "__all__", [])}
     | {"Table", "as_table", "notes", "COLUMN_ALIASES", "find_column", "infer", "audit", "clear_audit", "enable_audit", "content_hash", "__version__"}

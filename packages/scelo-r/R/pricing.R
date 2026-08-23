@@ -43,7 +43,8 @@
 #'   and statsmodels) or a named list `list(factor = level)`.
 #' @param levels Named list of the dummy levels to build per categorical
 #'   (used by [sc_predict()] to reproduce the training design).
-#' @return A list: `y`, `X` (numeric matrix), `terms`, `levels`.
+#' @return A list: `y`, `X` (numeric matrix), `terms`, `levels` (dummy levels
+#'   per factor), `base_levels` (the reference level per factor).
 #' @examples
 #' d <- sc_design_matrix(sc_sample("claims"), "paid ~ C(line) + age")
 #' colnames(d$X)
@@ -58,6 +59,7 @@ sc_design_matrix <- function(df, formula, drop_first = TRUE, levels = NULL, base
   cols <- list(Intercept = rep(1, n))
   names_out <- character()
   cat_levels <- list()
+  base_levels <- list()
   for (t in terms) {
     m <- regmatches(t, regexec(.SC_TERM_RE, t))[[1]]
     is_cat <- length(m) > 0
@@ -68,6 +70,8 @@ sc_design_matrix <- function(df, formula, drop_first = TRUE, levels = NULL, base
       s <- as.character(col)
       if (!is.null(levels[[name]])) {
         use <- levels[[name]]
+        rest <- setdiff(unique(s), use)
+        base_levels[[name]] <- if (length(rest)) rest[1] else ""
       } else {
         cnt <- table(s)
         if (is.list(base) && !is.null(base[[name]])) {
@@ -80,6 +84,7 @@ sc_design_matrix <- function(df, formula, drop_first = TRUE, levels = NULL, base
           lv <- names(cnt)[order(-as.integer(cnt), names(cnt), method = "radix")]   # most common level first = base
         }
         use <- if (drop_first) lv[-1] else lv
+        base_levels[[name]] <- lv[1]
       }
       for (l in use) cols[[sprintf("%s[%s]", name, l)]] <- as.numeric(s == l)
       cat_levels[[name]] <- use
@@ -90,7 +95,7 @@ sc_design_matrix <- function(df, formula, drop_first = TRUE, levels = NULL, base
   }
   X <- do.call(cbind, cols)
   colnames(X) <- names(cols)
-  list(y = y, X = X, terms = names_out, levels = cat_levels)
+  list(y = y, X = X, terms = names_out, levels = cat_levels, base_levels = base_levels)
 }
 
 .sc_family_object <- function(family, link, power) {
@@ -208,7 +213,7 @@ sc_glm <- function(df, formula, family = "poisson", offset = NULL, weights = NUL
                   ))
     structure(list(family = family, link = link, formula = formula, coef = t, params = beta, cov = cov, deviance = dev, null_deviance = null_dev,
                    aic = aic, n = n, df_resid = df_resid, dispersion = disp, fitted = unname(mu), engine = eng, offset_col = offset,
-                   weights_col = weights, terms = d$terms, power = if (family == "tweedie") power else NULL, levels = d$levels, iterations = fit$iter, base = base),
+                   weights_col = weights, terms = d$terms, power = if (family == "tweedie") power else NULL, levels = d$levels, iterations = fit$iter, base = base, base_levels = d$base_levels),
               class = c("scelo_glm", "list"))
   })
 }
@@ -286,7 +291,7 @@ sc_relativities <- function(model) {
     pre <- paste0(term, "[")
     keys <- names(params)[startsWith(names(params), pre)]
     if (length(keys)) {
-      rows[[length(rows) + 1]] <- data.frame(factor = term, level = "(base)", relativity = 1, estimate = 0, stringsAsFactors = FALSE)
+      rows[[length(rows) + 1]] <- data.frame(factor = term, level = trimws(paste(model$base_levels[[term]] %||% "", "(base)")), relativity = 1, estimate = 0, stringsAsFactors = FALSE)
       for (k in keys) {
         rows[[length(rows) + 1]] <- data.frame(factor = term, level = substr(k, nchar(term) + 2, nchar(k) - 1), relativity = exp(params[[k]]), estimate = unname(params[[k]]), stringsAsFactors = FALSE)
       }
