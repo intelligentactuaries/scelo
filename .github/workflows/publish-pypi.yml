@@ -1,0 +1,39 @@
+# Publishes packages/scelo-py to PyPI via Trusted Publishing (OIDC) —
+# no API token stored anywhere. Trigger: push a tag like scelo-py-v0.1.0.
+#
+# One-time PyPI-side setup (account: the lab's PyPI account):
+#   pypi.org → Your account → Publishing → "Add a new pending publisher"
+#     PyPI project name : scelo
+#     Owner             : intelligentactuaries
+#     Repository        : scelo
+#     Workflow name     : publish-pypi.yml
+#     Environment name  : pypi
+# After the first successful publish it becomes a normal trusted publisher.
+name: publish-pypi
+
+on:
+  push:
+    tags: ["scelo-py-v*"]
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write   # OIDC for PyPI Trusted Publishing
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build sdist and wheel
+        run: |
+          python -m pip install --quiet build twine
+          python -m build packages/scelo-py
+      - name: Check metadata
+        run: python -m twine check packages/scelo-py/dist/*
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: packages/scelo-py/dist
