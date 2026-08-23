@@ -78,12 +78,40 @@ Caveats worth knowing before you download:
 |---|---|
 | [`apps/scelo-ide/`](apps/scelo-ide/) | The Electron desktop wrapper. Bundles Python 3.13 + R 4.3 + Pyright + R-LSP + ripgrep + git plumbing. Owns OS-touching surfaces (file I/O, exec, terminal, dataset downloads, OS keychain, auto-update). |
 | [`apps/swarm/`](apps/swarm/) | The swarm — a Bun + React decision-support cockpit: a stratified 192-agent council + 1000-agent society simulator over a WMTR forecast. Scelo's "Convene council" / "simulate from scenario" call its API and the swarm panel embeds its UI. **Bundled into Scelo IDE**: the installer ships it as a compiled server + built client and the IDE starts it with the app (loopback :3010) and stops it on quit; `bun run dev:swarm` remains the dev pair. |
+| [`packages/scelo-py/`](packages/scelo-py/) | **scelo for Python** (`pip install scelo`, `import scelo as sc`). The brain layer as a library: the IDE's typing, cleaning, life tables, reserving engine, curves, risk, pricing, fairness, the WMTR forecast (bit-exact with the IDE) and a client for the bundled swarm. numpy + pandas only. |
+| [`packages/scelo-r/`](packages/scelo-r/) | **scelo for R** (`library(scelo)`, `sc_clean(df)`, `sc_reserve(df)`). The same functions with `sc_` names, base R only, tested against the Python package's numbers. |
 | [`apps/web/`](apps/web/) | The React + Vite renderer. Workspace shell (Monaco editor + file tree + xterm terminal + sidebar panels: files, search, outline, git, problems, tests), the Scelo brain layer (soft → tools → hard workstations), the workspace AI panel, the welcome view, the swarm route. |
 | [`LICENSE`](LICENSE) | Scelo IDE Source-Available License v1.1. See [License](#license). |
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | How to file bugs, propose changes, set up locally, the commit / PR conventions. |
 | [`SECURITY.md`](SECURITY.md) | Responsible-disclosure policy. |
 | [`ONBOARDING.md`](ONBOARDING.md) | Architecture tour — the apps/web ↔ apps/scelo-ide IPC contract, the bus pattern, migrations, sample workspaces, house rules. |
 | [`logo/`](logo/) | The Scelo mark as a standalone SVG and a React component. |
+
+## Scelo without the IDE: Python and R
+
+For actuaries who would rather write code than click, the brain layer ships
+as two libraries with the same functions, the same defaults and the same
+numbers as the workstation:
+
+```python
+import scelo as sc
+df  = sc.load("claims.csv")      # typed the way the IDE types it
+df  = sc.clean(df)               # the cleaning banner's safe ops, audited
+res = sc.reserve(df)             # chain ladder, Mack, BF, ODP bootstrap
+sc.report(res, to="pack.html")   # a board pack: tables that carry their basis and hash
+```
+
+```r
+library(scelo)
+df  <- sc_load("claims.csv")
+df  <- sc_clean(df)
+res <- sc_reserve(df)
+sc_report(res, to = "pack.html")
+```
+
+See [`packages/scelo-py/README.md`](packages/scelo-py/README.md) and
+[`packages/scelo-r/README.md`](packages/scelo-r/README.md); `sc.cheatsheet()`
+/ `sc_cheatsheet()` print the one-screen map.
 
 ## Quick start
 

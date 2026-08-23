@@ -117,6 +117,10 @@ nav:
       - swarm/index.md
       - Running it: swarm/running.md
       - Council, society & simulation: swarm/views.md
+  - Python & R libraries:
+      - libraries/index.md
+      - Python (scelo): libraries/python.md
+      - R (scelo): libraries/r.md
   - AI providers: ai-providers.md
   - Chat: chat.md
   - Exporting: exporting.md
