@@ -1,8 +1,7 @@
 # R notes
 
 ```r
-install.packages("remotes")
-remotes::install_github("intelligentactuaries/scelo", subdir = "packages/scelo-r")
+install.packages("scelo", repos = c("https://intelligentactuaries.com/r", getOption("repos")))
 library(scelo)
 ```
 
