@@ -1,0 +1,102 @@
+# The one-line workflows (test_hard_misc.py::test_experience_and_quick and
+# test_pricing_fairness.py::test_price_pipeline). Each depends on tools
+# functions from other files and skips until they exist.
+
+motor_data <- function() {
+  set.seed(5)
+  n <- 4000
+  region <- sample(c("GP", "WC", "KZN"), n, replace = TRUE, prob = c(0.5, 0.3, 0.2))
+  age <- sample(18:69, n, replace = TRUE)
+  exposure <- stats::runif(n, 0.2, 1)
+  mu <- exp(-2 + ifelse(region == "WC", 0.3, ifelse(region == "KZN", -0.2, 0)) + 0.01 * (age - 40)) * exposure
+  data.frame(region = region, age = age, exposure = exposure, claims = stats::rpois(n, mu), sev = stats::rgamma(n, 2, scale = exp(7 + 0.02 * (age - 40))), stringsAsFactors = FALSE)
+}
+
+test_that("experience: A/E, graduation and the life table in one call", {
+  skip_if_not(exists("sc_ae") && exists("sc_graduate") && exists("sc_life_table"), "life tools not available yet")
+  df <- data.frame(age = rep(40:79, each = 2), deaths = rep(c(1, 2), 40), exposure = 500)
+  sc_clear_audit()
+  e <- sc_experience(df)
+  expect_s3_class(e, "scelo_table")
+  expect_identical(e[["age band"]][nrow(e)], "total")
+  expect_identical(names(e)[1:3], c("age band", "exposure", "actual deaths"))
+  lt <- attr(e, "life_table")
+  g <- attr(e, "graduated")
+  expect_s3_class(lt, "scelo_table")
+  expect_s3_class(g, "scelo_table")
+  expect_identical(names(g), c("age", "crude", "graduated", "residual", "weight"))
+  expect_equal(nrow(g), 40)
+  expect_true(all(g$graduated > 0))
+  expect_equal(lt$age[1], 40)
+  expect_match(sc_notes(e)[length(sc_notes(e))], "^Graduated crude rates \\(WH h=100\\) and the life table on them sit in attr\\(, \"graduated\"\\) / attr\\(, \"life_table\"\\); e\\(40\\) = [0-9.]+ on the graduated basis\\.$")
+  expect_equal(as.numeric(sub(".*e\\(40\\) = ([0-9.]+) .*", "\\1", sc_notes(e)[length(sc_notes(e))])), round(lt$ex[1], 2))
+  expect_true("sc_experience" %in% sc_audit()$fn)
+  # explicit columns, a path, a different band and h
+  names(df) <- c("x", "d", "etr")
+  p <- file.path(tempdir(), "exp.csv")
+  utils::write.csv(df, p, row.names = FALSE)
+  e2 <- sc_experience(p, age = "x", deaths = "d", exposure = "etr", band = 10, h = 10)
+  expect_identical(e2[["age band"]][1], "40–49")
+  expect_match(sc_notes(e2)[length(sc_notes(e2))], "WH h=10\\)")
+  expect_equal(sum(e2[["actual deaths"]][-nrow(e2)]), 120)
+})
+
+test_that("price: frequency and severity relativities with the models attached", {
+  skip_if_not(exists("sc_glm") && exists("sc_relativities") && exists("sc_freq_sev"), "pricing tools not available yet")
+  motor <- motor_data()
+  t <- sc_price(motor, "claims ~ C(region) + age", offset = "exposure", severity = "sev", by = "region")
+  expect_s3_class(t, "scelo_table")
+  expect_identical(names(t), c("factor", "level", "frequency", "severity", "pure_premium"))
+  expect_false("estimate" %in% names(t))
+  expect_false(is.null(attr(t, "severity")))
+  expect_false(is.null(attr(t, "frequency")))
+  expect_equal(t$frequency[t$level == "(base)"], 1)
+  expect_equal(t$pure_premium, t$frequency * t$severity)
+  expect_equal(t$frequency, sc_relativities(attr(t, "frequency"))$relativity)
+  expect_equal(t$severity, sc_relativities(attr(t, "severity"))$relativity)
+  expect_match(sc_title(t), "^Pricing relativities · claims ~ C\\(region\\) \\+ age$")
+  expect_match(sc_basis(t), "^frequency poisson base [0-9.e+-]+ · severity gamma base [0-9.e+-]+$")
+  s <- attr(t, "summary")
+  expect_s3_class(s, "scelo_table")
+  expect_true("total" %in% s$region)
+  # the WC relativity is above the base, KZN below (the data were drawn that way)
+  expect_gt(t$frequency[t$level == "WC"], 1)
+  expect_lt(t$frequency[t$level == "KZN"], 1)
+  # frequency only, formula object, no summary
+  t2 <- sc_price(motor, claims ~ C(region), offset = "exposure")
+  expect_identical(names(t2), c("factor", "level", "frequency"))
+  expect_null(attr(t2, "summary"))
+  expect_null(attr(t2, "severity"))
+  expect_identical(sc_basis(t2), sprintf("frequency poisson base %.4g", attr(sc_relativities(attr(t2, "frequency")), "base_rate")))
+})
+
+test_that("quick: profile plus plan plus describe", {
+  skip_if_not(exists("sc_suggest") && exists("sc_profile") && exists("sc_describe"), "cleaning tools not available yet")
+  q <- sc_quick(sc_sample("dirty"))
+  expect_s3_class(q, "scelo_table")
+  plan <- attr(q, "plan")
+  expect_s3_class(plan, "scelo_table")
+  expect_gt(nrow(plan), 5)
+  expect_match(sc_notes(q)[length(sc_notes(q)) - 1], sprintf("^Cleaning plan: %d op\\(s\\) \\(%d safe\\); see attr\\(, \"plan\"\\)\\.$", nrow(plan), sum(plan$safe)))
+  expect_match(sc_notes(q)[length(sc_notes(q))], "^Widest relative spread: `.+` \\(CV [0-9.]+\\)\\.$")
+  d <- attr(q, "describe")
+  expect_s3_class(d, "scelo_table")
+  expect_identical(d$column[1], sub("^Widest relative spread: `(.+)` .*$", "\\1", sc_notes(q)[length(sc_notes(q))]))
+  # a path works, and a frame without numbers has no describe note
+  p <- file.path(tempdir(), "quick.csv")
+  utils::write.csv(data.frame(a = c("x", "y", ""), b = c("p", "q", "r")), p, row.names = FALSE)
+  q2 <- sc_quick(p)
+  expect_equal(nrow(q2), 2)
+  expect_match(sc_notes(q2)[length(sc_notes(q2))], "^Cleaning plan: ")
+})
+
+test_that("the cheat-sheet prints the sc_ names", {
+  expect_output(sc_cheatsheet(), "soft data → tools → hard data")
+  expect_output(sc_cheatsheet(), "sc_wmtr\\(\"pension scheme, weakening covenant\"\\)")
+  expect_output(sc_cheatsheet(), "sc_report\\(t1, t2, to = \"pack.html\"\\)")
+  out <- utils::capture.output(ret <- sc_cheatsheet())
+  expect_identical(ret, SC_CHEATSHEET)
+  expect_identical(paste(out, collapse = "\n"), sub("\n$", "", SC_CHEATSHEET))
+  expect_false(grepl("sc\\.", SC_CHEATSHEET))
+  expect_false(grepl("\u2014", SC_CHEATSHEET))
+})

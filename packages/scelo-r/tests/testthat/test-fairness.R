@@ -1,0 +1,76 @@
+# Fairness: group metrics and the protected-direction audit (golden values
+# from the Python package).
+
+test_that("group fairness metrics flag a biased score", {
+  set.seed(3)
+  n <- 3000
+  g <- sample(c("a", "b"), n, replace = TRUE)
+  y <- as.integer(stats::runif(n) < 0.3)
+  score <- ifelse(g == "a", 0.6, 0.4) + stats::rnorm(n, 0, 0.05)
+  df <- data.frame(g = g, y = y, score = score, stringsAsFactors = FALSE)
+  f <- sc_fairness(df, "y", "score", "g")
+  expect_s3_class(f, "scelo_table")
+  expect_setequal(f$g, c("a", "b"))
+  expect_equal(names(f), c("g", "n", "base_rate", "selection_rate", "tpr", "fpr", "precision", "mean_score", "disparate_impact"))
+  expect_true(min(f$disparate_impact) < 0.8)
+  expect_equal(max(f$disparate_impact), 1)
+  expect_equal(sum(f$n), n)
+  expect_true(f$selection_rate[f$g == "a"] > 0.9 && f$selection_rate[f$g == "b"] < 0.1)
+  expect_close(f$base_rate, tapply(y, g, mean)[f$g])
+  expect_close(f$mean_score, tapply(score, g, mean)[f$g])
+  expect_equal(sc_title(f), "Fairness · score vs y by g")
+  expect_equal(sc_basis(f), "threshold 0.5")
+  expect_match(sc_notes(f)[1], "^Demographic parity gap [0-9.]+; disparate impact min [0-9.]+ \\(below the four-fifths rule\\)\\.$")
+  expect_match(sc_notes(f)[2], "^Equal-opportunity gap \\(TPR\\) [0-9.]+; equalised-odds FPR gap [0-9.]+\\.$")
+  di <- sc_disparate_impact(df, "score", "g")
+  expect_equal(names(di), c("a", "b"))
+  expect_true(abs(max(di) - 1) < 1e-12)
+  expect_close(di[["b"]], f$disparate_impact[f$g == "b"])
+  expect_identical(sc_parity, sc_disparate_impact)
+  # the same data with 0/1 decisions and a fair score passes the rule
+  df$dec <- as.integer(df$score >= 0.5)
+  f2 <- sc_fairness(df, "y", "dec", "g")
+  expect_equal(f2$selection_rate, f$selection_rate)
+  fair <- data.frame(g = g, y = y, score = stats::runif(n))
+  expect_match(sc_notes(sc_fairness(fair, "y", "score", "g"))[1], "passes the four-fifths rule")
+  # outcome given as strings, group order of first appearance, a custom threshold
+  df$yes <- ifelse(df$y == 1, "yes", "no")
+  f3 <- sc_fairness(df, "yes", "score", "g", threshold = 0.55)
+  expect_equal(f3$base_rate, f$base_rate)
+  expect_equal(f3$g, unique(g))
+  expect_equal(sc_basis(f3), "threshold 0.55")
+})
+
+test_that("the protected-direction audit matches the golden values and removes alignment", {
+  gd <- golden()
+  df <- split_df(gd$fairness_audit$data)
+  t <- sc_fairness_audit(df, "score", "prot", "age")
+  expect_s3_class(t, "scelo_table")
+  gt <- split_df(gd$fairness_audit$table)
+  expect_equal(t$stage, c("before", "after"))
+  for (col in c("alignment", "disparity", "fit_to_legitimate")) expect_close(t[[col]], gt[[col]], 1e-8, label = col)
+  expect_true(t$alignment[1] > 0.1 && t$alignment[2] < 0.05)
+  expect_true(t$disparity[2] < t$disparity[1])
+  expect_true(t$fit_to_legitimate[2] >= t$fit_to_legitimate[1] - 0.05)
+  expect_equal(sc_title(t), "Protected-direction audit · score vs prot")
+  expect_equal(sc_basis(t), "legitimate: age · n = 2,000")
+  mit <- attr(t, "mitigated")
+  expect_length(mit, nrow(df))
+  expect_true(abs(stats::cor(mit - stats::fitted(stats::lm(score ~ age, df)), df$prot)) < 1e-8)
+  expect_equal(sc_fairness_audit(df, "score", "prot", list("age"))$alignment, t$alignment)
+})
+
+test_that("the audit validates its input", {
+  df <- data.frame(age = 1:8, prot = rep(0:1, 4), score = 1:8)
+  expect_error(sc_fairness_audit(df, "score", "prot", "age"), "need at least 10 complete rows")
+  expect_error(sc_fairness_audit(df, "score", "prot", "income"), 'column "income" is not in the data')
+  set.seed(9)
+  clean <- data.frame(age = stats::runif(200, 18, 70), prot = stats::rbinom(200, 1, 0.5))
+  clean$score <- 2 * clean$age
+  a <- sc_fairness_audit(clean, "score", "prot", "age")
+  expect_equal(a$alignment, c(0, 0))
+  expect_true(abs(a$fit_to_legitimate[1] - 1) < 1e-10)
+  const <- clean
+  const$prot <- 1
+  expect_equal(sc_fairness_audit(const, "score", "prot", "age")$disparity, c(0, 0))
+})

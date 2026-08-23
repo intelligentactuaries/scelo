@@ -1,0 +1,20 @@
+test_that("rate conversions round-trip", {
+  expect_equal(sc_effective(sc_nominal(0.05, 12), 12), 0.05)
+  expect_equal(sc_from_force(sc_force(0.05)), 0.05)
+  expect_equal(sc_discount_rate(0.05), 0.05 / 1.05)
+  expect_equal(sc_risk_margin(c(100, 80, 60), 0.04, 0.06), 0.06 * (100 / 1.04 + 80 / 1.04^2 + 60 / 1.04^3))
+})
+
+test_that("mx/qx, epv and the A/E test", {
+  expect_equal(sc_mx_to_qx(0.01), 0.01 / 1.005)
+  expect_equal(sc_qx_to_mx(sc_mx_to_qx(c(0.01, 0.02))), c(0.01, 0.02))
+  expect_equal(sc_mx_to_qx(0.01, "constant"), 1 - exp(-0.01))
+  skip_if_not(exists("sc_factors"))
+  f <- sc_factors(i = 0.04)
+  expect_equal(sc_epv(rep(1, 200), 65, i = 0.04), f[f$age == 65, "äx"], tolerance = 1e-6)
+  expect_equal(sc_epv(rep(1, 200), 65, i = 0.04, on_death = TRUE), f[f$age == 65, "Ax"], tolerance = 1e-6)
+  t <- sc_ae_test(120, 100)
+  expect_equal(t$ae, 1.2)
+  expect_lt(t$p_value, 0.05)
+  expect_true(t$lower95 < 1.2 && 1.2 < t$upper95)
+})
