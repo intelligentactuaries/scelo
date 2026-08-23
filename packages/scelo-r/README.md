@@ -19,7 +19,12 @@ sc_report(res, to = "pack.html")    # a board pack: numbers that carry their bas
 ## Install
 
 ```r
-# from the repository checkout
+install.packages("scelo", repos = c("https://intelligentactuaries.com/r", getOption("repos")))
+
+# or straight from GitHub
+remotes::install_github("intelligentactuaries/scelo", subdir = "packages/scelo-r")
+
+# or from a repository checkout
 install.packages("packages/scelo-r", repos = NULL, type = "source")
 
 # optional extras
