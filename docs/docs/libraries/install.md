@@ -44,16 +44,24 @@ pip install "scelo[stats,viz] @ git+https://github.com/intelligentactuaries/scel
 ## R
 
 ```r
-# from the repository checkout
-install.packages("scelo/packages/scelo-r", repos = NULL, type = "source")
+install.packages("scelo", repos = c("https://intelligentactuaries.com/r", getOption("repos")))
 library(scelo)
 ```
 
-or without leaving R:
+That is the lab's own CRAN-style repository at
+[intelligentactuaries.com/r](https://intelligentactuaries.com/r) — CRAN
+itself requires an open-source licence, so the package is distributed
+from there and from GitHub instead. The package is pure R, so the source
+install works on Windows, macOS and Linux without build tools. Two other
+routes to the same thing:
 
 ```r
+# straight from GitHub
 install.packages("remotes")
 remotes::install_github("intelligentactuaries/scelo", subdir = "packages/scelo-r")
+
+# from a repository checkout
+install.packages("scelo/packages/scelo-r", repos = NULL, type = "source")
 ```
 
 R ≥ 4.1. The package imports nothing beyond `stats`, `utils` and `tools`,
