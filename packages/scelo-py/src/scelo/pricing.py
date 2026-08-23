@@ -30,8 +30,16 @@ __all__ = ["glm", "relativities", "freq_sev", "loss_ratio", "burning_cost", "lif
 _TERM_RE = re.compile(r"^C\((.+)\)$")
 
 
-def design_matrix(df: pd.DataFrame, formula: str, *, drop_first: bool = True) -> Tuple[pd.Series, pd.DataFrame, List[str]]:
-    """Parse ``y ~ a + C(b) + c`` into (y, X with intercept, term names). Categoricals are one-hot with the first level dropped."""
+def design_matrix(df: pd.DataFrame, formula: str, *, drop_first: bool = True, base: Union[str, Dict[str, str]] = "frequent",
+                  levels: Optional[Dict[str, List[str]]] = None) -> Tuple[pd.Series, pd.DataFrame, List[str], Dict[str, List[str]]]:
+    """Parse ``y ~ a + C(b) + c`` into (y, X with intercept, term names, dummy levels per factor).
+
+    Categoricals are one-hot with one level dropped as the base: the most
+    frequent level (``base="frequent"``, Scelo's default), the alphabetically
+    first (``base="first"``, what R and statsmodels do), or a
+    ``{factor: level}`` dict. ``levels`` fixes the dummy levels per factor
+    (used by ``predict`` so new data is encoded like the training data).
+    """
     if "~" not in formula:
         raise ValueError('formula must look like "y ~ x1 + C(x2)"')
     lhs, rhs = (s.strip() for s in formula.split("~", 1))
@@ -39,6 +47,7 @@ def design_matrix(df: pd.DataFrame, formula: str, *, drop_first: bool = True) ->
     y = pd.to_numeric(df[lhs], errors="coerce")
     cols: Dict[str, np.ndarray] = {"Intercept": np.ones(len(df))}
     names: List[str] = []
+    used_levels: Dict[str, List[str]] = {}
     for t in terms:
         m = _TERM_RE.match(t)
         is_cat = bool(m)
@@ -47,16 +56,30 @@ def design_matrix(df: pd.DataFrame, formula: str, *, drop_first: bool = True) ->
             raise KeyError(f"column {name!r} is not in the data")
         col = df[name]
         if is_cat or not pd.api.types.is_numeric_dtype(col) or pd.api.types.is_bool_dtype(col):
-            levels = pd.Series(col.astype(str)).value_counts().index.tolist()
-            levels = sorted(levels, key=lambda v: (-(col.astype(str) == v).sum(), v))  # most common level first = base
-            for lv in (levels[1:] if drop_first else levels):
-                cols[f"{name}[{lv}]"] = (col.astype(str) == lv).to_numpy(dtype=float)
+            s_ = col.astype(str)
+            if levels is not None and name in levels:
+                use = list(levels[name])
+            else:
+                counts = s_.value_counts()
+                if isinstance(base, dict) and name in base:
+                    ref = str(base[name])
+                    if ref not in counts.index:
+                        raise KeyError(f"base level {ref!r} is not a level of {name!r}")
+                    ordered = [ref] + sorted(v for v in counts.index if v != ref)
+                elif base == "first":
+                    ordered = sorted(counts.index)
+                else:
+                    ordered = sorted(counts.index, key=lambda v: (-int(counts[v]), v))  # most common level first = base
+                use = ordered[1:] if drop_first else ordered
+            for lv in use:
+                cols[f"{name}[{lv}]"] = (s_ == lv).to_numpy(dtype=float)
+            used_levels[name] = use
             names.append(name)
         else:
             cols[name] = pd.to_numeric(col, errors="coerce").to_numpy(dtype=float)
             names.append(name)
     X = pd.DataFrame(cols, index=df.index)
-    return y, X, names
+    return y, X, names, used_levels
 
 
 # ── families ─────────────────────────────────────────────────────────────
@@ -103,6 +126,8 @@ class GLMResult:
     weights_col: Optional[str] = None
     terms: List[str] = field(default_factory=list)
     power: Optional[float] = None
+    levels: Dict[str, List[str]] = field(default_factory=dict)
+    base: Union[str, Dict[str, str]] = "frequent"
 
     def __repr__(self) -> str:  # pragma: no cover
         head = (f"GLM {self.family} ({self.link}) · {self.formula} · n = {self.n:,} · deviance {self.deviance:,.2f}"
@@ -111,7 +136,7 @@ class GLMResult:
 
     def predict(self, df: pd.DataFrame, offset: Optional[Union[str, Sequence[float]]] = None) -> np.ndarray:
         """Predicted means for new data (offset column by name, or a sequence of exposures)."""
-        _, X, _ = design_matrix(df.assign(**{self.formula.split("~")[0].strip(): 0}), self.formula)
+        _, X, _, _ = design_matrix(df.assign(**{self.formula.split("~")[0].strip(): 0}), self.formula, levels=self.levels)
         X = X.reindex(columns=self.params.index, fill_value=0.0)
         eta = X.to_numpy() @ self.params.to_numpy()
         off = offset if offset is not None else self.offset_col
@@ -164,20 +189,22 @@ def _irls(y: np.ndarray, X: np.ndarray, family: str, link: str, offset: np.ndarr
 
 @tool
 def glm(df: pd.DataFrame, formula: str, family: str = "poisson", *, offset: Optional[str] = None, weights: Optional[str] = None,
-        link: Optional[str] = None, power: float = 1.5, engine: str = "auto") -> GLMResult:
+        link: Optional[str] = None, power: float = 1.5, engine: str = "auto", base: Union[str, Dict[str, str]] = "frequent") -> GLMResult:
     """Fit a GLM: ``glm(df, "claims ~ C(region) + age", "poisson", offset="exposure")``.
 
     Families: poisson, gamma, gaussian, binomial, tweedie (``power``),
     inverse_gaussian; default links log / log / identity / logit / log /
     log. ``offset`` is a column entering as log(offset) (exposure);
     ``weights`` prior weights. ``engine``: auto (statsmodels if importable,
-    else numpy), "statsmodels" or "numpy".
+    else numpy), "statsmodels" or "numpy". ``base``: the reference level of
+    each categorical, "frequent" (most common, the default), "first"
+    (alphabetical, as R / statsmodels) or ``{factor: level}``.
     """
     family = family.lower()
     if family not in _FAMILIES:
         raise ValueError(f"family must be one of {', '.join(_FAMILIES)}")
     link = link or _FAMILIES[family]["link"]
-    y, X, terms = design_matrix(df, formula)
+    y, X, terms, used_levels = design_matrix(df, formula, base=base)
     keep = y.notna() & X.notna().all(axis=1)
     if offset:
         off_vals = pd.to_numeric(df[offset], errors="coerce")
@@ -263,9 +290,11 @@ def glm(df: pd.DataFrame, formula: str, family: str = "poisson", *, offset: Opti
         coef["exp"] = np.exp(coef["estimate"])
     t = Table(coef, title=f"GLM · {family} · {formula}", basis=f"{family} / {link} · {eng}" + (f" · offset log({offset})" if offset else ""), stage="hard", notes=[
         f"n = {n:,}, deviance {dev:,.2f} on {df_resid} df (null {null_dev:,.2f}), dispersion {disp:.4g}" + (f", AIC {aic:,.1f}" if aic is not None else "") + ".",
-        "Categorical base levels are the most frequent level; with a log link, exp(estimate) is the multiplicative relativity.",
+        ("Categorical base levels are the most frequent level" if base == "frequent" else "Categorical base levels are the alphabetically first level" if base == "first" else "Categorical base levels as given")
+        + "; with a log link, exp(estimate) is the multiplicative relativity.",
     ])
-    return GLMResult(family, link, formula, t, params, cov, dev, null_dev, aic, n, df_resid, disp, fitted, eng, offset, weights, terms, power if family == "tweedie" else None)
+    return GLMResult(family, link, formula, t, params, cov, dev, null_dev, aic, n, df_resid, disp, fitted, eng, offset, weights, terms,
+                     power if family == "tweedie" else None, used_levels, base)
 
 
 def _norm_cdf(z: np.ndarray) -> np.ndarray:
@@ -291,7 +320,8 @@ def relativities(model: GLMResult) -> Table:
             rows.append({"factor": term, "level": "per unit", "relativity": math.exp(model.params[term]), "estimate": model.params[term]})
     base = math.exp(model.params["Intercept"])
     t = Table(pd.DataFrame(rows), title=f"Relativities · {model.formula}", basis=f"base rate exp(intercept) = {base:.6g}", stage="hard",
-              notes=["Multiply the base rate by one relativity per factor; the base level of each factor is its most frequent level."])
+              notes=["Multiply the base rate by one relativity per factor; the base level of each factor is " + (
+                  "its most frequent level." if model.base == "frequent" else "its alphabetically first level." if model.base == "first" else "as given.")])
     t.attrs["base_rate"] = base
     return t
 

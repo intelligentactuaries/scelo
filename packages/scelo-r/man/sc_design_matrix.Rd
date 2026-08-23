@@ -4,7 +4,13 @@
 \alias{sc_design_matrix}
 \title{Design matrix for the Scelo formula subset}
 \usage{
-sc_design_matrix(df, formula, drop_first = TRUE, levels = NULL)
+sc_design_matrix(
+  df,
+  formula,
+  drop_first = TRUE,
+  levels = NULL,
+  base = "frequent"
+)
 }
 \arguments{
 \item{df}{A data frame.}
@@ -15,6 +21,10 @@ sc_design_matrix(df, formula, drop_first = TRUE, levels = NULL)
 
 \item{levels}{Named list of the dummy levels to build per categorical
 (used by \code{\link[=sc_predict]{sc_predict()}} to reproduce the training design).}
+
+\item{base}{Reference level of each categorical: \code{"frequent"} (the most
+common level, Scelo's default), \code{"first"} (alphabetical, as \code{\link[stats:glm]{stats::glm()}}
+and statsmodels) or a named list \code{list(factor = level)}.}
 }
 \value{
 A list: \code{y}, \code{X} (numeric matrix), \code{terms}, \code{levels}.

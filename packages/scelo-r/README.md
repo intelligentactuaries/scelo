@@ -80,6 +80,8 @@ sc_commutation(i = 0.04)           # Dx Nx Cx Mx Rx Sx
 sc_factors(i = 0.04, n = 10)       # äx ax Ax äx:n A¹x:n nEx Ax:n
 sc_premium(i = 0.04, product = "term")
 sc_ae(experience_df); sc_graduate(crude_qx, h = 100); sc_lee_carter(rates_df); sc_kaplan_meier(df); sc_basicterm(mp)
+sc_scr_life(mp); sc_csm(mp, ra = 0.05)                       # standard-formula SCR and IFRS 17 CSM on the projection
+sc_lifelib_run("basiclife", "BasicTerm_ME", mp)               # the real lifelib model through reticulate
 
 # ── reserving ────────────────────────────────────────────────────────────
 tri <- sc_triangle(claims)
