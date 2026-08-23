@@ -17,6 +17,12 @@ extra_javascript:
 theme:
   name: material
   language: en
+  # The S-mark. The masthead is dark in both schemes (ink in light, charcoal
+  # in slate — see extra.css --md-primary-fg-color), so the header logo is the
+  # cream-ink variant; the favicon keeps the self-theming original, which
+  # follows the OS the way a browser tab should.
+  logo: assets/img/scelo-mark-cream.svg
+  favicon: assets/img/scelo-icon.svg
   # overrides/main.html only adds a <head> script: the one-time palette
   # reset, which has to run before Material's bundle reads localStorage.
   custom_dir: overrides
