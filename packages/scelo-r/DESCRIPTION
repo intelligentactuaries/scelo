@@ -19,7 +19,7 @@ Encoding: UTF-8
 URL: https://github.com/intelligentactuaries/scelo, https://docs.intelligentactuaries.com/scelo/
 BugReports: https://github.com/intelligentactuaries/scelo/issues
 Depends: R (>= 4.1)
-Imports: stats, utils, tools
+Imports: stats, utils, tools, graphics, grDevices
 Suggests: jsonlite, curl, testthat (>= 3.0.0), data.table, ChainLadder, lifecontingencies, statmod, reticulate, knitr, rmarkdown
 Config/testthat/edition: 3
 Roxygen: list(markdown = TRUE)
