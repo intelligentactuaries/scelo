@@ -20,6 +20,24 @@ sentinel ages (-999 / 9999), mixed Y/N booleans, mixed date formats, case-only
 duplicates, mojibake, BOM/NBSP characters, missing markers, and duplicate rows —
 so every cleaning tool has something to do.
 
+## Combining datasets
+
+**+ combine data** stages further files alongside the active dataset —
+appended (rows stacked, columns matched case-insensitively) or joined
+left (columns brought across on a key), with Scelo suggesting the
+strategy, the key and a confidence from the schemas and the data itself.
+The preview walks the whole chain before anything is applied, and a join
+never multiplies rows: the first right-hand match wins, and clashing
+column names get `_2`, `_3`.
+
+**There is no limit on how many datasets you stage** — the machine's
+memory is the only cap. The toolbar counts what's loaded, and a file is
+refused only when holding it (plus the working copy a combine needs)
+would run the app out of memory; the refusal says so in bytes — the
+limit, what's in use, and this file's share. The combined result's row
+budget comes from the same headroom, so any truncation is reported
+against your machine's actual capacity, not a fixed cutoff.
+
 ## The grid
 
 Each column header shows:
@@ -30,6 +48,11 @@ Each column header shows:
 
 Click a column to **select** it; its full summary appears on the right
 (type, missing, unique, top values, five-number summary, histogram).
+
+Wide datasets pan sideways like a spreadsheet: a **two-finger trackpad
+swipe** moves the grid horizontally (without escaping into the browser's
+back-gesture), and **++shift++ + scroll** does the same with a mouse
+wheel — a plain vertical wheel still scrolls rows.
 
 ## Cleaning
 
@@ -58,6 +81,27 @@ The full op set:
 !!! tip "Or just ask"
     Type **`clean my data`** in the soft-data chat and Scelo runs the
     recommended set for you — no backend needed, fully local.
+
+## Suggested actuarial tables
+
+When a dataset lands (or you describe what you are after), Scelo reads
+its column shape and proposes the actuarial tables that follow — as
+ready-made chips above the chat input. On offer: life tables
+(qx px lx dx Lx Tx eₓ), commutation columns (Dx Nx Cx Mx Rx Sx), annuity
+& assurance factors, net-premium grids, run-off triangles, discount
+curves, A/E by age band and lifelib-shaped model points. Bases are read
+from a qx column, an lx column, or deaths ÷ exposure — falling back to
+the illustrative Gompertz–Makeham basis, always labelled as such.
+
+Or ask in your own words in the stage chat:
+
+```
+build a life table at 4% from age 20 to 100
+```
+
+Requests are parsed deterministically and run fully offline — and the
+same table vocabulary is understood by the chat in Soft Data, Tools and
+Hard Data alike.
 
 ## Date formatting
 

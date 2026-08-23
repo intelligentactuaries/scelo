@@ -18,7 +18,8 @@ The heart of the deliberation:
   Psychologist, Lawyer, …), coloured and bordered by their final stance.
 - A **readback Sankey**: profession → *trust the forecast?* → confidence band.
 - A **decision sidebar** — click an agent to see its per-round reasoning,
-  key risk, and final vote; click a profession to see the group's aggregate.
+  key risk, and final vote — or open an [audit interview](#audit-interviews)
+  with them; click a profession to see the group's aggregate.
 
 ### Recommended interventions
 
@@ -31,6 +32,35 @@ the forecast shifts.
 
 A broader simulated society's reaction to the same scenario, with configurable
 society parameters (income mix, education mix, employment mix, culture).
+A cluster's member list opens individual members — each of whom you can
+[interview](#audit-interviews) about the sentiment they recorded.
+
+## Audit interviews
+
+Trust, but interview. On **Council reactions** and **Society pulse** you
+can put any member back on the record and converse with them about the
+position they recorded — watching whether they stay consistent with it.
+
+- **Pick a member.** 🎲 in the header band picks one at random; shuffle
+  in the drawer moves on to the next; or choose someone specific from the
+  agent inspector (council) or a cluster's member list (society).
+- **The drawer shows the record.** The member's card carries who they are
+  and exactly what they recorded: all three rounds with confidences, the
+  final vote, key risk and recommended intervention — and, for
+  professionals, the justification they wrote, with its framework,
+  citations and formulas.
+- **Every reply is checked.** The member answers from inside the original
+  brief — the same persona, IAAI canon and WMTR evidence they deliberated
+  with — and each reply is verified against the recorded verdict and
+  badged **consistent**, **drift** or **unverified**, with a running
+  tally. Ready-made probes test the position from different angles.
+- **It is all audit trail.** Transcripts persist to the swarm's chat log,
+  and `GET /api/run/:id/interviews` indexes who has been interviewed,
+  with their consistency counts.
+
+The recorded verdict stands — an interview never rewrites a vote.
+Professionals defend their position with the theory on their record;
+society members answer as ordinary people, in plain language.
 
 ## Simulation
 
