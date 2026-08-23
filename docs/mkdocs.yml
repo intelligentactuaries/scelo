@@ -119,8 +119,24 @@ nav:
       - Council, society & simulation: swarm/views.md
   - Python & R libraries:
       - libraries/index.md
-      - Python (scelo): libraries/python.md
-      - R (scelo): libraries/r.md
+      - Install & set up: libraries/install.md
+      - Quickstart: libraries/quickstart.md
+      - The Table: libraries/table.md
+      - Soft data: libraries/soft-data.md
+      - Life & mortality: libraries/life.md
+      - Reserving: libraries/reserving.md
+      - Finance: libraries/finance.md
+      - Risk: libraries/risk.md
+      - Pricing & fairness: libraries/pricing-fairness.md
+      - Climate: libraries/climate.md
+      - Forecast & the swarm: libraries/forecast-swarm.md
+      - Workspace diagnostics: libraries/workspace.md
+      - Hard data & reports: libraries/hard-data.md
+      - Charts: libraries/charts.md
+      - The command line: libraries/cli.md
+      - Python notes: libraries/python.md
+      - R notes: libraries/r.md
+      - Function reference: libraries/reference.md
   - AI providers: ai-providers.md
   - Chat: chat.md
   - Exporting: exporting.md
