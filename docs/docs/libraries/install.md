@@ -8,18 +8,20 @@ needs numpy and pandas alone; the R package needs base R alone.
 ## Python
 
 ```bash
+pip install scelo
+```
+
+[`scelo` on PyPI](https://pypi.org/project/scelo/). Python 3.9+ on any
+OS. Two other routes to the same thing:
+
+```bash
+# straight from GitHub
+pip install "scelo @ git+https://github.com/intelligentactuaries/scelo#subdirectory=packages/scelo-py"
+
+# from a repository checkout
 git clone https://github.com/intelligentactuaries/scelo
 pip install scelo/packages/scelo-py
 ```
-
-or straight from GitHub without a checkout:
-
-```bash
-pip install "scelo @ git+https://github.com/intelligentactuaries/scelo#subdirectory=packages/scelo-py"
-```
-
-Python 3.9+ on any OS. `pip install scelo` from PyPI is coming; until the
-package is published there, the commands above are the way in.
 
 ### Extras
 
@@ -38,7 +40,7 @@ present:
 | `scelo[dev]` | pytest + the working set | `pytest` runs the golden-value suite |
 
 ```bash
-pip install "scelo[stats,viz] @ git+https://github.com/intelligentactuaries/scelo#subdirectory=packages/scelo-py"
+pip install "scelo[stats,viz]"
 ```
 
 ## R

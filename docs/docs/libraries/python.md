@@ -1,7 +1,7 @@
 # Python notes
 
 ```bash
-pip install "scelo @ git+https://github.com/intelligentactuaries/scelo#subdirectory=packages/scelo-py"
+pip install scelo
 ```
 
 Python ≥ 3.9, numpy + pandas only in the core; the
