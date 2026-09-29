@@ -818,8 +818,13 @@ ipcMain.handle("scelo:runPython", (_event, req: ExecRequest) =>
   execRuntime(pythonBinary(), "-c", req),
 );
 
+// --vanilla --slave: bridge scripts answer on stdout with ONE JSON line. Plain
+// `R -e` (macOS / Linux) also prints the start-up banner and echoes every
+// command with its prompt, burying that JSON mid-stream — the renderer's
+// JSON.parse could never succeed, so the lifecontingencies bridge failed on
+// every run. (Windows goes through Rscript, which never echoed.)
 ipcMain.handle("scelo:runR", (_event, req: ExecRequest) =>
-  execRScript(req.script, { args: req.argv, stdin: req.stdin }),
+  execRScript(req.script, { args: req.argv, stdin: req.stdin, vanilla: true, slave: true }),
 );
 
 // ─── LLM bridge ─────────────────────────────────────────────────────────

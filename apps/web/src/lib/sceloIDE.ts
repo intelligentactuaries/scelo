@@ -420,6 +420,30 @@ export function distillPythonError(stderr: string, exitCode: number | null): str
   return tail.slice(0, 300) || `python exited with code ${exitCode}`;
 }
 
+/** Why a bridge script failed, best source first: the script's structured
+ *  `{"error": "<Type>: <msg>"}` on STDOUT (every bridge wraps its body in
+ *  try/except and prints one before exiting non-zero), then the last line of
+ *  stderr (a traceback's actual exception), then the exit code. Reading
+ *  stderr alone lost the reason — it was never written there — and the card
+ *  said "python exited with code 1", or quoted an unrelated warning line. */
+export function bridgeFailureReason(res: {
+  stdout: string;
+  stderr: string;
+  exitCode: number | null;
+}): string {
+  const lines = (res.stdout || "").trim().split("\n");
+  const last = lines[lines.length - 1]?.trim() ?? "";
+  if (last) {
+    try {
+      const parsed = JSON.parse(last) as { error?: unknown } | null;
+      if (parsed && typeof parsed.error === "string" && parsed.error) return parsed.error;
+    } catch {
+      // stdout wasn't the structured error — fall through to stderr
+    }
+  }
+  return distillPythonError(res.stderr, res.exitCode);
+}
+
 export async function runPython(
   script: string,
   opts?: { argv?: string[]; stdin?: string },

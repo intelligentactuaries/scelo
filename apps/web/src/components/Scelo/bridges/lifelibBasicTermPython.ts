@@ -21,8 +21,14 @@
 //   3. Parse stdout JSON into the same RunResult-friendly shape the TS
 //      runner produces, so the rest of Scelo doesn't care which path ran.
 
-import { getRuntimeStatus, isDesktopIDE, runPython } from "../../../lib/sceloIDE";
+import {
+  bridgeFailureReason,
+  getRuntimeStatus,
+  isDesktopIDE,
+  runPython,
+} from "../../../lib/sceloIDE";
 import type { Dataset } from "../SoftDataWorkstation";
+import { hasModelPoints } from "../lifelibBasicTerm";
 import { LIFELIB_PRELUDE } from "./lifelibPrelude";
 
 export interface BasicTermPythonOutput {
@@ -130,14 +136,20 @@ except Exception as e:
     _fail(f"{type(e).__name__}: {e}")
 `;
 
-/** Returns the BasicTerm projection from the bundled Python lifelib, or
- *  null if (a) we're not in the desktop IDE, (b) the bundled Python isn't
- *  available, or (c) lifelib failed for any reason. Callers should fall
- *  back to the in-browser TS port (`runBasicTermProjection`) in that case. */
+/** Returns the BasicTerm projection from the bundled Python lifelib; null
+ *  when the bridge does not apply (not in the desktop IDE, or the file is not
+ *  model points — the in-browser port `runBasicTermProjection` then speaks for
+ *  the data). A missing runtime or a lifelib failure THROWS with the reason,
+ *  which runModelAsync puts on the card. */
 export async function runBasicTermPython(dataset: Dataset): Promise<BasicTermPythonOutput | null> {
   if (!isDesktopIDE()) return null;
+  // Not model points → not this bridge's job (the in-browser runner says
+  // what is missing). Everything past this point that stops the run is a
+  // real failure and THROWS with its reason — it used to return null, which
+  // the card could only report as "bridge produced no result".
+  if (!hasModelPoints(dataset)) return null;
   const status = await getRuntimeStatus();
-  if (!status.python) return null;
+  if (!status.python) throw new Error("bundled Python runtime not detected");
 
   const payload = JSON.stringify({
     name: dataset.name,
@@ -145,12 +157,15 @@ export async function runBasicTermPython(dataset: Dataset): Promise<BasicTermPyt
     rows: dataset.rows,
   });
   const res = await runPython(BASICTERM_SCRIPT, { stdin: payload });
-  if (!res.ok) return null;
+  if (!res.ok) throw new Error(bridgeFailureReason(res));
+  let parsed: unknown;
   try {
-    const parsed = JSON.parse(res.stdout.trim());
-    if (parsed && typeof parsed === "object" && "error" in parsed) return null;
-    return parsed as BasicTermPythonOutput;
+    parsed = JSON.parse(res.stdout.trim());
   } catch {
-    return null;
+    throw new Error("lifelib BasicTerm bridge returned non-JSON output");
   }
+  if (parsed && typeof parsed === "object" && "error" in parsed) {
+    throw new Error(String((parsed as { error: unknown }).error));
+  }
+  return parsed as BasicTermPythonOutput;
 }

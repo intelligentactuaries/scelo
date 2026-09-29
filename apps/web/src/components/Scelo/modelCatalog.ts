@@ -35,6 +35,9 @@ export type CatalogModel = {
   name: string;
   family: ModelFamily;
   description: string;
+  /** What the dataset must contain for the model to run at all — shown to
+   *  the AI picker, whose picks are then checked by modelApplicability. */
+  needs?: string;
   // Free-form tags used by the local heuristic to match a column signature.
   // E.g. a dataset with `origin_year`, `dev_period`, `paid` triggers
   // tags `triangle`, `paid`, `reserving`.
@@ -47,6 +50,7 @@ export const MODEL_CATALOG: CatalogModel[] = [
     id: "chain-ladder",
     name: "Chain Ladder",
     family: "reserving",
+    needs: "a claims triangle: origin_year, dev_period, paid",
     description: "Cumulative paid-claims projection via age-to-age factors.",
     applicableTo: ["triangle", "paid", "incurred", "reserving"],
   },
@@ -54,6 +58,7 @@ export const MODEL_CATALOG: CatalogModel[] = [
     id: "mack",
     name: "Mack Chain Ladder",
     family: "reserving",
+    needs: "a claims triangle: origin_year, dev_period, paid",
     description: "Chain ladder with closed-form variance / reserve uncertainty.",
     applicableTo: ["triangle", "paid", "reserving", "uncertainty"],
   },
@@ -61,6 +66,7 @@ export const MODEL_CATALOG: CatalogModel[] = [
     id: "bornhuetter-ferguson",
     name: "Bornhuetter–Ferguson",
     family: "reserving",
+    needs: "a claims triangle: origin_year, dev_period, paid",
     description: "Blends chain-ladder with an a-priori expected loss ratio.",
     applicableTo: ["triangle", "paid", "reserving", "sparse", "prior"],
   },
@@ -68,6 +74,7 @@ export const MODEL_CATALOG: CatalogModel[] = [
     id: "bootstrap-ibnr",
     name: "Bootstrap (IBNR)",
     family: "reserving",
+    needs: "a claims triangle: origin_year, dev_period, paid",
     description: "Resampling residuals for a full IBNR predictive distribution.",
     applicableTo: ["triangle", "paid", "reserving", "uncertainty", "simulation"],
   },
@@ -76,6 +83,7 @@ export const MODEL_CATALOG: CatalogModel[] = [
     id: "lee-carter",
     name: "Lee–Carter",
     family: "mortality",
+    needs: "a mortality table: death rates (qx / mx / deaths + exposure) by age AND year, 3+ years",
     description: "Stochastic age-time mortality model with a single time index.",
     applicableTo: ["mortality", "age", "year", "deaths", "exposure"],
   },
@@ -83,6 +91,7 @@ export const MODEL_CATALOG: CatalogModel[] = [
     id: "cbd",
     name: "Cairns–Blake–Dowd",
     family: "mortality",
+    needs: "a mortality table: death rates (qx / mx / deaths + exposure) by age AND year, 3+ years",
     description: "Two-factor old-age mortality model.",
     applicableTo: ["mortality", "age", "year", "deaths"],
   },
@@ -90,6 +99,7 @@ export const MODEL_CATALOG: CatalogModel[] = [
     id: "lifecontingencies",
     name: "Life Contingencies",
     family: "mortality",
+    needs: "a life table: age with qx (or mx, or deaths + exposure)",
     description: "Annuity and insurance pricing on a life table.",
     applicableTo: ["mortality", "age", "sex", "pricing", "lifecontingencies"],
   },
@@ -98,6 +108,7 @@ export const MODEL_CATALOG: CatalogModel[] = [
     id: "glm-frequency",
     name: "GLM · frequency",
     family: "pricing",
+    needs: "a claim-count column plus categorical rating factors",
     description: "Poisson GLM for claim frequency.",
     applicableTo: ["claims", "frequency", "covariates", "pricing"],
   },
@@ -105,6 +116,7 @@ export const MODEL_CATALOG: CatalogModel[] = [
     id: "glm-severity",
     name: "GLM · severity",
     family: "pricing",
+    needs: "a claim-amount column plus categorical rating factors",
     description: "Gamma or lognormal GLM for claim severity.",
     applicableTo: ["claims", "severity", "covariates", "pricing"],
   },
@@ -112,6 +124,8 @@ export const MODEL_CATALOG: CatalogModel[] = [
     id: "gbm",
     name: "GBM (LightGBM)",
     family: "pricing",
+    needs:
+      "50+ rows with a numeric target (claim amount, claim count, 0/1 outcome, or the last numeric column)",
     description: "Gradient boosting for nonlinear pricing.",
     applicableTo: ["claims", "covariates", "pricing", "nonlinear"],
   },
@@ -119,6 +133,7 @@ export const MODEL_CATALOG: CatalogModel[] = [
     id: "shap",
     name: "SHAP explainability",
     family: "pricing",
+    needs: "50+ rows with a numeric target (it explains the GBM)",
     description: "Per-row contribution attribution for any tree / linear model.",
     applicableTo: ["pricing", "explainability", "transparency"],
   },
@@ -127,6 +142,7 @@ export const MODEL_CATALOG: CatalogModel[] = [
     id: "climada",
     name: "CLIMADA",
     family: "climate",
+    needs: "an exposure column: sum insured / TIV / exposure",
     description: "Climate hazard exposure and impact modelling.",
     applicableTo: ["climate", "geographic", "hazard", "exposure"],
   },
@@ -134,6 +150,7 @@ export const MODEL_CATALOG: CatalogModel[] = [
     id: "parametric-design",
     name: "Parametric Design",
     family: "climate",
+    needs: "a monetary loss column",
     description: "Trigger-based payouts for cat / climate.",
     applicableTo: ["climate", "parametric", "trigger"],
   },
@@ -170,6 +187,7 @@ export const MODEL_CATALOG: CatalogModel[] = [
     id: "basicterm-projection",
     name: "BasicTerm · projection",
     family: "life",
+    needs: "a model-point file: age_at_entry, sum_assured, policy_term",
     description:
       "Monthly term-life projection on a model-point file (pol-in-force, mortality decrement, premium, claim, reserve, profit). Lifelib → basiclife / BasicTerm_ME (BasicTerm_M for a pure new-business file).",
     applicableTo: [
@@ -189,6 +207,7 @@ export const MODEL_CATALOG: CatalogModel[] = [
     id: "cashvalue-savings",
     name: "CashValue · savings",
     family: "life",
+    needs: "a model-point file: age_at_entry, sum_assured, policy_term",
     description:
       "Universal-life / savings projection with account value, lapse, surrender and crediting. Lifelib → savings / CashValue_ME.",
     applicableTo: [
@@ -206,6 +225,7 @@ export const MODEL_CATALOG: CatalogModel[] = [
     id: "ifrs17-csm",
     name: "IFRS 17 · CSM roll-forward",
     family: "life",
+    needs: "a model-point file: age_at_entry, sum_assured, policy_term",
     description:
       "IFRS 17 LRC / LIC / CSM release for a portfolio of insurance contracts. Lifelib → ifrs17sim (legacy since 0.12.0; ifrs17a is the active engine but takes nominal cash flows, not model points).",
     applicableTo: ["life", "ifrs17", "csm", "lrc", "lic", "model-points", "reporting"],
@@ -214,6 +234,7 @@ export const MODEL_CATALOG: CatalogModel[] = [
     id: "solvency2-life",
     name: "Solvency II · life SCR",
     family: "life",
+    needs: "a model-point file: age_at_entry, sum_assured, policy_term",
     description:
       "Standard formula SCR for the life underwriting module (mortality, longevity, disability, lapse up/down/mass, expense, revision, CAT). Lifelib → annuallife / TradLife_A_EX1 (replaces the deprecated solvency2 project).",
     applicableTo: ["life", "solvency2", "scr", "underwriting", "model-points"],
@@ -222,6 +243,7 @@ export const MODEL_CATALOG: CatalogModel[] = [
     id: "nested-stochastic",
     name: "Nested stochastic",
     family: "life",
+    needs: "a model-point file: age_at_entry, sum_assured, policy_term",
     description:
       "Outer real-world × inner risk-neutral projection for guarantees and TVOG. Lifelib → nestedlife (legacy since 0.12.0).",
     applicableTo: ["life", "savings", "guarantees", "tvog", "stochastic", "esg"],
@@ -237,6 +259,7 @@ export const MODEL_CATALOG: CatalogModel[] = [
     id: "cluster-modelpoints",
     name: "Cluster · model-point compression",
     family: "life",
+    needs: "a model-point file: age_at_entry, sum_assured, policy_term",
     description:
       "Compresses 100k+ policies into <=K representative model points preserving liability sensitivity. Lifelib → cluster.",
     applicableTo: ["life", "model-points", "compression", "cluster", "performance"],
@@ -286,6 +309,7 @@ export const MODEL_CATALOG: CatalogModel[] = [
     id: "workspace-bottleneck",
     name: "Workspace bottleneck",
     family: "workspace",
+    needs: "3+ numeric columns",
     description:
       "Compresses many drivers into a few sparse, non-negative, nameable codes and a broadcast matrix B to the report heads. Generalizes Lee-Carter (rank-1) and NMF; validated by causal alignment.",
     applicableTo: [

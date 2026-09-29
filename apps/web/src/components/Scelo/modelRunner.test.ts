@@ -4,11 +4,15 @@
 // / hp / tar_weight — and, crucially, NO `paid` column).
 
 import { describe, expect, test } from "bun:test";
-import type { Dataset, Row } from "@scelo/core";
+import { type Dataset, type Row, buildWorkspaceDemo } from "@scelo/core";
 import {
   BRIDGED_MODEL_IDS,
+  type RunResult,
+  comparableKey,
   detectCategoricalCovariates,
   detectFrequencyTarget,
+  detectModelFeatures,
+  detectModelTarget,
   detectMonetaryColumn,
   findExposureColumn,
   profileNumericColumns,
@@ -298,23 +302,64 @@ describe("GLM runners", () => {
     expect(done.headline.label).toContain("(in-browser approximation)");
     expect(done.headline.value).toBeGreaterThan(0);
   });
+
+  test("severity headline is claim-weighted, not an average of group means", () => {
+    // 9 claims of 100 in "a", 1 claim of 1,000 in "b": mean severity is
+    // (900 + 1000) / 10 = 190. The old average-of-group-means said 550.
+    const rows: Row[] = [
+      ...Array.from({ length: 9 }, () => ({ segment: "a", paid: 100 })),
+      { segment: "b", paid: 1000 },
+    ];
+    const ds: Dataset = { name: "sev.csv", columns: ["segment", "paid"], rows };
+    const r = runModel("glm-severity", ds);
+    expect(r.status).toBe("done");
+    expect(r.headline.value).toBeCloseTo(190, 9);
+  });
 });
 
-describe("GBM / SHAP approximations", () => {
-  test("GBM headline is labelled as an approximation", () => {
+describe("GBM / SHAP · fitted, holdout-scored, exactly attributed", () => {
+  test("GBM fits the claim count and reports an honest holdout metric", () => {
+    // past_claims is pure noise in this fixture — a real model must NOT
+    // manufacture skill from it (the old mock printed AUC 0.8 regardless).
     const r = runModel("gbm", makeMotorDataset());
     expect(r.status).toBe("done");
-    expect(r.headline.label).toContain("(in-browser approximation)");
+    expect(r.source).toBe("browser");
+    expect(r.headline.label).toContain("(holdout)");
+    expect(r.headline.label).toContain("past_claims");
+    expect(r.detail?.targetKind).toBe("count");
+    expect(Number.isFinite(r.headline.value)).toBe(true);
+    expect(r.headline.value).toBeLessThan(0.1);
+    const imp = r.detail?.importances as Array<{ feature: string; weight: number }>;
+    expect(imp.length).toBeGreaterThan(0);
+    expect(imp.reduce((s, i) => s + i.weight, 0)).toBeCloseTo(1, 9);
+    expect(r.series?.x[0]).toBe("D1"); // holdout lift by predicted decile
   });
 
-  test("SHAP uses the dataset's own factors and labels the approximation", () => {
-    const r = runModel("shap", makeMotorDataset());
-    expect(r.status).toBe("done");
-    expect(r.headline.label).toContain("(in-browser approximation)");
-    expect(r.series?.x.length).toBeGreaterThan(0);
+  test("the reported case: SHAP on the all-numeric workspace demo finds the real drivers", () => {
+    // Screenshot 2026-09-29: SHAP errored ("need categorical columns") on
+    // this sample, and GBM showed a made-up AUC 0.920. survival_to_80 is
+    // 0.7·trend + 1.1·smoking − 0.3·trend² + noise — the attribution must say so.
+    const demo = buildWorkspaceDemo();
+    const gbm = runModel("gbm", demo);
+    expect(gbm.status).toBe("done");
+    expect(gbm.detail?.target).toBe("survival_to_80");
+    expect(gbm.headline.label).toContain("R² (holdout)");
+    expect(gbm.headline.value).toBeGreaterThan(0.9);
+    const shap = runModel("shap", demo);
+    expect(shap.status).toBe("done");
+    const ranked = (shap.detail?.importances as Array<{ feature: string }>).map((i) => i.feature);
+    expect(ranked.slice(0, 2).sort()).toEqual(["mortality_trend", "smoking_index"]);
+    expect(shap.headline.label).toBe(`mean |SHAP| share · ${ranked[0]}`);
+    expect(shap.secondary[0]?.label.startsWith(ranked[0])).toBe(true);
+    // Ten high-variance nuisance columns carry next to nothing.
+    const w = shap.detail?.importances as Array<{ feature: string; weight: number }>;
+    const nuisance = w.filter((i) =>
+      ["premium_band", "web_logins", "survey_score"].includes(i.feature),
+    );
+    for (const i of nuisance) expect(i.weight).toBeLessThan(0.02);
   });
 
-  test("SHAP unsupported when no candidate columns match", () => {
+  test("SHAP refuses, with the reason, when there is nothing to fit", () => {
     const numericOnly: Dataset = {
       name: "nums.csv",
       columns: ["a", "b"],
@@ -322,7 +367,48 @@ describe("GBM / SHAP approximations", () => {
     };
     const r = runModel("shap", numericOnly);
     expect(r.status).toBe("error");
-    expect(r.error).toContain("No candidate feature columns");
+    expect(r.error).toContain("need at least 50");
+  });
+});
+
+describe("GBM target + feature detection", () => {
+  test("a monetary column wins; its claims siblings are dropped as leakage", () => {
+    const motor = makeMotorDataset();
+    const ds: Dataset = {
+      ...motor,
+      columns: [...motor.columns, "paid", "incurred"],
+      rows: motor.rows.map((r, i) => ({ ...r, paid: 1000 + (i % 13) * 70, incurred: 1200 + i })),
+    };
+    const target = detectModelTarget(ds);
+    expect(target?.column).toBe("paid");
+    expect(target?.kind).toBe("continuous");
+    const feats = detectModelFeatures(ds, target as NonNullable<typeof target>).map((f) => f.name);
+    expect(feats).not.toContain("paid");
+    expect(feats).not.toContain("incurred"); // incurred ≈ paid + case reserve
+    expect(feats).not.toContain("past_claims");
+    expect(feats).not.toContain("id");
+    expect(feats).toContain("province");
+    expect(feats).toContain("hp");
+  });
+
+  test("a 0/1 outcome column becomes a binary target", () => {
+    const ds: Dataset = {
+      name: "lapse.csv",
+      columns: ["age", "premium_band", "lapsed"],
+      rows: Array.from({ length: 80 }, (_, i) => ({
+        age: 20 + (i % 50),
+        premium_band: i % 4,
+        lapsed: i % 3 === 0 ? 1 : 0,
+      })),
+    };
+    expect(detectModelTarget(ds)).toMatchObject({ column: "lapsed", kind: "binary" });
+  });
+
+  test("otherwise the last numeric column, and the card says why", () => {
+    const t = detectModelTarget(buildWorkspaceDemo());
+    expect(t?.column).toBe("survival_to_80");
+    expect(t?.reason).toContain("last numeric column");
+    expect(t?.claimsOutcome).toBe(false);
   });
 });
 
@@ -362,6 +448,37 @@ describe("climate runners", () => {
     const done = runModel("parametric-design", withPaid);
     expect(done.status).toBe("done");
     expect(done.secondary.find((s) => s.label === "method")?.value).toBe("p90 of paid");
+  });
+});
+
+describe("comparableKey · which runs share an estimates axis", () => {
+  const run = (modelId: string, family: RunResult["family"], label: string): RunResult => ({
+    modelId,
+    family,
+    status: "done",
+    startedAt: 0,
+    headline: { label, value: 1 },
+    secondary: [],
+    blurb: "",
+  });
+
+  test("every reserving reserve estimate groups together, whatever its label", () => {
+    // In-browser labels AND the bridged ones — distinct strings, one quantity.
+    const keys = [
+      run("chain-ladder", "reserving", "IBNR"),
+      run("mack", "reserving", "IBNR"),
+      run("bornhuetter-ferguson", "reserving", "BF reserve"),
+      run("bootstrap-ibnr", "reserving", "IBNR p50"),
+      run("bootstrap-ibnr", "reserving", "IBNR mean"),
+    ].map(comparableKey);
+    expect(new Set(keys).size).toBe(1);
+  });
+
+  test("other families keep grouping by their own headline", () => {
+    expect(comparableKey(run("lee-carter", "mortality", "q(65) in 2035"))).toBe("q(65) in 2035");
+    expect(comparableKey(run("chain-ladder", "reserving", "IBNR"))).not.toBe(
+      comparableKey(run("scr-standard", "capital", "SCR")),
+    );
   });
 });
 
@@ -449,24 +566,69 @@ describe("wired pipeline · upstream results change downstream runs", () => {
     }
   });
 
-  test("SHAP explains the wired GBM's variance screen", () => {
+  test("SHAP explains the wired GBM's own fitted trees", () => {
     const gbm = runModel("gbm", motor);
     const importances = gbm.detail?.importances as Array<{ feature: string; weight: number }>;
     expect(Array.isArray(importances)).toBe(true);
     expect(importances.length).toBeGreaterThan(0);
     const shap = runModel("shap", motor, new Map([["gbm", gbm]]));
     expect(shap.wiredFrom?.[0]?.id).toBe("gbm");
-    expect(shap.secondary[0]?.label).toBe(importances[0]?.feature);
+    expect(shap.detail?.source).toBe("wired-gbm");
+    expect(shap.secondary[0]?.label.startsWith(importances[0]?.feature ?? "?")).toBe(true);
+    // Standalone SHAP refits the same deterministic model: same attribution,
+    // only the provenance differs.
+    const alone = runModel("shap", motor);
+    expect(alone.wiredFrom).toBeUndefined();
+    expect(alone.detail?.importances).toEqual(shap.detail?.importances);
   });
 
-  test("life contingencies price off the wired Lee-Carter projection", () => {
-    const lc = runModel("lee-carter", motor);
-    const standalone = runModel("lifecontingencies", motor);
-    const wired = runModel("lifecontingencies", motor, new Map([["lee-carter", lc]]));
-    expect(wired.wiredFrom?.[0]?.id).toBe("lee-carter");
+  test("the reported case: no mortality table → no Lee–Carter / CBD / annuity numbers", () => {
+    // Screenshot 2026-09-29 23:05 — on the workspace demo the canvas showed
+    // q(65) 0.00951 and a₆₅ 8.65 as completed results, from canned rates.
+    const demo = buildWorkspaceDemo();
+    const lc = runModel("lee-carter", demo);
+    expect(lc.status).toBe("error");
+    // Not applicable — its inputs are absent — which the canvas shows
+    // neutrally, NOT as a failure.
+    expect(lc.notApplicable).toBe(true);
+    expect(lc.error?.startsWith("Needs a mortality table")).toBe(true);
+    expect(runModel("cbd", demo).status).toBe("error");
+    const annuity = runModel("lifecontingencies", demo, new Map([["lee-carter", lc]]));
+    expect(annuity.status).toBe("error"); // a FAILED wired Lee–Carter feeds nothing
+    expect(annuity.notApplicable).toBe(true);
+    expect(annuity.error?.startsWith("Needs a mortality table")).toBe(true);
+  });
+
+  test("life contingencies price a real table, and the wired Lee–Carter COHORT", () => {
+    // Gompertz-like table falling 1.5% a year: 1995–2019 × ages 40–100.
+    const rows: Row[] = [];
+    for (let year = 1995; year <= 2019; year++) {
+      for (let age = 40; age <= 100; age++) {
+        rows.push({
+          year,
+          age,
+          qx: Math.min(0.9, 0.00005 * Math.exp(0.1 * age) * 0.985 ** (year - 1995)),
+        });
+      }
+    }
+    const table: Dataset = { name: "hmd.csv", columns: ["year", "age", "qx"], rows };
+    const lc = runModel("lee-carter", table);
+    expect(lc.status).toBe("done");
+    expect(lc.headline.label).toBe("q(65) in 2029");
+    const standalone = runModel("lifecontingencies", table);
+    expect(standalone.status).toBe("done");
+    expect(standalone.detail?.mortalitySource).toBe("table");
+    expect(standalone.wiredFrom).toBeUndefined();
+    const wired = runModel("lifecontingencies", table, new Map([["lee-carter", lc]]));
     expect(wired.detail?.mortalitySource).toBe("lee-carter");
-    expect(standalone.detail?.mortalitySource).toBe("canned");
-    expect(wired.headline.value).not.toBe(standalone.headline.value);
+    expect(wired.wiredFrom?.[0]?.id).toBe("lee-carter");
+    // The projected cohort keeps improving, so it lives longer than the
+    // 2019 period table says: a dearer annuity.
+    expect(wired.headline.value).toBeGreaterThan(standalone.headline.value);
+    // The cohort meets q(65) in 2020, q(66) in 2021, … — never one age's path.
+    const q = wired.detail?.q as number[];
+    expect(q.length).toBe(10);
+    expect(q[9]).toBeGreaterThan(q[0]);
   });
 
   test("SCR includes an interest stress from the wired ESG path", () => {

@@ -1,22 +1,22 @@
 // Optional Python delegation for the climate family.
 //
-// CLIMADA is a heavyweight catastrophe risk model. The full toolchain
-// (LitPop exposures, IBTrACS tropical-cyclone hazard, vulnerability
-// curves) is too big to run on a small dataset inside Scelo, so this
-// bridge uses CLIMADA's `entity.exposures.LitPop` + a synthetic tropical
-// cyclone hazard to produce a credible Annual Average Loss + return-
-// period losses. When the user has a richer hazard or exposure on disk
-// they should switch to a full notebook — `lifelibNotebookExport.ts`'s
-// pattern would extend here.
+// Two paths, and the result says which one ran:
 //
-// Why even bridge: actuaries doing climate scenario work want CLIMADA
-// answers, not a `paid × 1.2 %` heuristic. Even the synthetic-hazard
-// path here returns numbers grounded in real STORM/CHAZ-style return
-// periods, which is qualitatively closer to truth than the in-browser
-// mock.
+//   • CLIMADA proper — when IBTrACS has been downloaded via /settings/data
+//     and the climada package imports: LitPop exposure + TCTracks hazard +
+//     Emanuel impact functions → ImpactCalc AAL and return-period losses.
+//   • otherwise a SYNTHETIC compound-Poisson loss model in plain numpy
+//     (Poisson(4) events a year, lognormal severities scaled to the file's
+//     exposure). No CLIMADA code runs on this path, so the card must never
+//     call it a CLIMADA estimate — it used to ("AAL · climada-python").
+//
+// The synthetic calibration is arbitrary: median event loss 2% of total
+// exposure, σ = 1.2, λ = 4 puts the AAL near 16% of exposure — far above a
+// typical nat-cat AAL. Losses are capped at the total exposure (per event and
+// per year); before the cap its RP100 / RP250 exceeded everything insured.
 
 import {
-  distillPythonError,
+  bridgeFailureReason,
   getRuntimeStatus,
   isDesktopIDE,
   runPython,
@@ -31,7 +31,11 @@ export interface ClimadaPythonOutput {
   rp250: number; // 250-year
   countryAlpha3?: string;
   exposureValue: number;
-  source: "climada-python" | "climada-python+ibtracs";
+  /** "climada-python+ibtracs" = the real CLIMADA pipeline ran;
+   *  "synthetic-numpy" = the compound-Poisson stand-in (no CLIMADA code). */
+  source: "synthetic-numpy" | "climada-python+ibtracs";
+  /** Why the CLIMADA path was skipped or failed (synthetic runs only). */
+  fallbackReason?: string;
 }
 
 const SCRIPT = `
@@ -42,6 +46,7 @@ try:
     country = (payload.get("country") or "").upper()[:3]
     ibtracs_path = payload.get("ibtracsPath")
 
+    fallback_reason = "IBTrACS not downloaded (/settings/data)"
     # ── Real-IBTrACS path ────────────────────────────────────────────
     # When the user has downloaded the IBTrACS .nc file via
     # /settings/data, we use it directly. CLIMADA's TCTracks.from_ibtracs_netcdf
@@ -74,17 +79,25 @@ try:
             }))
             sys.exit(0)
         except Exception as e:
-            # Fall through to synthetic so the Tool still returns *something*.
+            # Fall through to synthetic so the Tool still returns *something* —
+            # and say why, so the card never passes the stand-in off as CLIMADA.
+            fallback_reason = f"CLIMADA path failed: {type(e).__name__}: {e}"
             sys.stderr.write(f"IBTrACS path failed, falling back to synthetic: {e}\\n")
 
-    # ── Synthetic-distribution fallback ──────────────────────────────
-    # CLIMADA-shaped log-normal severity × Poisson frequency. Numerically
-    # credible without the 3 GB hazard set; users who need a real run
-    # either turn on IBTrACS via /settings/data or get a notebook export.
+    # ── Synthetic compound-Poisson fallback (numpy only, NOT CLIMADA) ──
+    # N ~ Poisson(4) events a year, each an independent lognormal loss; a
+    # year's loss is the SUM of its events. (The old code multiplied ONE
+    # severity by the count — every event in a year identical — which fattened
+    # the tail until RP100 / RP250 exceeded the total exposure.) No event and
+    # no year can lose more than is insured.
     rng = np.random.default_rng(seed=42)
-    sev = rng.lognormal(mean=np.log(max(total_exposure, 1.0) * 0.02), sigma=1.2, size=20000)
-    freq = rng.poisson(lam=4, size=20000)
-    annual = np.array([sev[i] * freq[i] for i in range(20000)])
+    n_years = 20000
+    cap = max(total_exposure, 1.0)
+    freq = rng.poisson(lam=4, size=n_years)
+    sev = rng.lognormal(mean=np.log(cap * 0.02), sigma=1.2, size=int(freq.sum()))
+    sev = np.minimum(sev, cap)
+    annual = np.bincount(np.repeat(np.arange(n_years), freq), weights=sev, minlength=n_years)
+    annual = np.minimum(annual, cap)
     aal = float(annual.mean())
     rp10 = float(np.quantile(annual, 1 - 1/10))
     rp100 = float(np.quantile(annual, 1 - 1/100))
@@ -93,7 +106,7 @@ try:
     print(json.dumps({
         "aal": aal, "rp10": rp10, "rp100": rp100, "rp250": rp250,
         "countryAlpha3": country or None, "exposureValue": total_exposure,
-        "source": "climada-python",
+        "source": "synthetic-numpy", "fallbackReason": fallback_reason,
     }))
 except Exception as e:
     print(json.dumps({"error": f"{type(e).__name__}: {e}"}))
@@ -101,29 +114,26 @@ except Exception as e:
 `;
 
 export async function runClimadaPython(dataset: Dataset): Promise<ClimadaPythonOutput | null> {
-  // Error contract mirrors glmPython: null ONLY when the bridge is
-  // unavailable (browser / no Python); everything else throws with the
+  // Error contract mirrors glmPython: null ONLY when the bridge does not
+  // apply (browser build, or no usable exposure — the in-browser runner
+  // then says which); a missing runtime or a failed script throws with the
   // reason so the caller can surface it on the result card.
   if (!isDesktopIDE()) return null;
-  const status = await getRuntimeStatus();
-  if (!status.python) return null;
   // Total exposure from the dataset's exposure-like column. Fuzzy match
   // (sum_insur* / tiv / exposure / paid) because real headers truncate —
   // the motor benchmark file spells it "sum_insurd". No column or a zero
-  // sum is a hard error: quietly substituting a default exposure would
+  // sum means no run at all: quietly substituting a default exposure would
   // return confident losses anchored to nothing in the data.
   const expCol = findExposureColumn(dataset);
-  if (!expCol) {
-    throw new Error("no exposure-like column found (sum_insur*, tiv, exposure, paid)");
-  }
+  if (!expCol) return null;
   let total = 0;
   for (const r of dataset.rows) {
     const v = r[expCol];
     if (typeof v === "number" && Number.isFinite(v)) total += v;
   }
-  if (total <= 0) {
-    throw new Error(`exposure column \`${expCol}\` sums to zero — cannot scale losses`);
-  }
+  if (total <= 0) return null;
+  const status = await getRuntimeStatus();
+  if (!status.python) throw new Error("bundled Python runtime not detected");
   const cols = dataset.columns.map((c) => c.toLowerCase());
   // Country alpha-3 guess from a country / iso column.
   let country: string | undefined;
@@ -151,7 +161,7 @@ export async function runClimadaPython(dataset: Dataset): Promise<ClimadaPythonO
   });
   const res = await runPython(SCRIPT, { stdin });
   if (!res.ok) {
-    throw new Error(distillPythonError(res.stderr, res.exitCode));
+    throw new Error(bridgeFailureReason(res));
   }
   let parsed: unknown;
   try {

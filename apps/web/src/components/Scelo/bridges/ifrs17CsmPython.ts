@@ -22,12 +22,19 @@
 //     policies in file order under a wall-clock budget and reports how many
 //     it covered; it never scales a partial answer up to the whole file.
 //
-// Same fail-soft pattern as the other bridges: outside Scelo IDE or when
-// the bundled stack is missing, returns null and runModelAsync falls back
-// to the in-browser TS port (and says why).
+// Same contract as the other bridges: null when the bridge does not apply
+// (outside Scelo IDE, or the file is not model points) and runModelAsync
+// falls back to the in-browser TS port; a missing runtime or a lifelib
+// failure throws with the reason, which the card shows.
 
-import { getRuntimeStatus, isDesktopIDE, runPython } from "../../../lib/sceloIDE";
+import {
+  bridgeFailureReason,
+  getRuntimeStatus,
+  isDesktopIDE,
+  runPython,
+} from "../../../lib/sceloIDE";
 import type { Dataset } from "../SoftDataWorkstation";
+import { hasModelPoints } from "../lifelibBasicTerm";
 import { LIFELIB_PRELUDE } from "./lifelibPrelude";
 
 export interface Ifrs17CsmPythonOutput {
@@ -150,20 +157,26 @@ except Exception as e:
 
 export async function runIfrs17CsmPython(dataset: Dataset): Promise<Ifrs17CsmPythonOutput | null> {
   if (!isDesktopIDE()) return null;
+  // Not model points → not this bridge's job; past this point a stop is a
+  // real failure and THROWS with its reason (see runBasicTermPython).
+  if (!hasModelPoints(dataset)) return null;
   const status = await getRuntimeStatus();
-  if (!status.python) return null;
+  if (!status.python) throw new Error("bundled Python runtime not detected");
   const payload = JSON.stringify({
     name: dataset.name,
     columns: dataset.columns,
     rows: dataset.rows,
   });
   const res = await runPython(IFRS17_SCRIPT, { stdin: payload });
-  if (!res.ok) return null;
+  if (!res.ok) throw new Error(bridgeFailureReason(res));
+  let parsed: unknown;
   try {
-    const parsed = JSON.parse(res.stdout.trim());
-    if (parsed && "error" in parsed) return null;
-    return parsed as Ifrs17CsmPythonOutput;
+    parsed = JSON.parse(res.stdout.trim());
   } catch {
-    return null;
+    throw new Error("IFRS 17 CSM bridge returned non-JSON output");
   }
+  if (parsed && typeof parsed === "object" && "error" in parsed) {
+    throw new Error(String((parsed as { error: unknown }).error));
+  }
+  return parsed as Ifrs17CsmPythonOutput;
 }

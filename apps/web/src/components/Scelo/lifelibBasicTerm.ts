@@ -181,6 +181,24 @@ export interface ParsedModelPoints {
   recognisedColumns: Record<string, string | null>;
 }
 
+/** Does the dataset carry at least one usable model point (age at entry, sum
+ *  assured, policy term)? The shape test the lifelib bridges run before
+ *  shipping a file to Python: a file that is not model points is not a bridge
+ *  failure — the in-browser runner says what is missing. */
+export function hasModelPoints(dataset: Dataset): boolean {
+  const needed = [
+    COLUMN_ALIASES.ageAtEntry,
+    COLUMN_ALIASES.sumAssured,
+    COLUMN_ALIASES.policyTermYears,
+  ];
+  if (needed.some((aliases) => !resolveColumn(dataset, aliases).canonical)) return false;
+  try {
+    return parseModelPoints(dataset).points.length > 0;
+  } catch {
+    return false;
+  }
+}
+
 export function parseModelPoints(dataset: Dataset, assumptions = DEFAULT_ASSUMPTIONS): ParsedModelPoints {
   const cols = {
     policyId: resolveColumn(dataset, COLUMN_ALIASES.policyId).canonical,

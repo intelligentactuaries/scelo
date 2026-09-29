@@ -18,7 +18,12 @@
 // the library NaN. The in-browser TS port remains a fast, guard-heavy estimate;
 // this is the more rigorous Python cross-check (real Mack SE, real ODP bootstrap).
 
-import { isDesktopIDE, runPython, getRuntimeStatus } from "../../../lib/sceloIDE";
+import {
+  bridgeFailureReason,
+  getRuntimeStatus,
+  isDesktopIDE,
+  runPython,
+} from "../../../lib/sceloIDE";
 import type { Dataset } from "../SoftDataWorkstation";
 
 export type ReservingMethod = "chain-ladder" | "mack" | "bornhuetter-ferguson" | "bootstrap";
@@ -29,6 +34,9 @@ export interface ChainladderPythonOutput {
   ibnr: number;
   cv?: number;            // Mack only — coefficient of variation
   se?: number;            // Mack / bootstrap — standard error
+  p5?: number;            // bootstrap only — 5th / 95th percentile of the
+  p95?: number;           //   simulated total reserve
+  apriori?: number;       // BF only — the a-priori ultimate per origin
   byOrigin: Array<{
     origin: number;
     latest: number;
@@ -150,11 +158,17 @@ def compute(payload):
         cv = se / ibnr_total if ibnr_total else 0.0
         extra = {"se": fin(se), "cv": fin(cv)}
     elif method == "bornhuetter-ferguson":
-        # A-priori ultimate = paid-to-date (apriori=1.0, exposure=latest), the
-        # convention the original bridge used: BF IBNR = latest x (1 - 1/CDF).
+        # A-priori ultimate = the book-average chain-ladder ultimate, held
+        # constant per origin — the SAME prior as the in-browser runner, so
+        # one method gives one answer whichever runtime runs it. (The old
+        # prior was paid-to-date, i.e. "expect no further development": BF
+        # came out at CL / CDF per origin, a third of the in-browser BF on
+        # the bundled claims triangle.) BF IBNR_i = prior x (1 - 1/CDF_i).
+        prior = float(np.nanmean(ult_cl))
         pct_unreported = np.array([1.0 - 1.0 / cdf[last_k[i]] for i in range(n_o)])
-        ult = latest + latest * pct_unreported
+        ult = latest + prior * pct_unreported
         ibnr_total = float(np.nansum(ult - latest))
+        extra = {"apriori": fin(prior)}
     elif method == "bootstrap":
         rng = np.random.default_rng(42)
         obs_mask = np.isfinite(C)
@@ -211,7 +225,11 @@ def compute(payload):
             totals[s] = reserve
         ult = ult_cl
         ibnr_total = float(np.mean(totals))
-        extra = {"se": fin(np.std(totals))}
+        extra = {
+            "se": fin(np.std(totals)),
+            "p5": fin(np.percentile(totals, 5)),
+            "p95": fin(np.percentile(totals, 95)),
+        }
     else:
         ult = ult_cl
         ibnr_total = float(np.nansum(ibnr_cl))
@@ -286,29 +304,6 @@ function buildTrianglePayload(dataset: Dataset): null | {
   return { origins, devs, cumByRow };
 }
 
-/** Pull the most useful failure reason out of a failed bridge exec: the
- *  script's structured {"error": "<Type>: <msg>"} on stdout first (it wraps
- *  everything, imports included, so this is populated on any Python-side
- *  failure), then raw stderr, then the exit code. */
-function extractBridgeError(res: {
-  stdout: string;
-  stderr: string;
-  exitCode: number | null;
-}): string {
-  const out = (res.stdout || "").trim();
-  if (out) {
-    try {
-      const p = JSON.parse(out) as { error?: unknown };
-      if (p && typeof p.error === "string") return p.error;
-    } catch {
-      /* stdout wasn't JSON — fall through to stderr */
-    }
-  }
-  const err = (res.stderr || "").trim();
-  if (err) return err.slice(-300);
-  return `exited with code ${res.exitCode ?? "null"}`;
-}
-
 // Returns the canonical result, or `null` when there is genuinely nothing to
 // run (browser mode, or the dataset isn't a triangle — the in-browser path
 // owns those). Anything that represents a *failed* Python attempt THROWS with
@@ -320,14 +315,17 @@ export async function runChainladderPython(
   method: ReservingMethod,
 ): Promise<ChainladderPythonOutput | null> {
   if (!isDesktopIDE()) return null;
+  // Shape first: data that is not a triangle is not a bridge failure — the
+  // in-browser path says "triangle not detected" without a bogus runtime
+  // warning attached.
+  const tri = buildTrianglePayload(dataset);
+  if (!tri) return null;
   const status = await getRuntimeStatus();
   if (!status.python) {
     // Desktop IDE but no interpreter resolved — a broken/missing bundled
     // runtime. Surface it rather than silently degrading.
     throw new Error("bundled Python runtime not detected — used in-browser estimate");
   }
-  const tri = buildTrianglePayload(dataset);
-  if (!tri) return null; // not a triangle — the in-browser path handles that
   // The numpy engine is dev-period indexed and handles any triangle shape
   // (single origin, tiny, parallelogram) without the library's NaN failures,
   // so no shape guards are needed here — a genuinely non-finite reserve is
@@ -335,7 +333,7 @@ export async function runChainladderPython(
   const stdin = JSON.stringify({ method, ...tri });
   const res = await runPython(SCRIPT, { stdin });
   if (!res.ok) {
-    throw new Error(`reserving: ${extractBridgeError(res)}`);
+    throw new Error(`reserving: ${bridgeFailureReason(res)}`);
   }
   let parsed: unknown;
   try {

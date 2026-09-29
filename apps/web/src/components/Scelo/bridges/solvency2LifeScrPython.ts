@@ -25,12 +25,19 @@
 // bridge runs policies in file order under a wall-clock budget and reports
 // how many it covered. It never scales a partial answer up.
 //
-// Fail-soft like the other bridges: outside Scelo IDE, without the bundled
-// stack, or on any script error, returns null and runModelAsync keeps the
-// in-browser proxy — flagged with the reason.
+// Same contract as the other bridges: null when it does not apply (outside
+// Scelo IDE, or the file is not model points); a missing runtime or a script
+// error THROWS, and runModelAsync keeps the in-browser proxy — flagged with
+// that reason.
 
-import { getRuntimeStatus, isDesktopIDE, runPython } from "../../../lib/sceloIDE";
+import {
+  bridgeFailureReason,
+  getRuntimeStatus,
+  isDesktopIDE,
+  runPython,
+} from "../../../lib/sceloIDE";
 import type { Dataset } from "../SoftDataWorkstation";
+import { hasModelPoints } from "../lifelibBasicTerm";
 import { LIFELIB_PRELUDE } from "./lifelibPrelude";
 
 export const SCR_SUB_RISKS = [
@@ -149,20 +156,26 @@ export async function runSolvency2LifeScrPython(
   dataset: Dataset,
 ): Promise<Solvency2LifeScrPythonOutput | null> {
   if (!isDesktopIDE()) return null;
+  // Not model points → not this bridge's job; past this point a stop is a
+  // real failure and THROWS with its reason (see runBasicTermPython).
+  if (!hasModelPoints(dataset)) return null;
   const status = await getRuntimeStatus();
-  if (!status.python) return null;
+  if (!status.python) throw new Error("bundled Python runtime not detected");
   const payload = JSON.stringify({
     name: dataset.name,
     columns: dataset.columns,
     rows: dataset.rows,
   });
   const res = await runPython(SCR_SCRIPT, { stdin: payload });
-  if (!res.ok) return null;
+  if (!res.ok) throw new Error(bridgeFailureReason(res));
+  let parsed: unknown;
   try {
-    const parsed = JSON.parse(res.stdout.trim());
-    if (parsed && "error" in parsed) return null;
-    return parsed as Solvency2LifeScrPythonOutput;
+    parsed = JSON.parse(res.stdout.trim());
   } catch {
-    return null;
+    throw new Error("Solvency II life SCR bridge returned non-JSON output");
   }
+  if (parsed && typeof parsed === "object" && "error" in parsed) {
+    throw new Error(String((parsed as { error: unknown }).error));
+  }
+  return parsed as Solvency2LifeScrPythonOutput;
 }

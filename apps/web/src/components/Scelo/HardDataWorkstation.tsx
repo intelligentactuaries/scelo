@@ -57,6 +57,7 @@ import { type Dataset, formatNumber } from "./SoftDataWorkstation";
 import { StageChatPanel } from "./StageChatPanel";
 import { useActuarialTableChat } from "./useActuarialTableChat";
 import { UploadIndicator, nextPaint } from "./UploadIndicator";
+import { executiveSummary } from "./boardPackSummary";
 import { type CouncilSynthesis, conveneCouncil, swarmApiUrl } from "./forecast/councilClient";
 import { forecastConfigFor } from "./forecast/derive";
 import { hasForecastDomain } from "./forecast/domainLabels";
@@ -77,6 +78,7 @@ import {
   BRIDGED_MODEL_IDS,
   type NumericColumnProfile,
   type RunResult,
+  comparableKey,
   detectFrequencyTarget,
   detectMonetaryColumn,
   runModel,
@@ -312,6 +314,13 @@ type ResultNodeData = {
   onExpand: (modelId: string) => void;
 };
 
+// Result-node handle ids. Explicit ids on BOTH ends of every edge: with
+// several source handles on a node, an edge that names none silently binds
+// to whichever React Flow finds first.
+const SPOKE_HANDLE = "spoke";
+const WIRE_OUT_HANDLE = "wire-out";
+const WIRE_IN_HANDLE = "wire-in";
+
 function formatHeadline(h: RunResult["headline"]): string {
   if (h.value === 0 && h.label === "—") return "—";
   return formatNumber(h.value);
@@ -319,7 +328,10 @@ function formatHeadline(h: RunResult["headline"]): string {
 
 function ResultNode({ data }: NodeProps<ResultNodeData>) {
   const { run, color } = data;
-  const dim = run.status !== "done";
+  // A model whose inputs are not in the data is "not applicable" — neutral,
+  // not an alarm; only a run that broke is a failure.
+  const notApplicable = run.status === "error" && !!run.notApplicable;
+  const failed = run.status === "error" && !run.notApplicable;
   return (
     <div
       className={`glass-card w-[200px] rounded p-2 transition ${
@@ -330,14 +342,36 @@ function ResultNode({ data }: NodeProps<ResultNodeData>) {
         // family stays the dominant visual cue on the canvas.
         borderColor: color,
         borderWidth: 1,
-        opacity: dim ? 0.55 : 1,
+        // Running cards recede; failed / not-applicable ones stay legible —
+        // their reason is printed on the card.
+        opacity: run.status === "done" ? 1 : failed ? 0.85 : notApplicable ? 0.75 : 0.55,
       }}
     >
+      {/* Spoke into the board-pack hub. */}
       <Handle
+        id={SPOKE_HANDLE}
         type="source"
         position={Position.Right}
         isConnectable={false}
         style={{ background: color, width: 6, height: 6, opacity: 0 }}
+      />
+      {/* Tools-canvas wiring between results, out and in on the LEFT edge so
+          a wire draws as a bracket beside the column instead of across the
+          cards. Without a target handle React Flow drops every such edge
+          (error 008) — the "feeds" wires never rendered at all. */}
+      <Handle
+        id={WIRE_OUT_HANDLE}
+        type="source"
+        position={Position.Left}
+        isConnectable={false}
+        style={{ top: "40%", width: 6, height: 6, opacity: 0 }}
+      />
+      <Handle
+        id={WIRE_IN_HANDLE}
+        type="target"
+        position={Position.Left}
+        isConnectable={false}
+        style={{ top: "60%", width: 6, height: 6, opacity: 0 }}
       />
       <div className="flex items-center justify-between gap-1">
         <span className="truncate font-mono text-[9px] uppercase tracking-wider" style={{ color }}>
@@ -374,7 +408,7 @@ function ResultNode({ data }: NodeProps<ResultNodeData>) {
               <path d="M1.5 8.5 L4.5 5.5" />
             </svg>
           </button>
-          <StatusPip status={run.status} />
+          <StatusPip status={run.status} notApplicable={notApplicable} />
         </div>
       </div>
       <div className="mt-0.5 flex items-baseline justify-between gap-1">
@@ -387,24 +421,43 @@ function ResultNode({ data }: NodeProps<ResultNodeData>) {
         {run.source && (
           <span
             className={`shrink-0 rounded border px-1 font-mono text-[8px] uppercase tracking-wider ${
-              run.source === "python-bridge"
-                ? "border-primary text-primary"
-                : "border-border text-fg-dim"
+              run.source !== "browser" ? "border-primary text-primary" : "border-border text-fg-dim"
             }`}
             title={
-              run.source === "python-bridge"
-                ? "computed by the Scelo IDE's bundled Python/R runtime (canonical implementation)"
-                : "computed by the in-browser approximation"
+              run.source === "r-bridge"
+                ? "computed by the Scelo IDE's bundled R runtime (canonical implementation)"
+                : run.source === "python-bridge"
+                  ? "computed by the Scelo IDE's bundled Python runtime (canonical implementation)"
+                  : "computed in the browser"
             }
           >
-            {run.source === "python-bridge" ? "python" : "in-browser"}
+            {run.source === "r-bridge" ? "R" : run.source === "python-bridge" ? "python" : "in-browser"}
           </span>
         )}
       </div>
       <div className="mt-1 flex items-baseline gap-1.5">
-        <span className="font-mono text-lg text-fg">{formatHeadline(run.headline)}</span>
-        <span className="font-mono text-[9px] uppercase text-fg-dim">{run.headline.label}</span>
+        <span
+          className={`font-mono text-lg ${failed || notApplicable ? "text-fg-dim" : "text-fg"}`}
+        >
+          {formatHeadline(run.headline)}
+        </span>
+        <span className="font-mono text-[9px] uppercase text-fg-dim">
+          {notApplicable ? "not applicable" : failed ? "failed" : run.headline.label}
+        </span>
       </div>
+      {/* WHY, on the card — a bare "— —" sent the user hunting through the
+          side panel for the reason. Muted when the model merely does not
+          apply to this data; red only when a run actually broke. */}
+      {(failed || notApplicable) && run.error && (
+        <div
+          className={`mt-0.5 line-clamp-3 text-[9px] leading-snug ${
+            failed ? "text-error" : "text-fg-mute"
+          }`}
+          title={run.error}
+        >
+          {run.error}
+        </div>
+      )}
       {/* One visual per node: prefer the chart when the run has a series;
           otherwise fall back to the table when one's provided. */}
       {run.series ? (
@@ -427,16 +480,27 @@ function ResultNode({ data }: NodeProps<ResultNodeData>) {
   );
 }
 
-function StatusPip({ status }: { status: RunResult["status"] }) {
+function StatusPip({
+  status,
+  notApplicable = false,
+}: {
+  status: RunResult["status"];
+  notApplicable?: boolean;
+}) {
   const cls =
     status === "done"
       ? "bg-primary"
       : status === "running"
         ? "bg-warn animate-pulse"
-        : status === "error"
+        : status === "error" && !notApplicable
           ? "bg-error"
           : "bg-fg-dim";
-  return <span className={`block h-1.5 w-1.5 rounded-full ${cls}`} title={status} />;
+  return (
+    <span
+      className={`block h-1.5 w-1.5 rounded-full ${cls}`}
+      title={notApplicable ? "not applicable to this data" : status}
+    />
+  );
 }
 
 type HubNodeData = {
@@ -509,7 +573,7 @@ function HubNode({ data }: NodeProps<HubNodeData>) {
         {data.dataset.name}
       </div>
       <div className="mt-0.5 font-mono text-[11px] text-fg-mute">
-        {data.runCount} results · {data.domain ?? "no domain"}
+        {data.runCount} result{data.runCount === 1 ? "" : "s"} · {data.domain ?? "no domain"}
       </div>
       {data.narrative ? (
         // Scroll the full narrative inside the node rather than clamping it to
@@ -567,26 +631,22 @@ function columnLayout(n: number): Array<{ x: number; y: number }> {
 
 // ── narrative (LLM, with heuristic fallback) ─────────────────────────────────
 
-function heuristicNarrative(args: {
-  dataset: Dataset;
-  domain: ModelFamily | null;
-  runs: RunResult[];
-}): string {
-  const { dataset, domain, runs } = args;
-  if (runs.length === 0) {
-    return `${dataset.name}: no models attached — head back to Tools and pick a few.`;
-  }
-  const done = runs.filter((r) => r.status === "done");
-  if (done.length === 0) {
-    return `${dataset.name}: all ${runs.length} model runs failed against this data shape. Likely the dataset doesn't match the picked models — revisit Tools.`;
-  }
-  const lines = [
-    `${dataset.name}: ${done.length} of ${runs.length} models computed${
-      domain ? ` in the ${domain} domain` : ""
-    }.`,
-  ];
-  for (const r of done) lines.push(`• ${r.blurb}`);
-  return lines.join(" ");
+/** The board pack's executive summary when no AI model is reachable (and the
+ *  factual draft handed to one when it is): plain English for the signing
+ *  actuary — see boardPackSummary.ts. It used to string the runs' technical
+ *  one-liners together ("Bundled-CPython numpy reserving engine (mack) across
+ *  7 origins produced IBNR = 1,500,955 (CV 22.60%)"). */
+function heuristicNarrative(args: { dataset: Dataset; runs: RunResult[] }): string {
+  return executiveSummary(args);
+}
+
+/** A run's status as a reader should hear it. */
+function statusWord(r: RunResult): string {
+  return r.status === "error" && r.notApplicable ? "not applicable" : r.status;
+}
+
+function modelName(id: string): string {
+  return MODEL_BY_ID.get(id)?.name ?? id;
 }
 
 async function fetchNarrative(args: {
@@ -596,10 +656,10 @@ async function fetchNarrative(args: {
   variant: number;
   signal: AbortSignal;
 }): Promise<string> {
-  const { dataset, domain, runs, variant } = args;
-  const blurbLines = runs
-    .map((r) => `- ${r.modelId} (${r.family}, ${r.status}): ${r.blurb}`)
-    .join("\n");
+  const { dataset, runs, variant } = args;
+  // The plain-English summary computed from the runs is the fact base: the
+  // model may improve its flow, never its figures.
+  const draft = executiveSummary({ dataset, runs });
   const variantNudge =
     variant > 0
       ? `\nREGENERATION #${variant + 1}. Reword in a different voice / structure than the previous narrative.`
@@ -607,22 +667,20 @@ async function fetchNarrative(args: {
 
   const prompt = `CRITICAL: DO NOT CALL ANY TOOL. DO NOT dispatch documentation.predict, reserving.predict, or any specialist. This is a chat reply only.
 
-You are Scelo at the HARD DATA stage. Write a SHORT executive summary (4-6 sentences, no bullet points) of the model run results below — board-pack style, concrete numbers, no jargon for jargon's sake.
+You are writing the executive summary of an actuarial board pack. The readers are the signing actuary, the head of the actuarial function and the board; they will lift this text into a sign-off memo.
 
-DATASET: ${dataset.name} · ${dataset.rows.length} rows · ${dataset.columns.length} columns
-DOMAIN: ${domain ?? "unspecified"}
-
-MODEL RUNS:
-${blurbLines}
+Write 2-4 short paragraphs of plain English. Lead with the figure that matters for sign-off, say how far the methods agree, state the uncertainty as a range in words, and end with what the figures rest on and what to check before relying on them.
 
 Rules:
-- Open with the headline finding in plain English.
-- Reference 2-3 specific numbers from the runs above.
-- Note one cross-check or caveat (if relevant).
-- Do not invent numbers not present above.
-- 4-6 sentences total, no bullets, no headers.${variantNudge}
+- Use ONLY the figures in the FACTS below. Never invent, round differently or recompute a number.
+- Actuarial terms (IBNR, reserve, standard error, present value, loss ratio) are fine.
+- Never use software or implementation words (Python, numpy, R, statsmodels, bundled, bridge, in-browser, engine, runtime) or model ids with hyphens, and no statistical shorthand (CV, p5, p95, R-squared, AUC): say what they mean instead.
+- No bullet points, no headings, no markdown.${variantNudge}
 
-Reply with the narrative ONLY — no JSON, no code fences, no tool calls.`;
+FACTS (a correct plain-English draft; keep every figure and caveat, improve the flow):
+${draft}
+
+Reply with the summary ONLY — no JSON, no code fences, no tool calls.`;
 
   let buffer = "";
   let streamError: string | null = null;
@@ -690,9 +748,10 @@ function buildHardStageContext(args: {
         r.wiredFrom && r.wiredFrom.length > 0
           ? ` [wired ← ${r.wiredFrom.map((w) => w.id).join(", ")}]`
           : "";
-      const src = r.source === "python-bridge" ? " · python-bridge" : "";
+      const src =
+        r.source === "python-bridge" ? " · python-bridge" : r.source === "r-bridge" ? " · r-bridge" : "";
       lines.push(
-        `  • ${r.modelId} (${r.family}, ${r.status}${src}): ${headline}${wired} — ${r.blurb}`,
+        `  • ${r.modelId} (${r.family}, ${statusWord(r)}${src}): ${headline}${wired} — ${r.blurb}`,
       );
     }
   }
@@ -768,9 +827,9 @@ function extractInterval(run: RunResult): { lo: number; hi: number; kind: string
   return null;
 }
 
-// Restrict the comparison to runs that share a headline label so the x-axis
-// stays comparable (e.g. "IBNR" runs together; a Lee-Carter "q(65)" doesn't
-// share a scale with reserving estimates).
+// Restrict the comparison to runs that estimate the same quantity so the
+// x-axis stays comparable (reserving estimates run together; a Lee-Carter
+// "q(65)" doesn't share a scale with them).
 function pickComparableGroup(doneRuns: RunResult[]): {
   rows: RunResult[];
   label: string;
@@ -778,7 +837,7 @@ function pickComparableGroup(doneRuns: RunResult[]): {
   if (doneRuns.length === 0) return { rows: [], label: "" };
   const byLabel = new Map<string, RunResult[]>();
   for (const r of doneRuns) {
-    const k = r.headline.label;
+    const k = comparableKey(r);
     const arr = byLabel.get(k) ?? [];
     arr.push(r);
     byLabel.set(k, arr);
@@ -1114,7 +1173,7 @@ function TrajectoryOverlay({
   heightOverride?: number;
 }) {
   const { option, xLabel } = useMemo(() => {
-    const withSeries = doneRuns.filter((r) => r.series && r.series.x.length > 0);
+    const withSeries = doneRuns.filter(hasTrajectory);
     if (withSeries.length === 0) return { option: null, xLabel: "" };
 
     // Bucket by shared x-axis — only overlay runs that share categories.
@@ -1242,7 +1301,16 @@ function inferTrajectoryAxis(x: string[]): string {
   if (x.every((v) => /^\d{4}$/.test(v))) return "origin year";
   if (x.every((v) => /^y\d+$/i.test(v))) return "projection year";
   if (x.every((v) => /^t=?\d+$/i.test(v))) return "time (years)";
+  if (x.every((v) => /^\d+y$/i.test(v))) return "tenor (years)";
   return "category";
+}
+
+/** A run belongs on the trajectory overlay only when its series runs along an
+ *  ORDERED axis (years, projection periods, tenors). Category series — GLM
+ *  levels, SHAP features, lift deciles, AAL / RP bars — drawn as a smoothed
+ *  line implied an order and a continuum that do not exist. */
+function hasTrajectory(r: RunResult): boolean {
+  return !!r.series && r.series.x.length > 0 && inferTrajectoryAxis(r.series.x) !== "category";
 }
 
 // ── comparative analytics (left rail, below the trajectory) ─────────────────
@@ -1539,13 +1607,15 @@ function HardLeftStatsPanel({
   const stats = useMemo(() => {
     const done = runsList.filter((r) => r.status === "done");
     const running = runsList.filter((r) => r.status === "running").length;
-    const errors = runsList.filter((r) => r.status === "error").length;
+    // A model the data cannot feed is not an error — counted apart.
+    const errors = runsList.filter((r) => r.status === "error" && !r.notApplicable).length;
+    const notApplicable = runsList.filter((r) => r.status === "error" && r.notApplicable).length;
     // Spread (coefficient of variation) of the largest comparable sub-group.
     let cov: number | null = null;
     if (done.length >= 2) {
       const byLabel = new Map<string, number[]>();
       for (const r of done) {
-        const k = r.headline.label;
+        const k = comparableKey(r);
         const arr = byLabel.get(k) ?? [];
         arr.push(r.headline.value);
         byLabel.set(k, arr);
@@ -1562,7 +1632,7 @@ function HardLeftStatsPanel({
         }
       }
     }
-    return { done, running, errors, cov };
+    return { done, running, errors, notApplicable, cov };
   }, [runsList]);
 
   const narrativeLabel =
@@ -1607,6 +1677,9 @@ function HardLeftStatsPanel({
                 )}
                 {stats.errors > 0 && (
                   <HardStatTile label="errors" value={stats.errors} accent="error" />
+                )}
+                {stats.notApplicable > 0 && (
+                  <HardStatTile label="not applicable" value={stats.notApplicable} />
                 )}
                 <HardStatTile
                   label="rows"
@@ -1732,7 +1805,12 @@ function ResultDetailsPanel({
       </div>
       <div className="min-h-0 flex-1 overflow-auto p-3">
         {focused ? (
-          <div className="flex flex-col gap-3">
+          // Keyed per RUN: the CTAs below hold local state (a forecast, a
+          // council synthesis, a workspace report). Unkeyed, clicking another
+          // card reused the same instances — model A's forecast sat under
+          // model B's name with its run button hidden — and a rerun kept the
+          // previous dataset's results on screen.
+          <div key={`${focused.modelId}:${focused.startedAt}`} className="flex flex-col gap-3">
             <div>
               <div className="font-mono text-[9px] uppercase tracking-wider text-fg-dim">
                 {focused.family}
@@ -1765,11 +1843,22 @@ function ResultDetailsPanel({
                 <Stat key={s.label} label={s.label} value={s.value} />
               ))}
             </div>
-            {focused.status === "error" && (
-              <div className="rounded border border-error/40 bg-error/10 px-2 py-1.5 font-mono text-[11px] text-error">
-                error: {focused.error ?? "unknown"}
-              </div>
-            )}
+            {focused.status === "error" &&
+              (focused.notApplicable ? (
+                <div className="rounded border border-border bg-bg-2 px-2 py-1.5 text-[11px] text-fg-mute">
+                  <span className="font-mono text-[9px] uppercase tracking-wider text-fg-dim">
+                    not applicable to this data
+                  </span>
+                  <div className="mt-0.5">{focused.error}</div>
+                  <div className="mt-1 text-[10px] text-fg-dim">
+                    Detach it in Tools, or load data with these inputs.
+                  </div>
+                </div>
+              ) : (
+                <div className="rounded border border-error/40 bg-error/10 px-2 py-1.5 font-mono text-[11px] text-error">
+                  error: {focused.error ?? "unknown"}
+                </div>
+              ))}
             {isLifelibModel(focused.modelId) && (
               <LifelibNotebookCta modelId={focused.modelId} dataset={dataset} />
             )}
@@ -1796,7 +1885,7 @@ function ResultDetailsPanel({
             )}
             {narrativeStatus === "fallback" && (
               <p className="text-[10px] text-fg-dim">
-                Couldn't reach the model; using a local stitched-together fallback. Try rerun.
+                Written directly from the run results (no AI model reachable to polish it).
               </p>
             )}
             {dominantDone && (
@@ -1804,7 +1893,10 @@ function ResultDetailsPanel({
                 <div className="mt-1 border-t border-border pt-2 font-mono text-[9px] uppercase tracking-wider text-fg-dim">
                   workspace · on the dominant run
                 </div>
-                <WorkspaceValidateCta focused={dominantDone} />
+                <WorkspaceValidateCta
+                  key={`workspace:${dominantDone.modelId}:${dominantDone.startedAt}`}
+                  focused={dominantDone}
+                />
               </>
             )}
             <BlackboardCta doneRuns={doneRuns} />
@@ -1822,9 +1914,15 @@ function ResultDetailsPanel({
                 </p>
                 {defaultTarget.modelId !== "wmtr-projection" &&
                   defaultTarget.modelId !== "wmtr-sensitivity" && (
-                    <ForecastAttachCta focused={defaultTarget} />
+                    <ForecastAttachCta
+                      key={`forecast:${defaultTarget.modelId}:${defaultTarget.startedAt}`}
+                      focused={defaultTarget}
+                    />
                   )}
-                <CouncilAttachCta focused={defaultTarget} />
+                <CouncilAttachCta
+                  key={`council:${defaultTarget.modelId}:${defaultTarget.startedAt}`}
+                  focused={defaultTarget}
+                />
               </>
             )}
           </div>
@@ -1921,6 +2019,24 @@ function guessReadouts(dataset: Dataset): { readouts: string[]; reflexive?: stri
   return { readouts: guess ? [guess] : numeric.slice(-1) };
 }
 
+/** Cheap content signature of a dataset: name, shape, and an FNV-1a hash
+ *  over an even stride of ≤ 64 rows. Stamps a workspace validation with the
+ *  data it was computed on, so a later re-run can tell "same data — keep it"
+ *  from "the file changed — drop it". Identity can't do that: a reload
+ *  rehydrates a new object for the same data. */
+function datasetFingerprint(ds: Dataset): string {
+  let h = 2166136261 >>> 0;
+  const step = Math.max(1, Math.floor(ds.rows.length / 64));
+  for (let i = 0; i < ds.rows.length; i += step) {
+    const row = ds.rows[i];
+    for (const c of ds.columns) {
+      const s = String(row[c] ?? "");
+      for (let k = 0; k < s.length; k++) h = Math.imul(h ^ s.charCodeAt(k), 16777619) >>> 0;
+    }
+  }
+  return `${ds.name}|${ds.rows.length}|${ds.columns.join(",")}|${h.toString(36)}`;
+}
+
 function pctStr(x: number): string {
   if (!Number.isFinite(x)) return "—";
   return `${(100 * x).toFixed(x < 0.1 ? 1 : 0)}%`;
@@ -1961,7 +2077,10 @@ function WorkspaceValidateCta({ focused }: { focused: RunResult }) {
       });
       setReport(rep);
       // Persist the workspace onto the run so it survives reload and reaches the
-      // board pack and the model-detail diagnostics.
+      // board pack and the model-detail diagnostics. `workspaceFor` records the
+      // data it was computed on — the Hard re-run carries it over only while
+      // that still matches.
+      const workspaceFor = datasetFingerprint(dataset);
       setRuns((prev) => {
         const existing = prev[focused.modelId];
         if (!existing) return prev;
@@ -1969,7 +2088,7 @@ function WorkspaceValidateCta({ focused }: { focused: RunResult }) {
           ...prev,
           [focused.modelId]: {
             ...existing,
-            detail: { ...(existing.detail ?? {}), workspace: rep },
+            detail: { ...(existing.detail ?? {}), workspace: rep, workspaceFor },
           },
         };
       });
@@ -2250,8 +2369,14 @@ function FairnessAuditCta({ focused: _focused }: { focused: RunResult }) {
     }
   }, [numeric]);
 
+  // One column in two roles degenerates the audit: protected = legitimate
+  // explains the protected channel away as "legitimate" (a clean bill of
+  // health by construction), target = legitimate makes the fair target the
+  // target itself.
+  const rolesDistinct = new Set([protectedCol, legitCol, targetCol]).size === 3;
+
   const run = useCallback(async () => {
-    if (!dataset || !protectedCol || !targetCol || !legitCol) return;
+    if (!dataset || !protectedCol || !targetCol || !legitCol || !rolesDistinct) return;
     setBusy(true);
     setError(null);
     await nextPaint();
@@ -2270,7 +2395,7 @@ function FairnessAuditCta({ focused: _focused }: { focused: RunResult }) {
     } finally {
       setBusy(false);
     }
-  }, [dataset, protectedCol, targetCol, legitCol, numeric]);
+  }, [dataset, protectedCol, targetCol, legitCol, numeric, rolesDistinct]);
 
   if (!dataset || numeric.length < 3) return null;
 
@@ -2313,11 +2438,16 @@ function FairnessAuditCta({ focused: _focused }: { focused: RunResult }) {
       <button
         type="button"
         onClick={run}
-        disabled={busy}
+        disabled={busy || !rolesDistinct}
         className="mt-2 inline-flex items-center gap-1.5 rounded border border-border bg-bg px-2.5 py-1 font-mono text-[10px] uppercase tracking-wider text-fg transition hover:border-fg-dim hover:text-fg disabled:opacity-50"
       >
         {busy ? "auditing…" : audit ? "↻ re-run" : "◈ run audit"}
       </button>
+      {!rolesDistinct && (
+        <div className="mt-1.5 text-[10px] text-warn">
+          Pick three different columns — one column in two roles makes the audit meaningless.
+        </div>
+      )}
       {error && <div className="mt-1.5 text-[10px] text-error">{error}</div>}
       {audit && (
         <div className="mt-2.5 grid grid-cols-[80px_1fr_1fr] gap-x-1 gap-y-0.5 text-[10px]">
@@ -3048,6 +3178,10 @@ export function HardDataWorkstation() {
   // Monotonic token so a run batch that was superseded mid-flight (dataset
   // swap, model toggle, unmount) stops writing results.
   const runEpoch = useRef(0);
+  // Latest runs, readable when a batch starts without joining executeRuns'
+  // dependencies (the batch itself rewrites them).
+  const runsRef = useRef(runs);
+  runsRef.current = runs;
 
   // Batch-level busy state for the canvas overlay — same loading vocabulary
   // as Soft's import/combine. Done/total gives HONEST determinate progress
@@ -3071,6 +3205,19 @@ export function HardDataWorkstation() {
       const epoch = ++runEpoch.current;
       const startedAt = performance.now();
       setComputeBusy({ done: 0, total: models.length, current: models[0]?.id ?? "" });
+      // Workspace validations are user-run, expensive, and not part of any
+      // runner's output — every re-entry to Hard re-executes the batch, which
+      // used to throw them away. Keep each one while its data is unchanged.
+      const previous = runsRef.current;
+      const fingerprint = datasetFingerprint(ds);
+      const carryWorkspace = (r: RunResult): RunResult => {
+        const prev = previous[r.modelId]?.detail;
+        if (r.status !== "done" || !prev?.workspace || prev.workspaceFor !== fingerprint) return r;
+        return {
+          ...r,
+          detail: { ...(r.detail ?? {}), workspace: prev.workspace, workspaceFor: fingerprint },
+        };
+      };
       const staged: Record<string, RunResult> = {};
       for (const m of models) {
         staged[m.id] = {
@@ -3141,8 +3288,10 @@ export function HardDataWorkstation() {
           }
           if (runEpoch.current !== epoch) return; // superseded mid-flight
           done++;
+          result = carryWorkspace(result);
           completed.set(m.id, result);
-          setRuns((prev) => ({ ...prev, [m.id]: result }));
+          const landed = result;
+          setRuns((prev) => ({ ...prev, [m.id]: landed }));
         }
         logEvent({
           stage: "hard",
@@ -3215,7 +3364,7 @@ export function HardDataWorkstation() {
       })
       .catch(() => {
         if (ac.signal.aborted) return;
-        setNarrative(heuristicNarrative({ dataset, domain, runs: runsList }));
+        setNarrative(heuristicNarrative({ dataset, runs: runsList }));
         setNarrativeStatus("fallback");
       });
     return () => ac.abort();
@@ -3278,6 +3427,7 @@ export function HardDataWorkstation() {
       return {
         id: `e-${r.modelId}`,
         source: `result-${r.modelId}`,
+        sourceHandle: SPOKE_HANDLE,
         target: "hub",
         animated: r.status === "done",
         style: {
@@ -3301,7 +3451,13 @@ export function HardDataWorkstation() {
         return {
           id: `wire-${w.source}->${w.target}`,
           source: `result-${w.source}`,
+          sourceHandle: WIRE_OUT_HANDLE,
           target: `result-${w.target}`,
+          targetHandle: WIRE_IN_HANDLE,
+          // Both ends sit on the cards' left edges: a stepped bracket runs
+          // down the side of the column rather than through the cards.
+          type: "smoothstep",
+          pathOptions: { offset: 22, borderRadius: 8 },
           animated: false,
           label: "feeds",
           labelStyle: { fill: color, fontSize: 8, fontFamily: "'SN Pro', sans-serif" },
@@ -3338,10 +3494,16 @@ export function HardDataWorkstation() {
   // vertical ORDER, walk cumulative y from the top, and centre the column
   // on the hub. Nodes the user dragged are left exactly where they were put.
   const movedIdsRef = useRef<Set<string>>(new Set());
+  // A fresh result SET (models added / removed) voids old drag history. Keyed
+  // on the ids, not on desiredNodes: that memo recomputes on every focus
+  // click, narrative update and status flip, which wiped the history and let
+  // the restack below yank a card the user had just dragged back into the
+  // column.
+  const resultIdsKey = useMemo(() => runsList.map((r) => r.modelId).join("|"), [runsList]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: resultIdsKey is the trigger, not an input.
   useEffect(() => {
-    // A fresh result set voids old drag history.
     movedIdsRef.current = new Set();
-  }, [desiredNodes]);
+  }, [resultIdsKey]);
   useEffect(() => {
     setNodes((prev) => {
       const GAP = 32;
@@ -3373,20 +3535,38 @@ export function HardDataWorkstation() {
     });
   }, [nodes, setNodes]);
 
-  // Auto-fit once spokes first appear — `fitView` prop only fires on mount,
-  // but our nodes are inserted via the sync effect *after* mount.
+  // Auto-fit once the result column is MEASURED and SETTLED. React Flow's
+  // fitView is a no-op while any node is unmeasured. The old one-shot fired a
+  // frame after the cards merely existed — before they had sizes — so it did
+  // nothing, marked itself done anyway, and a first visit to Hard (no runs yet,
+  // so React Flow's own init fit saw the hub alone) opened zoomed onto the hub
+  // with every result card off-screen. Debounced on node changes so it lands
+  // after the height restack above; done only when the fit really happened;
+  // re-armed when the result SET changes (new cards, new layout), not on a rerun.
   const flowInstanceRef = useRef<ReactFlowInstance | null>(null);
   const hasFitRef = useRef(false);
+  const fitTimerRef = useRef<number | null>(null);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: resultIdsKey is the trigger, not an input.
   useEffect(() => {
-    if (hasFitRef.current) return;
-    if (nodes.length < 2) return;
-    const inst = flowInstanceRef.current;
-    if (!inst) return;
-    hasFitRef.current = true;
-    requestAnimationFrame(() => {
-      inst.fitView({ padding: 0.2, duration: 300 });
-    });
-  }, [nodes.length]);
+    hasFitRef.current = false;
+  }, [resultIdsKey]);
+  useEffect(() => {
+    if (hasFitRef.current || nodes.length < 2) return;
+    if (!nodes.every((n) => (n.width ?? 0) > 0 && (n.height ?? 0) > 0)) return;
+    if (fitTimerRef.current !== null) window.clearTimeout(fitTimerRef.current);
+    fitTimerRef.current = window.setTimeout(() => {
+      fitTimerRef.current = null;
+      const inst = flowInstanceRef.current;
+      if (!inst || hasFitRef.current) return;
+      hasFitRef.current = inst.fitView({ padding: 0.2, duration: 300 });
+    }, 120);
+  }, [nodes]);
+  useEffect(
+    () => () => {
+      if (fitTimerRef.current !== null) window.clearTimeout(fitTimerRef.current);
+    },
+    [],
+  );
 
   const relayout = useCallback(() => {
     hasFitRef.current = false;
@@ -3486,8 +3666,12 @@ export function HardDataWorkstation() {
           </span>
           <span className="font-mono text-xs text-fg">{dataset.name}</span>
           <span className="font-mono text-[10px] text-fg-dim">
-            {dataset.rows.length} rows · {selectedModels.length} model
-            {selectedModels.length === 1 ? "" : "s"} attached
+            {/* Enabled models are what runs — the same count as the stats
+                rail's "attached" tile (disabled picks used to inflate it). */}
+            {dataset.rows.length.toLocaleString()} rows · {enabled.length} model
+            {enabled.length === 1 ? "" : "s"} attached
+            {selectedModels.length > enabled.length &&
+              ` · ${selectedModels.length - enabled.length} disabled`}
           </span>
           {domain && (
             <span
@@ -3543,7 +3727,16 @@ export function HardDataWorkstation() {
           {dataset && enabled.length > 0 ? (
             <ReactFlow
               nodes={nodes}
+              // Mark a card as user-placed when the drag STARTS: every drag
+              // frame changes `nodes`, and the restack effect would otherwise
+              // snap the card back to its column slot mid-drag (it jittered
+              // between the pointer and the slot until the mouse came up).
+              onNodeDragStart={(_, node) => movedIdsRef.current.add(node.id)}
               onNodeDragStop={(_, node) => movedIdsRef.current.add(node.id)}
+              // A click is not a drag: at React Flow's default threshold (0)
+              // mousedown alone fires the drag callbacks, which would mark
+              // every card the user merely clicked as hand-placed.
+              nodeDragThreshold={3}
               edges={edges}
               onNodesChange={onNodesChange}
               onEdgesChange={onEdgesChange}
@@ -3677,6 +3870,15 @@ function ReportPreviewModal({
 }) {
   const { project } = useScelo();
   const done = runsList.filter((r) => r.status === "done");
+  // Models that did not produce a figure, split by why: the data cannot feed
+  // them, or the run broke.
+  const notComputed = [
+    {
+      title: "not applicable to this data",
+      runs: runsList.filter((r) => r.status === "error" && r.notApplicable),
+    },
+    { title: "failed", runs: runsList.filter((r) => r.status === "error" && !r.notApplicable) },
+  ].filter((g) => g.runs.length > 0);
   const generatedAt = new Date().toLocaleString();
 
   // The pack mounts an SVG ECharts instance per chart; with several runs
@@ -3848,7 +4050,7 @@ function ReportPreviewModal({
               </section>
             )}
 
-            {done.some((r) => r.series && r.series.x.length > 0) && (
+            {done.some(hasTrajectory) && (
               <section data-print-card className="mb-6 rounded border border-border p-4">
                 <h2
                   data-print-muted
@@ -3940,6 +4142,35 @@ function ReportPreviewModal({
                 </ul>
               )}
             </section>
+
+            {/* A board pack must not silently drop an attached model that
+                produced no figure — list it with the reason, so "model runs
+                (3)" can't be read as "3 models were attached". */}
+            {notComputed.map((g) => (
+              <section
+                key={g.title}
+                data-print-card
+                className="mb-6 rounded border border-border p-3"
+              >
+                <h2
+                  data-print-muted
+                  className="mb-2 font-mono text-[10px] uppercase tracking-wider text-fg-dim"
+                >
+                  {g.title} ({g.runs.length})
+                </h2>
+                <ul className="flex flex-col gap-1.5 text-[12px]">
+                  {g.runs.map((r) => (
+                    <li key={r.modelId}>
+                      <span className="text-fg">{modelName(r.modelId)}</span>
+                      <span data-print-muted className="text-fg-mute">
+                        {" "}
+                        — {r.error ?? "run failed"}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            ))}
 
             {done.some((r) => (r.detail as { workspace?: unknown } | undefined)?.workspace) && (
               <section className="mb-6">
@@ -4192,11 +4423,17 @@ function ModelDetailModal({
             </section>
 
             {/* error fallback */}
-            {run.status === "error" && run.error && (
-              <section className="rounded border border-error/50 bg-error/10 px-3 py-2 font-mono text-[11px] text-error">
-                run error · {run.error}
-              </section>
-            )}
+            {run.status === "error" &&
+              run.error &&
+              (run.notApplicable ? (
+                <section className="rounded border border-border bg-bg-2 px-3 py-2 text-[11px] text-fg-mute">
+                  not applicable to this data · {run.error}
+                </section>
+              ) : (
+                <section className="rounded border border-error/50 bg-error/10 px-3 py-2 font-mono text-[11px] text-error">
+                  run error · {run.error}
+                </section>
+              ))}
           </main>
 
           {/* chat — scoped to this model, memory-keyed if a project is on */}
@@ -4398,7 +4635,18 @@ function ModelDiagnostics({ run, color }: { run: RunResult; color: string }) {
   // Bootstrap surfaces p5/p95 around the central estimate — a tiny
   // bullet-style range bar speaks the point + range in one row.
   if (typeof d.p5 === "number" && typeof d.p95 === "number" && typeof d.ibnr === "number") {
-    return <BootstrapRange p5={d.p5} p95={d.p95} centre={d.ibnr} color={color} />;
+    // The bundled-Python bootstrap reports the MEAN simulated reserve; the
+    // in-browser one centres on the chain-ladder point (its p50).
+    const centreLabel = d.source === "scelo-reserving-numpy" ? "mean" : "median";
+    return (
+      <BootstrapRange
+        p5={d.p5}
+        p95={d.p95}
+        centre={d.ibnr}
+        centreLabel={centreLabel}
+        color={color}
+      />
+    );
   }
 
   // Bridged GLMs: the fitted coefficient table IS the report artifact.
@@ -4476,12 +4724,13 @@ function ModelDiagnostics({ run, color }: { run: RunResult; color: string }) {
     );
   }
 
-  // GBM: the variance-screen feature ranking that feeds a wired SHAP.
+  // GBM / SHAP: global importance — each feature's share of mean |SHAP|
+  // over the held-out rows (exact TreeSHAP of the fitted trees).
   if (Array.isArray(d.importances) && (d.importances as unknown[]).length > 0) {
-    const imp = d.importances as Array<{ feature: string; weight: number }>;
+    const imp = (d.importances as Array<{ feature: string; weight: number }>).slice(0, 15);
     return (
       <SmallBarPanel
-        title="feature screen — between-group variance share (feeds wired SHAP)"
+        title="feature importance — share of mean |SHAP| on the holdout"
         xs={imp.map((i) => i.feature)}
         ys={imp.map((i) => i.weight)}
         color={color}
@@ -4688,11 +4937,13 @@ function BootstrapRange({
   p5,
   p95,
   centre,
+  centreLabel = "median",
   color,
 }: {
   p5: number;
   p95: number;
   centre: number;
+  centreLabel?: string;
   color: string;
 }) {
   const lo = Math.min(p5, centre);
@@ -4705,7 +4956,9 @@ function BootstrapRange({
     <div className="rounded border border-border bg-bg p-3">
       <div className="mb-2 flex items-baseline justify-between font-mono text-[10px] uppercase tracking-wider text-fg-dim">
         <span>predictive distribution · p5 → p95</span>
-        <span>median {formatNumber(centre)}</span>
+        <span>
+          {centreLabel} {formatNumber(centre)}
+        </span>
       </div>
       <svg width="100%" height={32} className="block" aria-hidden="true">
         <title>Bootstrap predictive distribution range</title>
@@ -4738,7 +4991,9 @@ function BootstrapRange({
       </svg>
       <div className="mt-1 grid grid-cols-3 font-mono text-[10px] text-fg-mute">
         <span>p5 {formatNumber(p5)}</span>
-        <span className="text-center text-fg">median {formatNumber(centre)}</span>
+        <span className="text-center text-fg">
+          {centreLabel} {formatNumber(centre)}
+        </span>
         <span className="text-right">p95 {formatNumber(p95)}</span>
       </div>
     </div>
@@ -4931,7 +5186,7 @@ function ModelDetailChat({ run, modelName }: { run: RunResult; modelName: string
       "Help the user interpret the diagnostics, theory, and hypothesis-test results shown alongside this conversation.",
       "Answer FROM THE RUN DATA below; if something isn't in it, say so. Stay focused on this model.",
       "",
-      `RUN: ${modelId} (${run.family}, ${run.status}${run.source === "python-bridge" ? ", canonical python-bridge" : ", in-browser approximation"})`,
+      `RUN: ${modelId} (${run.family}, ${run.status}${run.source === "python-bridge" ? ", canonical python-bridge" : run.source === "r-bridge" ? ", canonical R bridge" : ", in-browser engine"})`,
       `HEADLINE: ${run.headline.label} = ${formatHeadline(run.headline)}`,
     ];
     for (const sec of run.secondary) lines.push(`  • ${sec.label}: ${sec.value}`);
@@ -4972,7 +5227,10 @@ function ModelDetailChat({ run, modelName }: { run: RunResult; modelName: string
       }
       if (Array.isArray(d.importances)) {
         lines.push(
-          `FEATURE SCREEN: ${(d.importances as Array<{ feature: string; weight: number }>)
+          `FEATURE IMPORTANCE (share of mean |SHAP| on the holdout): ${(
+            d.importances as Array<{ feature: string; weight: number }>
+          )
+            .slice(0, 15)
             .map((i) => `${i.feature} ${(i.weight * 100).toFixed(0)}%`)
             .join(", ")}`,
         );

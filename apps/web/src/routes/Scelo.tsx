@@ -93,7 +93,7 @@ function SceloBootstrap() {
     if (sp.get("autopick") !== "1" && sp.get("autorun") !== "1") return;
     ranPicks.current = true;
     void (async () => {
-      const { dataSignature, heuristicPick } = await import(
+      const { dataSignature, heuristicPick, switchOffInapplicable } = await import(
         "@/components/Scelo/modelPicker"
       );
       const { summariseDataset } = await import(
@@ -101,12 +101,12 @@ function SceloBootstrap() {
       );
       const metas = summariseDataset(dataset);
       const sig = dataSignature(dataset, metas);
-      const pick = heuristicPick(sig);
+      const pick = switchOffInapplicable(heuristicPick(sig), dataset);
       setDomain(pick.domain);
       setSelectedModels(
         pick.selected.map((s) => ({
           id: s.id,
-          enabled: true,
+          enabled: !s.disabled,
           source: "ai",
           rationale: s.rationale,
         })),

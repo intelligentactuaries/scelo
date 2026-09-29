@@ -148,7 +148,9 @@ function useStageSummary(stage: SceloStage): StageSummary {
     const all = Object.values(runs) as RunResult[];
     if (all.length === 0) return { primary: "—" };
     const done = all.filter((r) => r.status === "done");
-    const errored = all.filter((r) => r.status === "error");
+    // A model the data cannot feed is not an error — counted apart.
+    const errored = all.filter((r) => r.status === "error" && !r.notApplicable);
+    const notApplicable = all.filter((r) => r.status === "error" && r.notApplicable);
     // Dominant run = highest absolute headline value among completed runs.
     // Reads as the "anchor number" the user came here to see.
     const dominant = done
@@ -158,6 +160,7 @@ function useStageSummary(stage: SceloStage): StageSummary {
     if (done.length > 0) secondary.push(`${done.length} complete`);
     if (errored.length > 0)
       secondary.push(`${errored.length} error${errored.length === 1 ? "" : "s"}`);
+    if (notApplicable.length > 0) secondary.push(`${notApplicable.length} not applicable`);
     return {
       primary: `${all.length} run${all.length === 1 ? "" : "s"}`,
       secondary,
@@ -177,6 +180,11 @@ function useStageSummary(stage: SceloStage): StageSummary {
                   label: "error",
                   value: errored.length,
                   color: "rgb(var(--rgb-error))",
+                },
+                {
+                  label: "not applicable",
+                  value: notApplicable.length,
+                  color: "rgb(var(--rgb-fg-dim))",
                 },
               ].filter((s) => s.value > 0),
             }

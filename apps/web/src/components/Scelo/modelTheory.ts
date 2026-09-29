@@ -110,6 +110,8 @@ The time index is then projected forward (usually as a random walk with drift) a
 - A single common time pattern drives mortality change across ages.
 - Improvements are smooth — no structural breaks (pandemics, policy shocks) baked in.
 
+**In the app** — fitted to the dataset's mortality table (\`age\` with \`qx\`, \`mx\`, or \`deaths\` / \`exposure\`, by \`year\`): $a_x$ is the mean log rate, $b_x$ and $k_t$ the rank-1 SVD of the centred matrix ($\\sum_x b_x = 1$), $k_t$ projected 10 years as a random walk with drift. Needs at least 3 years × 2 ages; data without a mortality table is reported as not computed.
+
 **Caveat** — Lee-Carter under-predicts old-age improvements observed in many developed countries since ~1990. Pair with CBD for high-age work.
 `.trim(),
 
@@ -179,6 +181,8 @@ Pair with a frequency model and $\\mathbb{E}[\\text{Loss}] = \\mathbb{E}[N] \\cd
 **Why it matters** — for black-box models (GBM, neural nets), SHAP is how you say "this customer's premium is high because age and zip-code each added X to the base rate".
 
 **Outputs** — local: per-row force plot. Global: feature importance + summary swarm.
+
+**In the app** — exact path-dependent TreeSHAP (Lundberg, Erion & Lee 2018) over every tree of the in-browser GBM, on the held-out rows: $f(x) = \\mathbb{E}[f] + \\sum_j \\phi_j(x)$ holds to rounding error. The card ranks features by mean $|\\phi_j|$ as a share of the total; ↑ / ↓ mark whether higher values of a numeric feature raise or lower the prediction (on the log-odds or log-mean scale for 0/1 and count targets).
 `.trim(),
 
   climada: `
@@ -446,22 +450,24 @@ $$
 \\operatorname{logit}\\, q(x,t) = \\kappa_t^{(1)} + \\kappa_t^{(2)}\\,(x - \\bar x).
 $$
 
-**Caveat** — the in-app run is a deterministic contrast against Lee-Carter, not a fitted CBD; use the exported script for a real fit with parameter uncertainty.
+**In the app** — a least-squares line in age per year on the dataset's mortality table (ages 50+ when at least three are complete), then a random walk with drift on each factor. Point projection only: no parameter uncertainty and no cohort term.
+
+**Caveat** — two drifting factors extrapolate linearly in logit space; stress-test long horizons, and check the fit where the logit stops being straight (below ~55).
 `.trim(),
 
   lifecontingencies: `
 **Life contingencies** turn a survival model into prices: every annuity or assurance is an expected present value — discount each cash flow by interest AND by the probability it is paid.
 
 **Assumptions**
-- Deaths are governed by the supplied life table (wired Lee-Carter projection when connected; canned survival otherwise).
-- A flat deterministic discount rate; no expense or selection loadings.
+- Deaths are governed by the wired Lee-Carter projection when connected — priced along the cohort (the life aged 65 next year meets that year's $q_{65}$, then the following year's $q_{66}$, …) — otherwise by the latest year of the dataset's own life table. No table and no wire: not computed.
+- A flat deterministic discount rate (4%); no expense or selection loadings. The card quotes a 65-year-old over 10 years.
 
 **Formula**
 $$
 \\ddot a_x = \\sum_{t\\ge 0} v^t\\,{}_tp_x, \\qquad A_x = \\sum_{t\\ge 0} v^{t+1}\\,{}_tp_x\\,q_{x+t}, \\qquad v = \\tfrac{1}{1+i}.
 $$
 
-**Caveat** — EPVs are only as good as the mortality behind them: wire Lee-Carter in to price on the projected table instead of the canned curve.
+**Caveat** — EPVs are only as good as the mortality behind them: a period table ignores future improvement, so wire Lee-Carter in to price on the projected cohort.
 `.trim(),
 
   esg: `
@@ -508,7 +514,9 @@ $$
 F_m(x) = F_{m-1}(x) + \\nu\\, h_m(x), \\qquad h_m \\approx -\\nabla_{F} \\mathcal{L}\\big(y, F_{m-1}\\big).
 $$
 
-**Caveat** — the in-app run is a screening approximation (its label says so): the score drifts with row count and the feature ranking is a between-group variance screen, not a fitted model. Export the script for a real LightGBM fit.
+**In the app** — a genuine fit, not the LightGBM library: second-order (Newton) boosting over histogram-binned features, 100 depth-3 trees, learning rate $\\nu = 0.1$, leaf value $-G/(H+\\lambda)$ with $\\lambda = 1$, 80% row subsampling; squared-error, logistic or Poisson loss by target type. 20% of rows are held out (stratified for 0/1 targets) and never seen by the trees — the headline AUC / $R^2$ / deviance explained, the RMSE and the decile lift all come from that holdout. The target is the dataset's claims amount, claim count or 0/1 indicator when one exists, else the last numeric column; the card names it.
+
+**Caveat** — one holdout split, no out-of-time fold: a small holdout (tens of rows) gives a noisy metric, and a negative $R^2$ means the trees generalise worse than the mean. Check the lift before trusting the headline.
 `.trim(),
 
   descriptive: `

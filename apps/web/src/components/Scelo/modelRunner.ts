@@ -9,11 +9,25 @@
 // tripping every cell to the backend.
 
 import { type Dataset, type Row, profileNumericColumns } from "@scelo/core";
-import { isDesktopIDE } from "../../lib/sceloIDE";
 import { runForecast, runSensitivity } from "./forecast/runner";
 import { DEFAULT_WMTR_SINGLE_PARAMS, type WmtrSingleParams } from "./forecast/wmtr";
-import { parseModelPoints, runBasicTermProjection } from "./lifelibBasicTerm";
-import type { ModelFamily } from "./modelCatalog";
+import {
+  type GbmFeature,
+  type GbmFit,
+  type GbmTargetKind,
+  type ShapSummary,
+  fitGbm,
+} from "./gbm";
+import { hasModelPoints, parseModelPoints, runBasicTermProjection } from "./lifelibBasicTerm";
+import { MODEL_BY_ID, type ModelFamily } from "./modelCatalog";
+import {
+  type LifeValues,
+  detectMortalityTable,
+  fitCBD,
+  fitLeeCarter,
+  lifeValues,
+  nearestAge,
+} from "./mortality";
 import { fitBottleneck, numericColumns } from "./workspace";
 
 export type RunStatus = "idle" | "running" | "done" | "error";
@@ -46,19 +60,38 @@ export type RunResult = {
   // raw computed object — debug / chatbar context
   detail?: Record<string, unknown>;
   error?: string;
-  // Provenance of the numbers: the desktop IDE's bundled Python/R bridge
-  // (canonical library implementation) or the in-browser TS approximation.
+  // Provenance of the numbers: the desktop IDE's bundled Python or R bridge
+  // (canonical library implementation) or the in-browser TS engine.
   // Optional because persisted runs predate the field — treat absent as
   // "browser".
-  source?: "python-bridge" | "browser";
+  source?: "python-bridge" | "r-bridge" | "browser";
   // Set when a bridge was attempted but failed. The in-browser fallback
   // still runs, but the result card must say WHY the canonical path
   // didn't — a bridge failure must never be a silent mock substitution.
   bridgeError?: string;
+  /** With status "error": the model does not apply to this dataset (its
+   *  inputs are absent — no triangle, no mortality table, too few rows), as
+   *  opposed to a run that broke. Shown as a neutral "not applicable", not
+   *  counted as an error. */
+  notApplicable?: true;
   /** Canvas wiring provenance: upstream models whose results this run
    *  consumed, with a one-line note of what flowed across the wire. */
   wiredFrom?: Array<{ id: string; note: string }>;
 };
+
+/** Which quantity a run's headline estimates — the key the Hard Data "do my
+ *  models agree?" views (forest plot, spread tile) group by. Display labels
+ *  carry the method and provenance ("IBNR · Mack", "BF reserve", "IBNR p50")
+ *  even though every reserving method estimates the SAME outstanding reserve;
+ *  grouping on the raw label kept BF and bootstrap out of the reserving
+ *  forest, and in the IDE — where each bridged label was distinct — the
+ *  reserving forest and spread never formed at all. */
+export function comparableKey(run: RunResult): string {
+  if (run.family === "reserving" && /\b(ibnr|reserve)\b/i.test(run.headline.label)) {
+    return "IBNR reserve";
+  }
+  return run.headline.label;
+}
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -201,6 +234,128 @@ export function findExposureColumn(dataset: Dataset): string | null {
     if (col) return col;
   }
   return null;
+}
+
+// ── supervised target for the GBM / SHAP pair ─────────────────────────────
+//
+// A boosted model needs a response column. Pricing data usually names one
+// (an amount, a claim count, a 0/1 claim indicator); anything else falls back
+// to the last numeric column, the conventional "response last" layout. The
+// choice and the reason for it travel with the result, so the card always
+// says WHAT was predicted and why that column.
+
+// 0/1 columns named like an outcome worth classifying.
+const BINARY_TARGET_RE =
+  /(^|_)(claims?|lapsed?|lapses|default(ed)?|churn(ed)?|fraud|target|label|outcome|event|response)(_|$)/i;
+const GENERIC_TARGET_RE = /^(target|label|y|response|outcome)$/i;
+// Claim outcomes are leakage, not rating factors, when the target is itself
+// a claims outcome (incurred beside paid, a claim flag beside a claim count).
+const OUTCOME_LIKE_RE =
+  /(^|_)(paid|incurred|claims?|claim_amt|claim_amount|loss(es)?|severity|settled|reserves?|ibnr)(_|$)/i;
+const GBM_MAX_FEATURES = 40;
+
+export type ModelTarget = {
+  column: string;
+  kind: GbmTargetKind;
+  /** Plain-English reason this column was chosen — shown on the card. */
+  reason: string;
+  /** True when the target is a claims outcome (amount / count / indicator). */
+  claimsOutcome: boolean;
+};
+
+function isBinaryColumn(dataset: Dataset, col: string): boolean {
+  const scan = Math.min(dataset.rows.length, DETECT_SCAN_CAP);
+  let zeros = 0;
+  let ones = 0;
+  for (let i = 0; i < scan; i++) {
+    const v = dataset.rows[i][col];
+    if (typeof v !== "number" || !Number.isFinite(v)) continue;
+    if (v === 0) zeros++;
+    else if (v === 1) ones++;
+    else return false;
+  }
+  return zeros > 0 && ones > 0;
+}
+
+export function detectModelTarget(dataset: Dataset): ModelTarget | null {
+  const money = detectMonetaryColumn(dataset);
+  if (money) {
+    return { column: money, kind: "continuous", reason: "monetary amount", claimsOutcome: true };
+  }
+  const freq = detectFrequencyTarget(dataset);
+  if (freq) return { column: freq, kind: "count", reason: "claim count", claimsOutcome: true };
+  const numeric = numericColumns(dataset);
+  const kindOf = (c: string): GbmTargetKind => (isBinaryColumn(dataset, c) ? "binary" : "continuous");
+  const indicator = numeric.find((c) => BINARY_TARGET_RE.test(c) && isBinaryColumn(dataset, c));
+  if (indicator) {
+    return { column: indicator, kind: "binary", reason: "0/1 indicator", claimsOutcome: true };
+  }
+  const named = numeric.find((c) => GENERIC_TARGET_RE.test(c));
+  if (named) {
+    return { column: named, kind: kindOf(named), reason: "named target", claimsOutcome: false };
+  }
+  // Swarm-simulation output: the sim_* columns ARE the outcomes.
+  const sim = numeric.find((c) => c.toLowerCase().startsWith("sim_"));
+  if (sim) {
+    return { column: sim, kind: kindOf(sim), reason: "simulation outcome", claimsOutcome: false };
+  }
+  const last = numeric[numeric.length - 1];
+  if (!last) return null;
+  return {
+    column: last,
+    kind: kindOf(last),
+    reason: "last numeric column (no amount, count or indicator column found)",
+    claimsOutcome: false,
+  };
+}
+
+/** Feature columns for a boosted fit of `target`: every usable numeric column
+ *  plus the categorical rating factors, minus the target itself and — for a
+ *  claims target — the other claims outcomes (they leak the answer). */
+export function detectModelFeatures(dataset: Dataset, target: ModelTarget): GbmFeature[] {
+  const numeric: GbmFeature[] = numericColumns(dataset, [target.column]).map((name) => ({
+    name,
+    kind: "numeric",
+  }));
+  const cats: GbmFeature[] = detectCategoricalCovariates(dataset)
+    .filter((c) => c !== target.column)
+    .map((name) => ({ name, kind: "categorical" }));
+  const all = [...numeric, ...cats];
+  const usable = target.claimsOutcome ? all.filter((f) => !OUTCOME_LIKE_RE.test(f.name)) : all;
+  return usable.slice(0, GBM_MAX_FEATURES);
+}
+
+// GBM and SHAP usually run in the same batch on the same dataset object —
+// one fit serves both (and the SHAP numbers then explain exactly the model
+// whose holdout metric sits on the GBM card). WeakMap: superseded dataset
+// versions stay collectable.
+const GBM_FIT_CACHE = new WeakMap<Dataset, Map<string, GbmFit>>();
+
+/** `error` is a lower-case clause; callers frame it into a sentence. */
+type GbmRun = { target: ModelTarget; fit: GbmFit } | { error: string };
+
+function gbmFitFor(dataset: Dataset): GbmRun {
+  const target = detectModelTarget(dataset);
+  if (!target) return { error: "no numeric column to use as the target" };
+  const features = detectModelFeatures(dataset, target);
+  if (features.length === 0) {
+    return { error: `no feature columns to predict \`${target.column}\` from` };
+  }
+  const key = `${target.column}|${target.kind}|${features.map((f) => f.name).join(",")}`;
+  let perDataset = GBM_FIT_CACHE.get(dataset);
+  const hit = perDataset?.get(key);
+  if (hit) return { target, fit: hit };
+  try {
+    const fit = fitGbm(dataset.rows, { column: target.column, kind: target.kind }, features);
+    if (!perDataset) {
+      perDataset = new Map();
+      GBM_FIT_CACHE.set(dataset, perDataset);
+    }
+    perDataset.set(key, fit);
+    return { target, fit };
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : String(e) };
+  }
 }
 
 // Even-stride sample so capped fits still span the whole file (the rows are
@@ -622,7 +777,9 @@ function runBornhuetterFerguson({ dataset, upstream }: Args): RunResult {
     // table instead of a sparkline (per the "one item per node" rule).
     tableSpec: {
       headers: ["origin", "reserve"],
-      rows: topOrigins.map((p) => [p.origin, p.reserve]),
+      // Origin as text: it is a label, and the table's number formatter
+      // printed a numeric year with a thousands separator ("2,024").
+      rows: topOrigins.map((p) => [String(p.origin), p.reserve]),
     },
     blurb: clUlts
       ? `BF gives a reserve of ${fmt(bfReserve, 0)} with the a-priori seeded from the wired chain-ladder ultimates.`
@@ -684,117 +841,225 @@ function runBootstrap({ dataset, upstream }: Args): RunResult {
   };
 }
 
+// ── mortality · Lee–Carter, CBD, life contingencies ──────────────────────
+//
+// Real fits on the dataset's mortality table (mortality.ts), or "not
+// computed" with the reason. The old runners returned numbers for ANY
+// dataset: Lee–Carter "projected" q(65) = 0.012·(1 − improvement)^t with the
+// improvement read off the mean of an `age` column (a default of 50 when
+// there was none), CBD scaled that path by (1 + 0.0008·t), and the annuity
+// priced off it or off a hard-coded survival curve — so the workspace demo,
+// which has no age, year or rate column at all, showed q(65) 0.00951 and
+// a₆₅ 8.65 as completed results.
+
 function runLeeCarter({ dataset }: Args): RunResult {
-  // Synthesise a 10-year projection of q(65). We use a deterministic slope
-  // off the dataset's `age` column if available; otherwise canned numbers.
-  const ages = numericCol(dataset.rows, "age");
-  const baseRate = 0.012;
-  const meanAge = ages.length > 0 ? ages.reduce((a, b) => a + b, 0) / ages.length : 50;
-  // Younger mean age → optimistic improvement; older → slower improvement.
-  const annualImp = Math.max(0.005, 0.025 - (meanAge - 40) * 0.0002);
-  const x = Array.from({ length: 11 }, (_, i) => `${2025 + i}`);
-  const y = x.map((_, i) => baseRate * (1 - annualImp) ** i);
-  const finalQ = y[y.length - 1];
+  const found = detectMortalityTable(dataset);
+  if ("reason" in found) {
+    return makeUnsupported("lee-carter", "mortality", sentence(found.reason));
+  }
+  const fit = fitLeeCarter(found.table);
+  if ("reason" in fit) return makeUnsupported("lee-carter", "mortality", sentence(fit.reason));
+  const t = found.table;
+  const h = fit.horizon - 1;
+  const endYear = fit.projYears[h];
+  const finalQ = fit.qx[h];
+  const span = `${fit.years[0]}–${fit.years[fit.years.length - 1]}`;
   return {
     modelId: "lee-carter",
     family: "mortality",
     status: "done",
     startedAt: Date.now(),
     finishedAt: Date.now(),
-    headline: { label: "q(65) in 2035", value: finalQ, precision: 4 },
+    headline: { label: `q(${fit.headlineAge}) in ${endYear}`, value: finalQ, precision: 5 },
     secondary: [
-      { label: "annual improvement", value: pct(annualImp) },
-      { label: "base q(65)", value: baseRate.toFixed(4) },
-      { label: "mean dataset age", value: fmt(meanAge, 1) },
+      { label: "annual improvement", value: pct(fit.annualImprovement, 2) },
+      { label: "κ drift", value: fit.drift.toFixed(4) },
+      { label: "95% band", value: `${fmt(fit.qxLower[h])} – ${fmt(fit.qxUpper[h])}` },
+      { label: "rank-1 fit", value: `${pct(fit.explained)} of log-rate variation` },
+      { label: "table", value: `${fit.years.length} years × ${fit.ages.length} ages (${t.basis})` },
     ],
-    series: { kind: "line", x, y },
-    blurb: `Lee-Carter projects q(65) down to ${finalQ.toFixed(4)} by 2035 (${pct(annualImp)}/yr improvement).`,
-    detail: { annualImp, baseRate, finalQ },
+    series: { kind: "line", x: fit.projYears.map(String), y: fit.qx },
+    blurb:
+      `Lee–Carter fitted to ${fit.years.length} years (${span}) × ${fit.ages.length} ages of ${t.basis}: ` +
+      `the rank-1 term explains ${pct(fit.explained)} of the log-rate variation and κ drifts ` +
+      `${fit.drift.toFixed(3)} a year, projecting q(${fit.headlineAge}) to ${finalQ.toFixed(5)} by ${endYear} ` +
+      `(${pct(fit.annualImprovement, 2)}/yr improvement).`,
+    // The full projection (α, β, κ forecast) rides along: a wired life-
+    // contingencies run prices the COHORT off it, not just the headline age.
+    detail: { ...fit, basis: t.basis, source: "in-browser" },
   };
 }
 
 function runCBD({ dataset }: Args): RunResult {
-  const lc = runLeeCarter({ dataset });
-  // Two-factor model — give a slightly different projection: less aggressive
-  // improvement at the youngest ages, similar at the oldest.
-  const x = lc.series?.x ?? Array.from({ length: 11 }, (_, i) => `${2025 + i}`);
-  const baseY = lc.series?.y ?? [];
-  const y = baseY.map((v, i) => v * (1 + 0.0008 * i));
-  const finalQ = y[y.length - 1] ?? lc.headline.value;
+  const found = detectMortalityTable(dataset);
+  if ("reason" in found) return makeUnsupported("cbd", "mortality", sentence(found.reason));
+  const fit = fitCBD(found.table);
+  if ("reason" in fit) return makeUnsupported("cbd", "mortality", sentence(fit.reason));
+  const h = fit.horizon - 1;
+  const endYear = fit.projYears[h];
+  const finalQ = fit.qx[h];
+  const ageSpan = `${fit.ages[0]}–${fit.ages[fit.ages.length - 1]}`;
   return {
     modelId: "cbd",
     family: "mortality",
     status: "done",
     startedAt: Date.now(),
     finishedAt: Date.now(),
-    headline: { label: "q(65) in 2035", value: finalQ, precision: 4 },
+    headline: { label: `q(${fit.headlineAge}) in ${endYear}`, value: finalQ, precision: 5 },
     secondary: [
-      { label: "k1 trend", value: "−0.020" },
-      { label: "k2 trend", value: "+0.004" },
+      { label: "κ₁ drift (level)", value: fit.drift1.toFixed(4) },
+      { label: "κ₂ drift (slope)", value: fit.drift2.toFixed(5) },
+      { label: "ages fitted", value: `${ageSpan} (x̄ ${fit.xbar.toFixed(1)})` },
+      { label: "table", value: `${fit.years.length} years (${found.table.basis})` },
     ],
-    series: { kind: "line", x, y },
-    blurb: `CBD's two-factor view lands slightly above Lee-Carter at q(65)=${finalQ.toFixed(4)}.`,
-    detail: { finalQ },
+    series: { kind: "line", x: fit.projYears.map(String), y: fit.qx },
+    blurb:
+      `CBD fitted per year over ages ${ageSpan} (logit q = κ₁ + κ₂(x − x̄)): κ₁ drifts ` +
+      `${fit.drift1.toFixed(3)} and κ₂ ${fit.drift2.toFixed(4)} a year, projecting q(${fit.headlineAge}) ` +
+      `to ${finalQ.toFixed(5)} by ${endYear}.`,
+    detail: { ...fit, basis: found.table.basis, source: "in-browser" },
   };
 }
 
-function runLifeContingencies({ dataset, upstream }: Args): RunResult {
-  // Annuity factor a_x = sum_{t>=0} v^t * p(x,t) at a flat 4% discount.
-  // With a Lee-Carter run wired in, the survival curve is BUILT from its
-  // projected q(65) path — the fitted table prices the annuity, which is
-  // the entire point of the "price annuities" workflow arrow. Standalone,
-  // canned survival rates stand in.
-  const v = 1 / 1.04;
-  const wiredLc = wired(upstream, "lee-carter");
-  const lcQ = wiredLc?.series?.y;
-  let survival: number[];
-  let mortalitySource: "lee-carter" | "canned";
-  if (lcQ && lcQ.length >= 2) {
-    survival = [1];
-    for (let t = 0; t < lcQ.length - 1; t++) {
-      const q = Math.max(0, Math.min(0.5, lcQ[t]));
-      survival.push(survival[t] * (1 - q));
+// The contract every life-contingencies figure is quoted on.
+const LIFE_AGE = 65;
+const LIFE_TERM = 10;
+const LIFE_INTEREST = 0.04;
+
+export type LifeBasis = {
+  /** One-year death probabilities faced at ages x, x+1, … x+n−1. */
+  q: number[];
+  x: number;
+  source: "lee-carter" | "table";
+  /** Human description of where q came from, for the card. */
+  note: string;
+};
+
+/**
+ * The mortality a life-contingencies run prices on: a wired Lee–Carter's
+ * projected COHORT (a life aged x next year meets q(x) that year, q(x+1) the
+ * year after, …) or, failing that, the dataset's own life table (its latest
+ * year). Shared by the in-browser runner and the R bridge so both price the
+ * same q vector. The old runner walked the wired q(65) PATH — one age's rate
+ * over ten calendar years — as if it were a cohort ageing through 65…74.
+ */
+export function resolveLifeBasis(
+  dataset: Dataset,
+  upstream?: Map<string, RunResult>,
+): LifeBasis | { reason: string } {
+  const lc = wired(upstream, "lee-carter")?.detail as
+    | { ages?: unknown; alpha?: unknown; beta?: unknown; kappaForecast?: unknown; projYears?: unknown }
+    | undefined;
+  if (
+    lc &&
+    Array.isArray(lc.ages) &&
+    Array.isArray(lc.alpha) &&
+    Array.isArray(lc.beta) &&
+    Array.isArray(lc.kappaForecast) &&
+    Array.isArray(lc.projYears)
+  ) {
+    const ages = lc.ages as number[];
+    const alpha = lc.alpha as number[];
+    const beta = lc.beta as number[];
+    const kf = lc.kappaForecast as number[];
+    const years = lc.projYears as number[];
+    const x = ages[nearestAge(ages, LIFE_AGE)];
+    const q: number[] = [];
+    for (let t = 0; t < Math.min(LIFE_TERM, kf.length); t++) {
+      const a = ages.indexOf(x + t);
+      if (a < 0) break; // the cohort has aged past the fitted ages
+      q.push(Math.min(1, Math.exp(alpha[a] + beta[a] * kf[t])));
     }
-    mortalitySource = "lee-carter";
-  } else {
-    survival = [1, 0.99, 0.98, 0.97, 0.96, 0.945, 0.93, 0.91, 0.88, 0.84];
-    mortalitySource = "canned";
+    if (q.length > 0) {
+      return {
+        q,
+        x,
+        source: "lee-carter",
+        note: `wired Lee–Carter cohort, ages ${x}–${x + q.length - 1} in ${years[0]}–${years[q.length - 1]}`,
+      };
+    }
   }
-  let a = 0;
-  for (let t = 0; t < survival.length; t++) a += v ** t * survival[t];
+  const found = detectMortalityTable(dataset);
+  if ("reason" in found) {
+    // (A wired Lee–Carter cannot help here: it needs the same table.)
+    return { reason: found.reason };
+  }
+  const t = found.table;
+  const row = t.q[t.q.length - 1];
+  const known = t.ages.filter((_, j) => Number.isFinite(row[j]));
+  if (known.length === 0) return { reason: "the life table's latest year has no usable rates" };
+  const x = known[nearestAge(known, LIFE_AGE)];
+  const q: number[] = [];
+  for (let k = 0; k < LIFE_TERM; k++) {
+    const j = t.ages.indexOf(x + k);
+    if (j < 0 || !Number.isFinite(row[j])) break; // stop at the first gap
+    q.push(row[j]);
+  }
+  const year = t.years[t.years.length - 1];
+  return {
+    q,
+    x,
+    source: "table",
+    note: `${t.columns.year ? `${year} ` : ""}life table (${t.basis}), ages ${x}–${x + q.length - 1}`,
+  };
+}
+
+/** One result shape for the life-contingencies card, whichever engine priced
+ *  it (in-browser, or the bundled R package when `runtime` names it). */
+function lifeResult(basis: LifeBasis, v: LifeValues, runtime?: string): RunResult {
+  const n = basis.q.length;
+  const survivors: number[] = [];
+  let tpx = 1;
+  for (const q of basis.q) {
+    survivors.push(tpx);
+    tpx *= 1 - q;
+  }
+  const label = `ä${basis.x}:${n}¬ (annuity-due)`;
   return {
     modelId: "lifecontingencies",
     family: "mortality",
     status: "done",
     startedAt: Date.now(),
     finishedAt: Date.now(),
-    headline: { label: "a₆₅ (annuity)", value: a, precision: 3 },
+    headline: { label, value: v.annuityDue, precision: 3 },
     secondary: [
-      { label: "discount", value: pct(0.04) },
-      { label: "horizon", value: `${survival.length}y` },
-      {
-        label: "mortality",
-        value: mortalitySource === "lee-carter" ? "wired lee-carter table" : "canned survival",
-      },
+      { label: `A¹${basis.x}:${n}¬ (term assurance)`, value: v.termAssurance.toFixed(4) },
+      { label: `${n}E${basis.x} (pure endowment)`, value: v.pureEndowment.toFixed(4) },
+      { label: "interest", value: pct(LIFE_INTEREST) },
+      { label: "mortality", value: basis.note },
+      ...(runtime ? [{ label: "runtime", value: runtime }] : []),
     ],
-    series: {
-      kind: "line",
-      x: survival.map((_, i) => `t=${i}`),
-      y: survival.map((s, i) => v ** i * s),
-    },
+    // Probability the annuitant is alive for payment t — the weights
+    // behind the annuity factor.
+    series: { kind: "bar", x: survivors.map((_, t) => `t=${t}`), y: survivors },
     blurb:
-      mortalitySource === "lee-carter"
-        ? `Annuity factor a₆₅ ≈ ${a.toFixed(3)} priced on the wired Lee-Carter projection (4% discount, ${survival.length}y).`
-        : `Life annuity factor a₆₅ ≈ ${a.toFixed(3)} at 4% discount over ${survival.length}y.`,
-    detail: { a, v, survival, mortalitySource, ages: numericCol(dataset.rows, "age").length },
-    ...(mortalitySource === "lee-carter"
+      `${runtime ? `${runtime}: ` : ""}${label} = ${v.annuityDue.toFixed(3)} at ${pct(LIFE_INTEREST)} ` +
+      `on the ${basis.note}; term assurance ${v.termAssurance.toFixed(4)}, pure endowment ` +
+      `${v.pureEndowment.toFixed(4)}.`,
+    detail: {
+      ...v,
+      x: basis.x,
+      term: n,
+      interest: LIFE_INTEREST,
+      q: basis.q,
+      mortalitySource: basis.source,
+    },
+    ...(basis.source === "lee-carter"
       ? {
           wiredFrom: [
-            { id: "lee-carter", note: "survival curve built from the wired q(65) projection" },
+            { id: "lee-carter", note: "cohort mortality from the wired Lee–Carter projection" },
           ],
         }
       : {}),
   };
+}
+
+function runLifeContingencies({ dataset, upstream }: Args): RunResult {
+  const basis = resolveLifeBasis(dataset, upstream);
+  if ("reason" in basis) {
+    return makeUnsupported("lifecontingencies", "mortality", sentence(basis.reason));
+  }
+  return lifeResult(basis, lifeValues(basis.q, LIFE_INTEREST));
 }
 
 // In-browser GLM fits work on a capped sample: the grouped-mean pass is
@@ -897,6 +1162,7 @@ function runGLMSeverity({ dataset, upstream }: Args): RunResult {
   const cat = covariates[0];
   const groups = new Map<string, { sum: number; n: number }>();
   let total = 0;
+  let totalAmount = 0;
   for (const r of rows) {
     const v = r[money];
     // Severity is conditional on a positive amount (Gamma support).
@@ -907,6 +1173,7 @@ function runGLMSeverity({ dataset, upstream }: Args): RunResult {
     g.n += 1;
     groups.set(k, g);
     total += 1;
+    totalAmount += v;
   }
   if (total === 0)
     return makeUnsupported("glm-severity", "pricing", `No positive amounts in \`${money}\`.`);
@@ -916,7 +1183,11 @@ function runGLMSeverity({ dataset, upstream }: Args): RunResult {
     xs.push(k);
     ys.push(g.sum / g.n);
   }
-  const mean = ys.reduce((a, b) => a + b, 0) / Math.max(1, ys.length);
+  // Claim-weighted mean severity (Σ amount / n claims) — what an intercept-
+  // only Gamma GLM returns, and the right multiplicand for the pure premium.
+  // The old unweighted average of the group means let a level with three
+  // claims count as much as one with three thousand.
+  const mean = totalAmount / total;
   const sampleNote = sampled
     ? ` (fitted on a ${GLM_FIT_ROW_CAP.toLocaleString()}-row sample of ${dataset.rows.length.toLocaleString()})`
     : "";
@@ -949,7 +1220,7 @@ function runGLMSeverity({ dataset, upstream }: Args): RunResult {
     blurb:
       purePremium !== null
         ? `Severity ${fmt(mean, 0)} × wired frequency ${(freqMean ?? 0).toFixed(3)} → pure premium ≈ ${fmt(purePremium, 0)} per policy${sampleNote}.`
-        : `Gamma-style grouped mean of \`${money}\` by ${cat}: ${fmt(mean, 0)} across ${groups.size} levels${sampleNote}.`,
+        : `Gamma-style mean severity of \`${money}\`: ${fmt(mean, 0)} per claim (claim-weighted), grouped by ${cat} across ${groups.size} levels${sampleNote}.`,
     detail: { target: money, covariates, groupsCount: groups.size, mean, sampled, purePremium },
     ...(purePremium !== null
       ? {
@@ -961,121 +1232,155 @@ function runGLMSeverity({ dataset, upstream }: Args): RunResult {
   };
 }
 
+// Card labels are 9px caps — keep the metric name short there.
+const METRIC_SHORT: Record<GbmFit["metrics"]["primaryName"], string> = {
+  AUC: "AUC",
+  "R²": "R²",
+  "deviance explained": "deviance expl.",
+};
+
+/** "a 58%, b 37%, c 2%" — the top of a SHAP ranking, for blurbs. */
+function shapLeaders(s: ShapSummary, k = 3): string {
+  return s.features
+    .slice(0, k)
+    .map((f, i) => `${f} ${pct(s.share[i], 0)}`)
+    .join(", ");
+}
+
 function runGBM({ dataset }: Args): RunResult {
-  const n = dataset.rows.length;
-  // Deterministic AUC that drifts with row count so the mock feels alive
-  // when the user filters / loads different datasets. The headline label
-  // says so explicitly — this is NOT a fitted model.
-  const auc = Math.min(0.92, 0.7 + n / 4000);
-  const rmse = 1200 / Math.max(1, Math.sqrt(n));
-  // Honest feature screen for downstream SHAP wiring: rank the categorical
-  // covariates by between-group variance of a numeric target (monetary
-  // column preferred, else the frequency target). Variance-based screening
-  // is not SHAP — the label downstream says so — but it IS computed from
-  // this dataset rather than invented.
-  const target = detectMonetaryColumn(dataset) ?? detectFrequencyTarget(dataset);
-  const importances: Array<{ feature: string; weight: number }> = [];
-  if (target) {
-    const cats = detectCategoricalCovariates(dataset);
-    const scores: Array<{ feature: string; score: number }> = [];
-    for (const cat of cats) {
-      const groups = new Map<string, { sum: number; n: number }>();
-      let sum = 0;
-      let count = 0;
-      for (const r of dataset.rows) {
-        const v = r[target];
-        if (typeof v !== "number" || !Number.isFinite(v)) continue;
-        const k = String(r[cat] ?? "—");
-        const g = groups.get(k) ?? { sum: 0, n: 0 };
-        g.sum += v;
-        g.n += 1;
-        groups.set(k, g);
-        sum += v;
-        count += 1;
-      }
-      if (count === 0 || groups.size < 2) continue;
-      const grand = sum / count;
-      let between = 0;
-      for (const g of groups.values()) {
-        const m = g.sum / g.n;
-        between += g.n * (m - grand) ** 2;
-      }
-      scores.push({ feature: cat, score: between / count });
-    }
-    scores.sort((a, b) => b.score - a.score);
-    const totalScore = scores.reduce((a, b) => a + b.score, 0) || 1;
-    for (const sc of scores.slice(0, 5)) {
-      importances.push({ feature: sc.feature, weight: sc.score / totalScore });
-    }
+  // A real fit: second-order gradient-boosted trees (gbm.ts) scored on a
+  // holdout the trees never saw. The old runner printed
+  // min(0.92, 0.7 + rows / 4000) as an "AUC" — a number no model produced.
+  const res = gbmFitFor(dataset);
+  if ("error" in res) {
+    const why = `${res.error.charAt(0).toUpperCase()}${res.error.slice(1)}.`;
+    return makeUnsupported("gbm", "pricing", why);
   }
+  const { target, fit } = res;
+  const m = fit.metrics;
+  const p = fit.params;
+  const rowsNote = fit.sampled
+    ? ` (even-stride sample of ${fit.rowsUsable.toLocaleString()} usable rows)`
+    : "";
   return {
     modelId: "gbm",
     family: "pricing",
     status: "done",
     startedAt: Date.now(),
     finishedAt: Date.now(),
-    headline: { label: "AUC (in-browser approximation)", value: auc, precision: 3 },
+    headline: {
+      label: `${METRIC_SHORT[m.primaryName]} (holdout) · ${target.column}`,
+      value: m.primary,
+      precision: 3,
+    },
     secondary: [
-      { label: "RMSE", value: fmt(rmse, 0) },
-      { label: "iters", value: "200" },
-      { label: "n", value: String(n) },
+      { label: "target", value: `${target.column} (${target.reason})` },
+      m.logLoss !== undefined
+        ? { label: "log-loss (holdout)", value: m.logLoss.toFixed(3) }
+        : { label: "RMSE (holdout)", value: fmt(m.rmse) },
+      {
+        label: "rows",
+        value: `${fit.nTrain.toLocaleString()} train · ${fit.nHoldout.toLocaleString()} holdout`,
+      },
+      { label: "trees", value: `${p.nTrees} × depth ${p.maxDepth} · η ${p.learningRate}` },
+      { label: "features", value: String(fit.features.length) },
+      { label: "top drivers (|SHAP|)", value: shapLeaders(fit.shap) },
     ],
-    blurb: `GBM (in-browser approximation, not a fitted model) lands at AUC ${auc.toFixed(3)} on ${n} rows.`,
-    detail: { auc, rmse, n, importances },
+    // Holdout lift: mean actual per predicted decile — the discrimination a
+    // pricing actuary checks first. Rising bars = the ranking works.
+    series: { kind: "bar", x: fit.lift.groups, y: fit.lift.actual },
+    blurb:
+      `In-browser gradient-boosted trees (${p.nTrees} × depth ${p.maxDepth}, ${fit.features.length} features) ` +
+      `predict \`${target.column}\` with holdout ${m.primaryName} ${m.primary.toFixed(3)} ` +
+      `on ${fit.nHoldout.toLocaleString()} held-out rows${rowsNote}. ` +
+      `Target: ${target.reason}. Top drivers by mean |SHAP|: ${shapLeaders(fit.shap)}.`,
+    detail: {
+      engine: "in-browser histogram GBM (Newton boosting) — not the LightGBM library",
+      target: target.column,
+      targetKind: target.kind,
+      targetReason: target.reason,
+      metrics: m,
+      // Global importance = each feature's share of mean |SHAP| — feeds the
+      // diagnostics chart and a wired SHAP node.
+      importances: fit.shap.features.map((f, i) => ({ feature: f, weight: fit.shap.share[i] })),
+      shap: fit.shap,
+      lift: fit.lift,
+      features: fit.features.map((f) => f.name),
+      params: { nTrees: p.nTrees, maxDepth: p.maxDepth, learningRate: p.learningRate },
+      rowsTrain: fit.nTrain,
+      rowsHoldout: fit.nHoldout,
+      sampled: fit.sampled,
+    },
   };
 }
 
+function isShapSummary(v: unknown): v is ShapSummary {
+  const s = v as Partial<ShapSummary> | undefined;
+  return (
+    !!s &&
+    Array.isArray(s.features) &&
+    Array.isArray(s.share) &&
+    s.features.length > 0 &&
+    s.features.length === s.share.length
+  );
+}
+
 function runSHAP({ dataset, upstream }: Args): RunResult {
-  // With a GBM wired in, explain THAT run: its variance-screen importances
-  // (computed from the data) become the ranking. Standalone, fall back to
-  // the dataset's own categorical rating factors with illustrative weights;
-  // unsupported when the dataset has none (fabricating a "top driver —
-  // 0.00" would be worse than an honest error).
+  // Exact TreeSHAP on the in-browser GBM. A wired GBM's own attribution is
+  // used when present (same model, explicit provenance); standalone, the
+  // same deterministic fit is made (shared via the fit cache). Numeric AND
+  // categorical features count — the old runner only looked at categorical
+  // columns, so an all-numeric dataset errored, and otherwise handed the
+  // first three columns fixed 0.42 / 0.27 / 0.18 "weights".
   const wiredGbm = wired(upstream, "gbm");
-  const gbmImportances = Array.isArray(wiredGbm?.detail?.importances)
-    ? (wiredGbm?.detail?.importances as Array<{ feature: string; weight: number }>)
-    : null;
-  if (gbmImportances && gbmImportances.length > 0) {
-    const xs = gbmImportances.slice(0, 3).map((i) => i.feature);
-    const ys = gbmImportances.slice(0, 3).map((i) => i.weight);
-    const top = xs[0];
-    return {
-      modelId: "shap",
-      family: "pricing",
-      status: "done",
-      startedAt: Date.now(),
-      finishedAt: Date.now(),
-      headline: { label: "top driver (wired GBM · variance screen)", value: ys[0], precision: 2 },
-      secondary: xs.map((c, i) => ({ label: c, value: (ys[i] ?? 0).toFixed(2) })),
-      series: { kind: "bar", x: xs, y: ys },
-      blurb: `SHAP-style attribution over the wired GBM's variance screen ranks ${top} as the top driver.`,
-      detail: { top, ranking: xs, weights: ys, source: "wired-gbm" },
-      wiredFrom: [{ id: "gbm", note: "feature ranking from the wired GBM's variance screen" }],
-    };
+  const candidate = wiredGbm?.detail?.shap;
+  const wiredShap = wiredGbm && isShapSummary(candidate) ? candidate : null;
+  let shap: ShapSummary;
+  let target: string;
+  if (wiredGbm && wiredShap) {
+    shap = wiredShap;
+    target = String(wiredGbm.detail?.target ?? "the target");
+  } else {
+    const res = gbmFitFor(dataset);
+    if ("error" in res) {
+      return makeUnsupported("shap", "pricing", `Nothing to explain: ${res.error}.`);
+    }
+    shap = res.fit.shap;
+    target = res.target.column;
   }
-  const cats = detectCategoricalCovariates(dataset);
-  if (cats.length === 0)
-    return makeUnsupported(
-      "shap",
-      "pricing",
-      "No candidate feature columns found (need categorical columns with 2-20 levels).",
-    );
-  const xs = cats.slice(0, 3);
-  const ys = [0.42, 0.27, 0.18].slice(0, xs.length);
-  const top = xs[0];
+  const arrow = (d: ShapSummary["direction"][number]) =>
+    d === "up" ? " ↑" : d === "down" ? " ↓" : d === "mixed" ? " ↕" : "";
+  const top = shap.features[0];
+  const shown = Math.min(8, shap.features.length);
   return {
     modelId: "shap",
     family: "pricing",
     status: "done",
     startedAt: Date.now(),
     finishedAt: Date.now(),
-    headline: { label: "top driver (in-browser approximation)", value: ys[0], precision: 2 },
-    secondary: xs.map((c, i) => ({ label: c, value: (ys[i] ?? 0).toFixed(2) })),
-    series: { kind: "bar", x: xs, y: ys },
+    headline: { label: `mean |SHAP| share · ${top}`, value: shap.share[0], precision: 2 },
+    secondary: [
+      ...shap.features.slice(0, 3).map((f, i) => ({
+        label: `${f}${arrow(shap.direction[i])}`,
+        value: pct(shap.share[i]),
+      })),
+      { label: "explained", value: `${shap.rowsExplained.toLocaleString()} holdout rows` },
+      { label: "target", value: `${target} (${shap.scale})` },
+    ],
+    series: { kind: "bar", x: shap.features.slice(0, shown), y: shap.share.slice(0, shown) },
     blurb:
-      `SHAP (in-browser approximation — illustrative weights, not a fitted attribution) ` +
-      `ranks ${top} as the top driver.`,
-    detail: { top, ranking: xs, approximation: true },
+      `Exact TreeSHAP on the in-browser GBM for \`${target}\`: ${shapLeaders(shap)} of mean |SHAP| ` +
+      `across ${shap.rowsExplained.toLocaleString()} held-out rows (↑ higher values raise the prediction, ↓ lower it).`,
+    detail: {
+      top,
+      target,
+      importances: shap.features.map((f, i) => ({ feature: f, weight: shap.share[i] })),
+      shap,
+      source: wiredShap ? "wired-gbm" : "fit",
+    },
+    ...(wiredShap
+      ? { wiredFrom: [{ id: "gbm", note: "exact TreeSHAP of the wired GBM's fitted trees" }] }
+      : {}),
   };
 }
 
@@ -1330,6 +1635,14 @@ function runDescriptive({ dataset }: Args): RunResult {
   };
 }
 
+/** "needs a table — …" → "Needs a table — ….": a clause made card-ready. */
+function sentence(clause: string): string {
+  const s = clause.trim();
+  return `${s.charAt(0).toUpperCase()}${s.slice(1)}${/[.!?]$/.test(s) ? "" : "."}`;
+}
+
+/** The model's inputs are not in this dataset — "not applicable", not a
+ *  failure. Every runner's "cannot run on this data" path comes here. */
 function makeUnsupported(modelId: string, family: ModelFamily, reason: string): RunResult {
   return {
     modelId,
@@ -1339,8 +1652,9 @@ function makeUnsupported(modelId: string, family: ModelFamily, reason: string): 
     finishedAt: Date.now(),
     headline: { label: "—", value: 0 },
     secondary: [{ label: "reason", value: reason }],
-    blurb: `${modelId} cannot run on this dataset: ${reason}`,
+    blurb: `${modelId} does not apply to this dataset: ${reason}`,
     error: reason,
+    notApplicable: true,
   };
 }
 
@@ -1869,17 +2183,11 @@ function runWorkspaceBottleneck({ dataset }: Args): RunResult {
   const cols = numericColumns(dataset);
   const startedAt = Date.now();
   if (cols.length < 3) {
-    return {
-      modelId: "workspace-bottleneck",
-      family: "workspace",
-      status: "error",
-      startedAt,
-      finishedAt: Date.now(),
-      headline: { label: "—", value: 0 },
-      secondary: [{ label: "reason", value: "need >= 3 numeric columns" }],
-      blurb: "The workspace bottleneck needs at least three numeric columns to compress.",
-      error: "too few numeric columns",
-    };
+    return makeUnsupported(
+      "workspace-bottleneck",
+      "workspace",
+      `Needs at least three numeric columns to compress (found ${cols.length}).`,
+    );
   }
   const r = Math.min(3, cols.length - 1);
   const fit = fitBottleneck(dataset.rows, cols, { r });
@@ -1918,6 +2226,127 @@ function runWorkspaceBottleneck({ dataset }: Args): RunResult {
       participationRatio: fit.participationRatio,
     },
   };
+}
+
+// ── applicability ─────────────────────────────────────────────────────────
+//
+// Can a model produce a result on this dataset at all? The picker used to
+// attach whatever the LLM suggested from one-line catalog descriptions —
+// Lee–Carter "as a rank-1 baseline" and an annuity "cross-check" on the
+// workspace demo, which has no age, year or rate column — and the Hard stage
+// could then only report them as not applicable. Each check runs the SAME
+// detector (or fit) the runner's own "cannot run" path uses, so the two can
+// never disagree. Cached per dataset object: the Tools canvas asks on every
+// render.
+
+export type Applicability = { ok: true } | { ok: false; reason: string };
+
+const APPLICABLE: Applicability = { ok: true };
+const APPLICABILITY_CACHE = new WeakMap<Dataset, Map<string, Applicability>>();
+
+function hasAnyNumber(dataset: Dataset): boolean {
+  for (const c of dataset.columns) {
+    for (const r of dataset.rows) {
+      const v = r[c];
+      if (typeof v === "number" && Number.isFinite(v)) return true;
+    }
+  }
+  return false;
+}
+
+function checkApplicability(modelId: string, dataset: Dataset): Applicability {
+  const no = (clause: string): Applicability => ({ ok: false, reason: sentence(clause) });
+  switch (modelId) {
+    case "chain-ladder":
+    case "mack":
+    case "bornhuetter-ferguson":
+    case "bootstrap-ibnr":
+      return buildTriangle(dataset)
+        ? APPLICABLE
+        : no("needs a claims triangle — `origin_year`, `dev_period` and `paid` columns");
+    case "lee-carter": {
+      const found = detectMortalityTable(dataset);
+      if ("reason" in found) return no(found.reason);
+      const fit = fitLeeCarter(found.table);
+      return "reason" in fit ? no(fit.reason) : APPLICABLE;
+    }
+    case "cbd": {
+      const found = detectMortalityTable(dataset);
+      if ("reason" in found) return no(found.reason);
+      const fit = fitCBD(found.table);
+      return "reason" in fit ? no(fit.reason) : APPLICABLE;
+    }
+    case "lifecontingencies": {
+      const basis = resolveLifeBasis(dataset);
+      return "reason" in basis ? no(basis.reason) : APPLICABLE;
+    }
+    case "glm-frequency":
+      if (detectCategoricalCovariates(dataset).length === 0) {
+        return no("needs a categorical rating factor (a text column with 2–20 levels)");
+      }
+      return detectFrequencyTarget(dataset)
+        ? APPLICABLE
+        : no("needs a claim-count column (past_claims, claim_count … small whole numbers)");
+    case "glm-severity":
+      if (detectCategoricalCovariates(dataset).length === 0) {
+        return no("needs a categorical rating factor (a text column with 2–20 levels)");
+      }
+      return detectMonetaryColumn(dataset)
+        ? APPLICABLE
+        : no("needs a claim-amount column (paid, claim_amount, severity, loss …)");
+    case "gbm":
+    case "shap": {
+      // The real (cached) fit: the Hard stage reuses it for free.
+      const res = gbmFitFor(dataset);
+      return "error" in res ? no(res.error) : APPLICABLE;
+    }
+    case "climada": {
+      const col = findExposureColumn(dataset);
+      if (!col) return no("needs an exposure column (sum insured, TIV, exposure …)");
+      const total = numericCol(dataset.rows, col).reduce((a, b) => a + b, 0);
+      return total > 0 ? APPLICABLE : no(`exposure column \`${col}\` sums to zero`);
+    }
+    case "parametric-design": {
+      const col = detectMonetaryColumn(dataset);
+      if (!col) return no("needs a monetary loss column to set a trigger from");
+      return numericCol(dataset.rows, col).length > 0
+        ? APPLICABLE
+        : no(`no numeric values in \`${col}\``);
+    }
+    case "basicterm-projection":
+    case "cashvalue-savings":
+    case "ifrs17-csm":
+    case "solvency2-life":
+    case "nested-stochastic":
+    case "cluster-modelpoints":
+      return hasModelPoints(dataset)
+        ? APPLICABLE
+        : no("needs a model-point file — `age_at_entry`, `sum_assured` and `policy_term` columns");
+    case "descriptive":
+      return hasAnyNumber(dataset) ? APPLICABLE : no("needs at least one numeric column");
+    case "workspace-bottleneck": {
+      const n = numericColumns(dataset).length;
+      return n >= 3 ? APPLICABLE : no(`needs at least three numeric columns (found ${n})`);
+    }
+    default:
+      // Scenario engines (ESG, curves, WMTR, SCR, DB valuation) run on their
+      // own assumptions rather than the dataset's columns.
+      return APPLICABLE;
+  }
+}
+
+/** Whether `modelId` can produce a result on `dataset` — and if not, why. */
+export function modelApplicability(modelId: string, dataset: Dataset): Applicability {
+  let perDataset = APPLICABILITY_CACHE.get(dataset);
+  if (!perDataset) {
+    perDataset = new Map();
+    APPLICABILITY_CACHE.set(dataset, perDataset);
+  }
+  const hit = perDataset.get(modelId);
+  if (hit) return hit;
+  const res = checkApplicability(modelId, dataset);
+  perDataset.set(modelId, res);
+  return res;
 }
 
 const RUNNERS: Record<string, (args: Args) => RunResult> = {
@@ -1978,8 +2407,20 @@ export function runModel(
   try {
     return { ...fn({ dataset, upstream }), source: "browser" };
   } catch (e) {
+    // A runner that THREW broke — that is a failure, not "does not apply".
     const msg = e instanceof Error ? e.message : String(e);
-    return { ...makeUnsupported(modelId, "general", msg), source: "browser" };
+    return {
+      modelId,
+      family: MODEL_BY_ID.get(modelId)?.family ?? "general",
+      status: "error",
+      startedAt: Date.now(),
+      finishedAt: Date.now(),
+      headline: { label: "—", value: 0 },
+      secondary: [{ label: "reason", value: msg }],
+      blurb: `${modelId} failed: ${msg}`,
+      error: msg,
+      source: "browser",
+    };
   }
 }
 
@@ -1991,7 +2432,8 @@ export function runModel(
 // for every model in `BRIDGED_MODEL_IDS`; everything else stays on the
 // sync `runModel` path.
 //
-// Provenance contract: bridge results carry `source: "python-bridge"`.
+// Provenance contract: bridge results carry `source: "python-bridge"` (or
+// "r-bridge" for the bundled R).
 // When a bridge fails (or returns nothing inside the IDE), the in-browser
 // fallback still runs but the result carries `bridgeError` so the card
 // can say WHY — a bridge failure must never silently pass off the mock
@@ -2021,15 +2463,15 @@ export const BRIDGED_MODEL_IDS: ReadonlySet<string> = new Set([
   "workspace-bottleneck",
 ]);
 
-// A bridge that returned null did so either because we're outside the
-// desktop IDE (clean, silent fallback) or because something inside the
-// IDE rejected the run (runtime missing / data shape) — the latter must
-// be surfaced.
-function bridgeReturnedNothing(bridge: string): string | undefined {
-  return isDesktopIDE()
-    ? `${bridge} bridge produced no result (runtime missing, unsupported data shape, or script error — see IDE logs)`
-    : undefined;
-}
+// Bridge contract (every bridge below): a bridge returns null ONLY when it
+// does not apply — outside the desktop IDE, or the dataset is not the shape it
+// computes on (no triangle, no mortality table, no model points) — and the
+// in-browser runner then speaks for the data. A missing runtime or a failed
+// script THROWS with the reason, which lands on the card as `bridgeError`.
+// (Null used to mean all of those at once, and the card could only say
+// "<x> bridge produced no result (runtime missing, unsupported data shape, or
+// script error — see IDE logs)" — a "failure" on every dataset the model
+// simply does not apply to.)
 
 function bridgeErrorMessage(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
@@ -2059,24 +2501,34 @@ export async function runModelAsync(
       const method = modelId === "bootstrap-ibnr" ? "bootstrap" : modelId;
       const py = await runChainladderPython(dataset, method);
       if (py) {
-        const isMack = py.cv !== undefined;
+        // Same headline labels as the in-browser runners: the method is on
+        // the card already, and the provenance is the python badge. (The old
+        // "IBNR · Mack · chainladder-python" labels named a library this
+        // numpy engine deliberately does not use.)
+        const label =
+          modelId === "bornhuetter-ferguson"
+            ? "BF reserve"
+            : modelId === "bootstrap-ibnr"
+              ? "IBNR mean"
+              : "IBNR";
+        const hasBand = py.p5 !== undefined && py.p95 !== undefined;
         return {
           modelId,
           family: "reserving",
           status: "done",
           startedAt: Date.now(),
           finishedAt: Date.now(),
-          headline: {
-            label: isMack ? "IBNR · Mack · chainladder-python" : `IBNR · ${modelId}`,
-            value: py.ibnr,
-            precision: 0,
-          },
+          headline: { label, value: py.ibnr, precision: 0 },
           secondary: [
             { label: "method", value: py.method },
             { label: "origins", value: py.byOrigin.length.toLocaleString() },
             ...(py.cv !== undefined ? [{ label: "CV", value: pct(py.cv, 2) }] : []),
             ...(py.se !== undefined ? [{ label: "SE", value: fmt(py.se) }] : []),
-            { label: "runtime", value: "bundled CPython (chainladder)" },
+            ...(hasBand ? [{ label: "p5 – p95", value: `${fmt(py.p5 ?? 0)} – ${fmt(py.p95 ?? 0)}` }] : []),
+            ...(py.apriori !== undefined
+              ? [{ label: "a-priori", value: `book-avg ultimate ${fmt(py.apriori, 0)}` }]
+              : []),
+            { label: "runtime", value: "bundled CPython (numpy reserving engine)" },
           ],
           series: {
             kind: "line",
@@ -2084,15 +2536,24 @@ export async function runModelAsync(
             y: py.byOrigin.map((b) => b.ibnr),
           },
           blurb:
-            `Bundled-CPython chainladder ${py.method} across ${py.byOrigin.length} ` +
+            `Bundled-CPython numpy reserving engine (${py.method}) across ${py.byOrigin.length} ` +
             `origins produced IBNR = ${fmt(py.ibnr)}` +
             (py.cv !== undefined ? ` (CV ${pct(py.cv, 2)})` : "") +
+            (hasBand ? ` with a p5–p95 band of ${fmt(py.p5 ?? 0)} – ${fmt(py.p95 ?? 0)}` : "") +
             ".",
-          detail: { source: "chainladder-python", byOrigin: py.byOrigin },
+          // ibnr + se (Mack) / p5 + p95 (bootstrap) are what the card's CI
+          // strip, the forest-plot whiskers and the detail range read.
+          detail: {
+            source: "scelo-reserving-numpy",
+            byOrigin: py.byOrigin,
+            ibnr: py.ibnr,
+            ...(py.se !== undefined ? { se: py.se } : {}),
+            ...(py.cv !== undefined ? { cv: py.cv } : {}),
+            ...(hasBand ? { p5: py.p5, p95: py.p95 } : {}),
+          },
           source: "python-bridge",
         };
       }
-      bridgeError = bridgeReturnedNothing("chainladder");
     } catch (e) {
       bridgeError = bridgeErrorMessage(e);
     }
@@ -2141,7 +2602,6 @@ export async function runModelAsync(
           source: "python-bridge",
         };
       }
-      bridgeError = bridgeReturnedNothing("nfip");
     } catch (e) {
       bridgeError = bridgeErrorMessage(e);
     }
@@ -2153,75 +2613,82 @@ export async function runModelAsync(
       const { runClimadaPython } = await import("./bridges/climadaPython");
       const py = await runClimadaPython(dataset);
       if (py) {
+        // Only the IBTrACS path runs CLIMADA. The fallback is a synthetic
+        // numpy loss model and must say so — it was labelled "climada-python"
+        // and its blurb read "Bundled-CPython climada estimate".
+        const real = py.source === "climada-python+ibtracs";
         return {
           modelId,
           family: "climate",
           status: "done",
           startedAt: Date.now(),
           finishedAt: Date.now(),
-          headline: { label: "AAL · climada-python", value: py.aal, precision: 0 },
+          headline: {
+            label: real ? "AAL · CLIMADA (IBTrACS)" : "AAL · synthetic loss model",
+            value: py.aal,
+            precision: 0,
+          },
           secondary: [
             { label: "exposure", value: fmt(py.exposureValue) },
             { label: "country", value: py.countryAlpha3 ?? "—" },
             { label: "RP10", value: fmt(py.rp10) },
             { label: "RP100", value: fmt(py.rp100) },
             { label: "RP250", value: fmt(py.rp250) },
-            { label: "runtime", value: "bundled CPython (climada)" },
+            {
+              label: "runtime",
+              value: real
+                ? "bundled CPython (climada · IBTrACS)"
+                : "bundled CPython (numpy) — synthetic, CLIMADA not run",
+            },
           ],
           series: {
             kind: "bar",
             x: ["AAL", "RP10", "RP100", "RP250"],
             y: [py.aal, py.rp10, py.rp100, py.rp250],
           },
-          blurb:
-            `Bundled-CPython climada estimate: AAL ${fmt(py.aal)}, ` +
-            `RP100 ${fmt(py.rp100)}, RP250 ${fmt(py.rp250)} on exposure ${fmt(py.exposureValue)}.`,
-          detail: { ...py, source: "climada-python" },
+          blurb: real
+            ? `CLIMADA (LitPop exposure × IBTrACS tropical-cyclone hazard): AAL ${fmt(py.aal)}, ` +
+              `RP100 ${fmt(py.rp100)}, RP250 ${fmt(py.rp250)} on exposure ${fmt(py.exposureValue)}.`
+            : `Synthetic compound-Poisson loss model (numpy; CLIMADA did not run — ${py.fallbackReason ?? "no hazard data"}): ` +
+              `AAL ${fmt(py.aal)}, RP100 ${fmt(py.rp100)}, RP250 ${fmt(py.rp250)} on ${fmt(py.exposureValue)} exposure. ` +
+              "Illustrative calibration, not a hazard model.",
+          detail: { ...py },
           source: "python-bridge",
         };
       }
-      // runClimadaPython returns null only outside the IDE runtime; real
-      // failures (incl. missing exposure column) throw with the reason.
+      // null = does not apply (outside the IDE, or no usable exposure — the
+      // in-browser runner says which); real failures throw with the reason.
     } catch (e) {
       bridgeError = bridgeErrorMessage(e);
     }
   }
-  // Life family — lifecontingencies (R) for canonical EPVs.
+  // Life family — lifecontingencies (R) for canonical EPVs, priced on the
+  // SAME basis the in-browser runner resolves (wired Lee–Carter cohort, or
+  // the dataset's life table). No basis → nothing to send; the in-browser
+  // runner then says what is missing.
   if (modelId === "lifecontingencies") {
-    try {
-      const { runLifeContingenciesR } = await import("./bridges/lifecontingenciesR");
-      const r = await runLifeContingenciesR(dataset);
-      if (r) {
-        return {
-          modelId,
-          family: "mortality",
-          status: "done",
-          startedAt: Date.now(),
-          finishedAt: Date.now(),
-          headline: {
-            label: `a${r.ageX}:${r.term}¬ · lifecontingencies-R`,
-            value: r.ax,
-            precision: 3,
-          },
-          secondary: [
-            { label: "A(x,n)", value: r.Ax.toFixed(4) },
-            { label: "nEx", value: r.nEx.toFixed(4) },
-            { label: "interest", value: pct(r.interest) },
-            { label: "term", value: `${r.term}y` },
-            { label: "table rows", value: r.rowsUsed.toLocaleString() },
-            { label: "runtime", value: "bundled R (lifecontingencies)" },
-          ],
-          series: { kind: "bar", x: ["a_x", "A_x", "nE_x"], y: [r.ax, r.Ax, r.nEx] },
-          blurb:
-            `Bundled-R lifecontingencies: a${r.ageX}:${r.term}¬ = ${r.ax.toFixed(3)}, ` +
-            `A(x,n) = ${r.Ax.toFixed(4)}, nEx = ${r.nEx.toFixed(4)} at ${pct(r.interest)} interest.`,
-          detail: { ...r, source: "lifecontingencies-r" },
-          source: "python-bridge",
-        };
+    const basis = resolveLifeBasis(dataset, upstream);
+    if (!("reason" in basis)) {
+      try {
+        const { runLifeContingenciesR } = await import("./bridges/lifecontingenciesR");
+        const r = await runLifeContingenciesR({
+          q: basis.q,
+          ageX: basis.x,
+          interest: LIFE_INTEREST,
+        });
+        if (r) {
+          return {
+            ...lifeResult(
+              basis,
+              { annuityDue: r.ax, termAssurance: r.Ax, pureEndowment: r.nEx },
+              "bundled R (lifecontingencies)",
+            ),
+            source: "r-bridge",
+          };
+        }
+      } catch (e) {
+        bridgeError = bridgeErrorMessage(e);
       }
-      bridgeError = bridgeReturnedNothing("lifecontingencies-R");
-    } catch (e) {
-      bridgeError = bridgeErrorMessage(e);
     }
   }
   // Pricing family — statsmodels GLM (Poisson frequency, Gamma severity).
@@ -2272,8 +2739,8 @@ export async function runModelAsync(
           source: "python-bridge",
         };
       }
-      // runGlmPython returns null only outside the IDE runtime; real
-      // failures (incl. no usable target / covariates) throw with the reason.
+      // null = does not apply (outside the IDE, or no rating factor / target —
+      // the in-browser runner says which); real failures throw with the reason.
     } catch (e) {
       bridgeError = bridgeErrorMessage(e);
     }
@@ -2337,7 +2804,6 @@ export async function runModelAsync(
           source: "python-bridge",
         };
       }
-      bridgeError = bridgeReturnedNothing("who-mortality");
     } catch (e) {
       bridgeError = bridgeErrorMessage(e);
     }
@@ -2355,8 +2821,9 @@ export async function runModelAsync(
           status: "done",
           startedAt: Date.now(),
           finishedAt: Date.now(),
+          // Same label as the in-browser fit; provenance is the badge.
           headline: {
-            label: `q(${py.headlineAge}) at ${py.years[py.years.length - 1]} · lee-carter-python`,
+            label: `q(${py.headlineAge}) in ${py.years[py.years.length - 1]}`,
             value: finalQ,
             precision: 5,
           },
@@ -2381,7 +2848,6 @@ export async function runModelAsync(
           source: "python-bridge",
         };
       }
-      bridgeError = bridgeReturnedNothing("lee-carter");
     } catch (e) {
       bridgeError = bridgeErrorMessage(e);
     }
@@ -2436,7 +2902,6 @@ export async function runModelAsync(
           source: "python-bridge",
         };
       }
-      bridgeError = bridgeReturnedNothing("ifrs17sim");
     } catch (e) {
       bridgeError = bridgeErrorMessage(e);
     }
@@ -2495,7 +2960,6 @@ export async function runModelAsync(
           source: "python-bridge",
         };
       }
-      bridgeError = bridgeReturnedNothing("annuallife/TradLife_A_EX1");
     } catch (e) {
       bridgeError = bridgeErrorMessage(e);
     }
@@ -2565,7 +3029,6 @@ export async function runModelAsync(
           source: "python-bridge",
         };
       }
-      bridgeError = bridgeReturnedNothing("lifelib BasicTerm");
     } catch (e) {
       bridgeError = bridgeErrorMessage(e);
     }
@@ -2607,7 +3070,6 @@ export async function runModelAsync(
           source: "python-bridge",
         };
       }
-      bridgeError = bridgeReturnedNothing("workspace bottleneck");
     } catch (e) {
       bridgeError = bridgeErrorMessage(e);
     }

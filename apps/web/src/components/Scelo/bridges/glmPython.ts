@@ -12,13 +12,14 @@
 // columns are serialised, and rows are capped: JSON.stringify of a full
 // 2M-row dataset is a ~1 GB string, past V8's string limit.
 //
-// Error contract: returns null ONLY when the bridge is unavailable
-// (browser build / no bundled Python). Anything else that stops a fit —
-// no usable target, Python error, bad output — THROWS with the reason so
-// the caller can surface it instead of silently substituting the mock.
+// Error contract: returns null ONLY when the bridge does not apply (browser
+// build, or data with no rating factor / no target — the in-browser runner
+// then says which). A missing runtime, a Python error or bad output THROWS
+// with the reason so the caller can surface it instead of silently
+// substituting the approximation.
 
 import {
-  distillPythonError,
+  bridgeFailureReason,
   getRuntimeStatus,
   isDesktopIDE,
   runPython,
@@ -142,30 +143,25 @@ export async function runGlmPython(
   kind: GlmKind,
 ): Promise<GlmPythonOutput | null> {
   if (!isDesktopIDE()) return null;
-  const status = await getRuntimeStatus();
-  if (!status.python) return null;
+  // Data the GLM cannot use (no rating factor, no target) is not a bridge
+  // failure: null, and the in-browser runner states what is missing — it
+  // applies the same tests. Only a real failure below throws.
   const cov = detectCategoricalCovariates(dataset).slice(0, GLM_BRIDGE_MAX_COVARIATES);
-  if (cov.length === 0) {
-    throw new Error("no categorical covariates detected (need string columns with 2-20 levels)");
-  }
-  // Frequency prefers an explicit count column (past_claims, claim_count…);
-  // when the data is claims-level (one row per claim) we synthesise a unit
-  // count so the Poisson still fits. Severity requires a monetary column.
-  let target: string;
-  if (kind === "frequency") {
-    target = detectFrequencyTarget(dataset) ?? "_freq_unit";
-  } else {
-    const money = detectMonetaryColumn(dataset);
-    if (!money) {
-      throw new Error("no monetary severity column detected (paid / claim_amt / severity / loss)");
-    }
-    target = money;
-  }
+  if (cov.length === 0) return null;
+  // Frequency needs a count column (past_claims, claim_count…); severity a
+  // monetary one. There used to be a fallback that fitted the Poisson to a
+  // synthetic all-ones "_freq_unit" target — every coefficient ≈ 0 and a
+  // "baseline frequency" of exactly 1, a fit to nothing — while the
+  // in-browser runner (correctly) refused the same dataset.
+  const target =
+    kind === "frequency" ? detectFrequencyTarget(dataset) : detectMonetaryColumn(dataset);
+  if (!target) return null;
+  const status = await getRuntimeStatus();
+  if (!status.python) throw new Error("bundled Python runtime not detected");
   // Project ONLY the columns the fit needs and cap rows with an even
   // stride so the sample spans the file. Sending whole rows at 2M-row
   // scale serialises hundreds of MB and blows V8's string length limit.
-  const wanted = cov.slice();
-  if (target !== "_freq_unit") wanted.push(target);
+  const wanted = [...cov, target];
   if (dataset.columns.includes("exposure")) wanted.push("exposure");
   const rowsTotal = dataset.rows.length;
   const n = Math.min(rowsTotal, GLM_BRIDGE_ROW_CAP);
@@ -175,13 +171,12 @@ export async function runGlmPython(
     const src = dataset.rows[Math.floor(i * stride)];
     const out: Record<string, unknown> = {};
     for (const c of wanted) out[c] = src[c];
-    if (target === "_freq_unit") out[target] = 1;
     rows[i] = out;
   }
   const stdin = JSON.stringify({ kind, target, covariates: cov, rows });
   const res = await runPython(SCRIPT, { stdin });
   if (!res.ok) {
-    throw new Error(distillPythonError(res.stderr, res.exitCode));
+    throw new Error(bridgeFailureReason(res));
   }
   let parsed: unknown;
   try {

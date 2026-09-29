@@ -64,7 +64,14 @@ import {
   MODEL_CATALOG,
   type ModelFamily,
 } from "./modelCatalog";
-import { type DataSignature, dataSignature, fetchModelPicks, heuristicPick } from "./modelPicker";
+import {
+  type DataSignature,
+  dataSignature,
+  fetchModelPicks,
+  heuristicPick,
+  switchOffInapplicable,
+} from "./modelPicker";
+import { modelApplicability } from "./modelRunner";
 import {
   applyModelDirective,
   describeDirectiveReport,
@@ -333,10 +340,19 @@ function HubNode({ id, data }: NodeProps<HubNodeData>) {
   );
 }
 
+/** "Needs a mortality table (death rates …) — this dataset …" → "needs a
+ *  mortality table": the cause alone, for a one-line badge. */
+function shortCause(reason: string): string {
+  const head = reason.split(/ \(| — |[.;]/)[0].trim();
+  return head.charAt(0).toLowerCase() + head.slice(1);
+}
+
 type ToolNodeData = {
   model: CatalogModel;
   selected: boolean;
   rationale?: string;
+  /** Why this model cannot run on the loaded dataset, if it cannot. */
+  blocked?: string;
   onToggle: (id: string) => void;
   onRemove: (id: string) => void;
   // Swap from the current model id to a new model id — implementation
@@ -460,6 +476,14 @@ function ToolNode({ id, data }: NodeProps<ToolNodeData>) {
       <p className="mt-1 line-clamp-2 text-[10px] text-fg-mute">
         <SciText>{data.rationale ?? data.model.description}</SciText>
       </p>
+      {/* Say it HERE, before Hard: a model whose inputs are not in the data
+          can only come back as "not applicable". One line — the canvas
+          spaces nodes for a fixed height — with the full reason on hover. */}
+      {data.blocked && (
+        <p className="mt-1 truncate text-[10px] text-warn" title={data.blocked}>
+          ⚠ can't run: {shortCause(data.blocked)}
+        </p>
+      )}
 
       {swapOpen && (
         <div
@@ -1319,9 +1343,11 @@ export function ToolsWorkstation() {
           if (ac.signal.aborted) return;
           setDomain(res.domain);
           setPickSummary(res.summary);
+          // Picks the data cannot feed arrive switched off (visible in
+          // Tools with the reason; Hard does not run them).
           const picks: SelectedModel[] = res.selected.map((s) => ({
             id: s.id,
-            enabled: true,
+            enabled: !s.disabled,
             source: "ai",
             rationale: s.rationale,
           }));
@@ -1338,7 +1364,9 @@ export function ToolsWorkstation() {
               domain: res.domain,
               summary: res.summary,
               source: "ai",
-              models: res.selected.map((s) => ({ id: s.id, rationale: s.rationale })),
+              models: res.selected
+                .filter((s) => !s.disabled)
+                .map((s) => ({ id: s.id, rationale: s.rationale })),
             },
           });
         })
@@ -1347,12 +1375,14 @@ export function ToolsWorkstation() {
           // Pass the regenerate counter through so pressing regenerate
           // while offline rotates deterministic same-family alternates
           // instead of silently returning the identical list.
-          const fallback = heuristicPick(signature, variant);
+          const fallback = switchOffInapplicable(heuristicPick(signature, variant), dataset);
           setDomain(fallback.domain);
           setPickSummary(fallback.summary);
+          // Picks the data cannot feed arrive switched off (visible in
+          // Tools with the reason; Hard does not run them).
           const picks: SelectedModel[] = fallback.selected.map((s) => ({
             id: s.id,
-            enabled: true,
+            enabled: !s.disabled,
             source: "ai",
             rationale: s.rationale,
           }));
@@ -1369,7 +1399,9 @@ export function ToolsWorkstation() {
               domain: fallback.domain,
               summary: fallback.summary,
               source: "fallback",
-              models: fallback.selected.map((s) => ({ id: s.id, rationale: s.rationale })),
+              models: fallback.selected
+                .filter((s) => !s.disabled)
+                .map((s) => ({ id: s.id, rationale: s.rationale })),
             },
           });
         });
@@ -1650,6 +1682,11 @@ export function ToolsWorkstation() {
       draggable: true,
       selectable: false,
     };
+    const blockedReason = (id: string): string | undefined => {
+      if (!dataset) return undefined;
+      const a = modelApplicability(id, dataset);
+      return a.ok ? undefined : a.reason;
+    };
     const tools: Node<ToolNodeData>[] = selectedModels.map((sm, i) => {
       const model = MODEL_BY_ID.get(sm.id);
       if (!model) {
@@ -1663,6 +1700,7 @@ export function ToolsWorkstation() {
           model,
           selected: sm.enabled,
           rationale: sm.rationale,
+          blocked: blockedReason(sm.id),
           onToggle,
           onRemove,
           onReplace,

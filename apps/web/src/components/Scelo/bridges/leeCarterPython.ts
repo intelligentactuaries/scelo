@@ -4,19 +4,37 @@
 // does the SVD (the classic Lee-Carter step that turns log(qx[t,x]) into
 // α(x) + β(x)·κ(t)); statsmodels SARIMAX fits an ARIMA(0,1,0) random
 // walk with drift on κ(t) and produces 10-year-ahead point forecasts +
-// 95% CI. Falls back to the in-browser TS port outside the IDE or when
-// the bundled stack fails.
+// 95% CI. The in-browser engine (mortality.ts) fits the same model on the
+// same table outside the IDE, and when this bridge fails (with the reason on
+// the card).
 //
 // Same pattern as the other bridges: read JSON on stdin, write JSON on
-// stdout, surface errors verbatim so the Tools detail view can show what
-// went wrong instead of silently falling back.
+// stdout. Error contract: null ONLY when the bridge does not apply (outside
+// the IDE, or the dataset is not a mortality table — the in-browser runner
+// then says what is missing); a missing runtime or a failed script THROWS
+// with the reason. It used to return null for all of these, and the card
+// could only say "lee-carter bridge produced no result (runtime missing,
+// unsupported data shape, or script error)".
 
-import { isDesktopIDE, runPython, getRuntimeStatus } from "../../../lib/sceloIDE";
+import {
+  bridgeFailureReason,
+  getRuntimeStatus,
+  isDesktopIDE,
+  runPython,
+} from "../../../lib/sceloIDE";
 import type { Dataset } from "../SoftDataWorkstation";
+import { detectMortalityTable } from "../mortality";
 
 export interface LeeCarterPythonOutput {
   /** Projection year labels — last historical year + 1 … + h. */
   years: number[];
+  /** Same as `years` — the key a wired life-contingencies run reads. */
+  projYears: number[];
+  /** The fitted model, so a wired life-contingencies run can price the cohort. */
+  ages: number[];
+  alpha: number[];
+  beta: number[];
+  kappaForecast: number[];
   /** Point forecasts of q(x) at the headline age. */
   qx: number[];
   /** 95% lower / upper CI from the SARIMAX κ(t) forecast. */
@@ -90,6 +108,11 @@ try:
     annual_imp = 1 - (qx_proj[-1] / qx_now) ** (1 / horizon) if qx_now > 0 else 0
     print(json.dumps({
         "years": proj_years,
+        "projYears": proj_years,
+        "ages": [int(a) for a in ages],
+        "alpha": [float(a) for a in alpha],
+        "beta": [float(b) for b in beta],
+        "kappaForecast": [float(k) for k in k_fc],
         "qx": qx_proj,
         "qxLower": qx_lower,
         "qxUpper": qx_upper,
@@ -110,22 +133,20 @@ interface BridgeInput {
   horizon: number;
 }
 
+/** The (year, age, qx) cells of the dataset's mortality table — the SAME
+ *  table the in-browser fit reads (qx, mx, or deaths / exposure), so both
+ *  engines fit one thing. Null when there is no table Lee–Carter can use. */
 function buildInput(dataset: Dataset): BridgeInput | null {
-  const cols = dataset.columns.map((c) => c.toLowerCase());
-  const yi = cols.indexOf("year");
-  const ai = cols.indexOf("age");
-  const qi = cols.indexOf("qx");
-  if (yi < 0 || ai < 0 || qi < 0) return null;
-  const yCol = dataset.columns[yi];
-  const aCol = dataset.columns[ai];
-  const qCol = dataset.columns[qi];
+  const found = detectMortalityTable(dataset);
+  if ("reason" in found) return null;
+  const t = found.table;
+  if (t.years.length < 3) return null; // a single period cannot be projected
   const rows: Array<{ year: number; age: number; qx: number }> = [];
-  for (const r of dataset.rows) {
-    const y = r[yCol];
-    const a = r[aCol];
-    const q = r[qCol];
-    if (typeof y !== "number" || typeof a !== "number" || typeof q !== "number") continue;
-    rows.push({ year: y, age: a, qx: q });
+  for (const [i, year] of t.years.entries()) {
+    for (const [j, age] of t.ages.entries()) {
+      const qx = t.q[i][j];
+      if (Number.isFinite(qx) && qx > 0 && qx < 1) rows.push({ year, age, qx });
+    }
   }
   if (rows.length === 0) return null;
   return { rows, headlineAge: 65, horizon: 10 };
@@ -135,17 +156,22 @@ export async function runLeeCarterPython(
   dataset: Dataset,
 ): Promise<LeeCarterPythonOutput | null> {
   if (!isDesktopIDE()) return null;
-  const status = await getRuntimeStatus();
-  if (!status.python) return null;
+  // Shape before runtime: data that is not a mortality table is not a
+  // bridge failure — the in-browser runner explains what is missing.
   const input = buildInput(dataset);
   if (!input) return null;
+  const status = await getRuntimeStatus();
+  if (!status.python) throw new Error("bundled Python runtime not detected");
   const res = await runPython(SCRIPT, { stdin: JSON.stringify(input) });
-  if (!res.ok) return null;
+  if (!res.ok) throw new Error(bridgeFailureReason(res));
+  let parsed: unknown;
   try {
-    const parsed = JSON.parse(res.stdout.trim());
-    if (parsed && "error" in parsed) return null;
-    return parsed as LeeCarterPythonOutput;
+    parsed = JSON.parse(res.stdout.trim());
   } catch {
-    return null;
+    throw new Error("Lee-Carter bridge returned non-JSON output");
   }
+  if (parsed && typeof parsed === "object" && "error" in parsed) {
+    throw new Error(String((parsed as { error: unknown }).error));
+  }
+  return parsed as LeeCarterPythonOutput;
 }

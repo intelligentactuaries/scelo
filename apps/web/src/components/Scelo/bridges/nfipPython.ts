@@ -9,7 +9,12 @@
 // downloaded via /settings/data, the Tool uses real claims data instead
 // of a synthetic substitute.
 
-import { isDesktopIDE, runPython, getRuntimeStatus } from "../../../lib/sceloIDE";
+import {
+  bridgeFailureReason,
+  getRuntimeStatus,
+  isDesktopIDE,
+  runPython,
+} from "../../../lib/sceloIDE";
 
 export interface NfipDecadeBin {
   state: string;
@@ -101,18 +106,25 @@ except Exception as e:
 
 export async function runNfipPython(): Promise<NfipPythonOutput | null> {
   if (!isDesktopIDE()) return null;
+  // There is no in-browser NFIP summary, so every stop inside the IDE is
+  // reported with its reason (it used to be a bare null).
   const status = await getRuntimeStatus();
-  if (!status.python) return null;
+  if (!status.python) throw new Error("bundled Python runtime not detected");
   // The CSV must already be on disk via /settings/data.
   const ds = await window.scelo!.data.status("nfip");
-  if (!ds.available || !ds.path) return null;
-  const res = await runPython(SCRIPT, { stdin: JSON.stringify({ csvPath: ds.path }) });
-  if (!res.ok) return null;
-  try {
-    const parsed = JSON.parse(res.stdout.trim());
-    if (parsed && "error" in parsed) return null;
-    return parsed as NfipPythonOutput;
-  } catch {
-    return null;
+  if (!ds.available || !ds.path) {
+    throw new Error("NFIP claims CSV not downloaded — fetch it in Settings → Data");
   }
+  const res = await runPython(SCRIPT, { stdin: JSON.stringify({ csvPath: ds.path }) });
+  if (!res.ok) throw new Error(bridgeFailureReason(res));
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(res.stdout.trim());
+  } catch {
+    throw new Error("NFIP bridge returned non-JSON output");
+  }
+  if (parsed && typeof parsed === "object" && "error" in parsed) {
+    throw new Error(String((parsed as { error: unknown }).error));
+  }
+  return parsed as NfipPythonOutput;
 }

@@ -7,10 +7,15 @@
 // in-browser TS engine (components/Scelo/workspace/bottleneck.ts) so the numbers
 // agree; falls back to it outside the IDE or when numpy is unavailable.
 //
-// Same contract as the other bridges: JSON on stdin, one JSON line on stdout,
-// null on any failure (silent browser fallback).
+// Same contract as the other bridges: JSON on stdin, one JSON line on stdout;
+// null only when the data does not apply, a thrown reason on any failure.
 
-import { getRuntimeStatus, isDesktopIDE, runPython } from "../../../lib/sceloIDE";
+import {
+  bridgeFailureReason,
+  getRuntimeStatus,
+  isDesktopIDE,
+  runPython,
+} from "../../../lib/sceloIDE";
 import type { Dataset } from "../SoftDataWorkstation";
 import { numericColumns } from "../workspace";
 
@@ -112,8 +117,9 @@ export async function runBottleneckPython(
   r = 3,
 ): Promise<BottleneckPythonOutput | null> {
   if (!isDesktopIDE()) return null;
-  const status = await getRuntimeStatus();
-  if (!status.python) return null;
+  // Too few numeric columns / rows → not this bridge's job (null; the
+  // in-browser runner says why). A missing runtime or a failed script is a
+  // real failure and THROWS with its reason.
   const cols = numericColumns(dataset);
   if (cols.length < 3) return null;
 
@@ -129,15 +135,20 @@ export async function runBottleneckPython(
     if (row.every((v) => Number.isFinite(v))) matrix.push(row);
   }
   if (matrix.length < 10) return null;
+  const status = await getRuntimeStatus();
+  if (!status.python) throw new Error("bundled Python runtime not detected");
 
   const stdin = JSON.stringify({ columns: cols, rows: matrix, r });
   const res = await runPython(SCRIPT, { stdin });
-  if (!res.ok) return null;
+  if (!res.ok) throw new Error(bridgeFailureReason(res));
+  let parsed: unknown;
   try {
-    const parsed = JSON.parse(res.stdout.trim());
-    if (parsed && typeof parsed === "object" && "error" in parsed) return null;
-    return parsed as BottleneckPythonOutput;
+    parsed = JSON.parse(res.stdout.trim());
   } catch {
-    return null;
+    throw new Error("workspace bottleneck bridge returned non-JSON output");
   }
+  if (parsed && typeof parsed === "object" && "error" in parsed) {
+    throw new Error(String((parsed as { error: unknown }).error));
+  }
+  return parsed as BottleneckPythonOutput;
 }

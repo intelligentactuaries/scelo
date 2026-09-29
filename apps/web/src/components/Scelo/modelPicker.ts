@@ -6,10 +6,13 @@ import { hasLocalLlmBridge, llmChatActive } from "@/lib/aiProviders";
 import { streamOrchestrator } from "@/lib/api";
 import type { ColumnMeta, Dataset } from "@scelo/core";
 import { type CatalogModel, MODEL_BY_ID, MODEL_CATALOG, type ModelFamily } from "./modelCatalog";
+import { modelApplicability } from "./modelRunner";
 
 export type PickResult = {
   domain: ModelFamily;
-  selected: Array<{ id: string; rationale: string }>;
+  /** `disabled`: suggested, but the data cannot feed it — attached switched
+   *  off (see switchOffInapplicable). */
+  selected: Array<{ id: string; rationale: string; disabled?: true }>;
   summary: string;
 };
 
@@ -549,7 +552,7 @@ function buildPickerPrompt(args: {
 }): string {
   const { dataset, metas, variant, previousIds } = args;
   const catalogLines = MODEL_CATALOG.map(
-    (m) => `- "${m.id}" | ${m.family} | ${m.description}`,
+    (m) => `- "${m.id}" | ${m.family} | ${m.description}${m.needs ? ` | NEEDS: ${m.needs}` : ""}`,
   ).join("\n");
 
   const variantNudge =
@@ -567,10 +570,11 @@ rows: ${dataset.rows.length}
 columns:
 ${describeColumnsForPrompt(metas)}
 
-CATALOG (id | family | description) — pick ids ONLY from this list:
+CATALOG (id | family | description | NEEDS) — pick ids ONLY from this list:
 ${catalogLines}
 
 RULES
+- A model runs ONLY when the dataset has what its NEEDS field names. Never pick a model whose inputs are absent — a mortality model on data with no age × year death rates, a reserving model without a claims triangle, a lifelib model without model points. Column names that merely sound related (e.g. "mortality_trend", "life_exp_60") are not a mortality table.
 - Pick 3 to 6 models that fit this data shape — every model the data genuinely supports, not just the headline one.
 - Prefer one dominant family (e.g. reserving) and optionally 1-2 models from related families.
 - Use ids EXACTLY as written above; do not invent new ids.
@@ -671,6 +675,47 @@ function coercePickResult(raw: unknown): PickResult | null {
   };
 }
 
+/**
+ * Switch off picks the dataset cannot feed, and say so. The LLM picks from
+ * one-line descriptions and — reported 2026-09-29 — attached Lee–Carter
+ * ("rank-1 baseline on mortality_trend") and life contingencies to the
+ * workspace demo, which has no age, year or death-rate column; the Hard stage
+ * could then only report both as not applicable. Such picks stay on the
+ * Tools canvas — visible, with the reason, and the user can still switch one
+ * on — but are attached disabled, so Hard does not run them. Every pick path
+ * (LLM, strong-signal heuristic, offline fallback) goes through this. If
+ * nothing runnable is left, descriptive statistics stands in when it can.
+ */
+export function switchOffInapplicable(pick: PickResult, dataset: Dataset): PickResult {
+  const off = new Map<string, string[]>(); // reason gist → model names
+  const selected = pick.selected.map((s) => {
+    const a = modelApplicability(s.id, dataset);
+    if (a.ok) return s;
+    // First sentence of the reason is the gist ("Needs a claims triangle …").
+    const gist = a.reason.split(/(?<=\.)\s/)[0].replace(/\.$/, "");
+    off.set(gist, [...(off.get(gist) ?? []), MODEL_BY_ID.get(s.id)?.name ?? s.id]);
+    return { ...s, disabled: true as const };
+  });
+  if (off.size === 0) return pick;
+  if (
+    !selected.some((s) => !s.disabled) &&
+    !selected.some((s) => s.id === "descriptive") &&
+    modelApplicability("descriptive", dataset).ok
+  ) {
+    selected.push({
+      id: "descriptive",
+      rationale: "Baseline summary — none of the suggested models can run on this data.",
+    });
+  }
+  const note = [...off]
+    .map(([gist, names]) => {
+      const lead = gist.charAt(0).toLowerCase() + gist.slice(1);
+      return `${names.join(" and ")} switched off: ${lead}.`;
+    })
+    .join(" ");
+  return { ...pick, selected, summary: pick.summary ? `${pick.summary} ${note}` : note };
+}
+
 // Strong-signal short-circuit. When the dataset shape is unambiguous —
 // the lifelib MP triplet, a real claims triangle, or a weather reanalysis
 // ensemble — the heuristic IS the right answer and the LLM call adds
@@ -714,7 +759,7 @@ export async function fetchModelPicks(args: {
   // the LLM never has the chance to ignore the family-routing prompt.
   const sig = dataSignature(args.dataset, args.metas);
   const strong = strongSignalPick(sig, args.variant);
-  if (strong) return strong;
+  if (strong) return switchOffInapplicable(strong, args.dataset);
 
   const prompt = buildPickerPrompt(args);
 
@@ -729,7 +774,7 @@ export async function fetchModelPicks(args: {
     const parsedBridge = extractFirstJson(res.text ?? "");
     const coercedBridge = coercePickResult(parsedBridge);
     if (!coercedBridge) throw new Error("could not parse a model pick from the model reply");
-    return coercedBridge;
+    return switchOffInapplicable(coercedBridge, args.dataset);
   }
 
   let buffer = "";
@@ -753,7 +798,7 @@ export async function fetchModelPicks(args: {
   const parsed = extractFirstJson(buffer);
   const coerced = coercePickResult(parsed);
   if (!coerced) throw new Error("could not parse a model pick from the model reply");
-  return coerced;
+  return switchOffInapplicable(coerced, args.dataset);
 }
 
 // Re-export so callers don't need two imports

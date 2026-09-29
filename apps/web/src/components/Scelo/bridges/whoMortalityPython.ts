@@ -8,7 +8,12 @@
 // canonical reference path — country-specific qx priors for any of WHO's
 // 194 member states.
 
-import { isDesktopIDE, runPython, getRuntimeStatus } from "../../../lib/sceloIDE";
+import {
+  bridgeFailureReason,
+  getRuntimeStatus,
+  isDesktopIDE,
+  runPython,
+} from "../../../lib/sceloIDE";
 
 export interface WhoMortalityOutput {
   country: string;            // ISO 3-letter
@@ -138,19 +143,26 @@ export async function runWhoMortalityPython(
   sex: "M" | "F" | "B" = "B",
 ): Promise<WhoMortalityOutput | null> {
   if (!isDesktopIDE()) return null;
+  // There is no in-browser WHO table, so every stop inside the IDE is
+  // reported with its reason (it used to be a bare null).
   const status = await getRuntimeStatus();
-  if (!status.python) return null;
+  if (!status.python) throw new Error("bundled Python runtime not detected");
   const ds = await window.scelo!.data.status("who-life-tables");
-  if (!ds.available || !ds.path) return null;
+  if (!ds.available || !ds.path) {
+    throw new Error("WHO life tables not downloaded — fetch them in Settings → Data");
+  }
   const res = await runPython(SCRIPT, {
     stdin: JSON.stringify({ csvPath: ds.path, country, sex }),
   });
-  if (!res.ok) return null;
+  if (!res.ok) throw new Error(bridgeFailureReason(res));
+  let parsed: unknown;
   try {
-    const parsed = JSON.parse(res.stdout.trim());
-    if (parsed && "error" in parsed) return null;
-    return parsed as WhoMortalityOutput;
+    parsed = JSON.parse(res.stdout.trim());
   } catch {
-    return null;
+    throw new Error("WHO life-table bridge returned non-JSON output");
   }
+  if (parsed && typeof parsed === "object" && "error" in parsed) {
+    throw new Error(String((parsed as { error: unknown }).error));
+  }
+  return parsed as WhoMortalityOutput;
 }

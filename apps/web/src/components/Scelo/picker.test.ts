@@ -6,9 +6,16 @@
 // MP file, traced to the LLM picker ignoring the new `life` routing.
 
 import { describe, expect, test } from "bun:test";
+import { buildWorkspaceDemo } from "@scelo/core";
 import { SAMPLE_OPTIONS_LIST, summariseDataset } from "./SoftDataWorkstation";
-import { dataSignature, fetchModelPicks, heuristicPick } from "./modelPicker";
-import { runModel } from "./modelRunner";
+import { MODEL_CATALOG } from "./modelCatalog";
+import {
+  dataSignature,
+  fetchModelPicks,
+  heuristicPick,
+  switchOffInapplicable,
+} from "./modelPicker";
+import { modelApplicability, runModel } from "./modelRunner";
 
 function pickFor(key: "claims" | "climate" | "dirty" | "lifelib-mp" | "wmtr-scenarios") {
   const opt = SAMPLE_OPTIONS_LIST().find((o) => o.key === key);
@@ -520,5 +527,57 @@ describe("Tools picker · capital / pensions / yield-curve branches", () => {
     const pick = pickOf(d);
     expect(pick.domain).toBe("life");
     expect(pick.selected[0].id).toBe("basicterm-projection");
+  });
+});
+
+describe("picks are checked against the data before they reach Hard", () => {
+  // The reported case (2026-09-29): the AI picker attached Lee–Carter ("rank-1
+  // baseline on mortality_trend") and life contingencies to the workspace
+  // demo, which has no age, year or death-rate column.
+  const demo = buildWorkspaceDemo();
+  const aiPick = {
+    domain: "general" as const,
+    summary: "Annuity book with three nonlinear heads.",
+    selected: [
+      { id: "workspace-bottleneck", rationale: "14 drivers feed three heads." },
+      { id: "lee-carter", rationale: "Rank-1 baseline on mortality_trend." },
+      { id: "lifecontingencies", rationale: "annuity_60 and life_exp_60 look life-table-like." },
+      { id: "descriptive", rationale: "Ten high-variance nuisance columns." },
+    ],
+  };
+
+  test("the mortality models arrive switched off, named, and explained", () => {
+    const res = switchOffInapplicable(aiPick, demo);
+    // Still on the board — the user sees what was suggested and why it is off…
+    expect(res.selected.map((s) => s.id)).toEqual(aiPick.selected.map((s) => s.id));
+    // …but only what the data can feed will run.
+    expect(res.selected.filter((s) => !s.disabled).map((s) => s.id)).toEqual([
+      "workspace-bottleneck",
+      "descriptive",
+    ]);
+    expect(res.summary).toContain("Lee–Carter and Life Contingencies switched off");
+    expect(res.summary).toContain("mortality table");
+  });
+
+  test("applicability agrees with what the runner actually does, model by model", () => {
+    for (const m of MODEL_CATALOG) {
+      const a = modelApplicability(m.id, demo);
+      const r = runModel(m.id, demo);
+      // Whatever the check rejects, the runner reports as not applicable.
+      if (!a.ok) expect(r.notApplicable).toBe(true);
+      // Whatever the runner reports as not applicable, the check rejects.
+      if (r.notApplicable) expect(a.ok).toBe(false);
+    }
+  });
+
+  test("never leaves nothing to run while descriptive stats can", () => {
+    const hopeless = { ...aiPick, selected: [{ id: "lee-carter", rationale: "" }] };
+    const res = switchOffInapplicable(hopeless, demo);
+    expect(res.selected.filter((s) => !s.disabled).map((s) => s.id)).toEqual(["descriptive"]);
+  });
+
+  test("a pick that fits the data passes through untouched", () => {
+    const fits = { ...aiPick, selected: [aiPick.selected[0], aiPick.selected[3]] };
+    expect(switchOffInapplicable(fits, demo)).toBe(fits);
   });
 });
