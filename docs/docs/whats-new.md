@@ -83,6 +83,8 @@
   commands ran, but without a prompt, colours, line editing or full-screen
   programs. See [Terminal & runtimes](workspace/terminal.md#the-integrated-terminal).
 - **A new mark.** The app icon and wordmark are now the S₀.₂ mark.
-- **Apple Silicon.** A macOS build for Apple Silicon is being introduced. It
-  is unsigned and not notarised, so Gatekeeper blocks the first launch until
-  you allow it. See [Windows & macOS](installation/windows-macos.md).
+- **Apple Silicon.** 0.2.0 adds a macOS build: a `.dmg` for Apple Silicon
+  Macs on macOS 14 or later, with the same bundled Python and R. It is
+  unsigned and not notarised, so clear the download's quarantine flag once
+  (one Terminal command) before opening it. See
+  [Windows & macOS](installation/windows-macos.md).
