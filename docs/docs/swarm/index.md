@@ -5,7 +5,9 @@ two things:
 
 - **Convenes a council** of simulated professional agents to deliberate over a
   forecast — surfacing consensus, dissent, and reasoning (it does not decide; it
-  surfaces inputs so *you* can).
+  surfaces inputs so *you* can). The forecast models a community; when the
+  scenario isn't one (a fund's allocation, a reserving estimate, a model result
+  sent from Scelo), the council judges the scenario as stated instead.
 - **Simulates a population's** response to a medical or social shock, scaling
   micro outcomes up to macro impact (workdays lost, GDP drag, mortality, cost).
 
@@ -26,8 +28,8 @@ other surfaces read from, not another view of the run.
 
 | Pet | Surface | What it shows |
 | --- | --- | --- |
-| ![bunny](../assets/img/pets/bunny.svg){ .pet-inline } bunny | **Forecast** | The WMTR survival projection: wealth trajectory, survival curve, outcome distribution, M/T/R components |
-| ![dog](../assets/img/pets/dog.svg){ .pet-inline } dog | **Council Reactions** | The deliberation graph + a readback Sankey (profession → trust the forecast? → confidence) |
+| ![bunny](../assets/img/pets/bunny.svg){ .pet-inline } bunny | **Forecast** | The WMTR survival projection: wealth trajectory, survival curve, outcome distribution, M/T/R components (or, for a scenario that isn't a community, why there is none, above the council's verdict) |
+| ![dog](../assets/img/pets/dog.svg){ .pet-inline } dog | **Council Reactions** | The deliberation graph + a readback Sankey (profession → trust the forecast, or the scenario? → confidence) |
 | ![hamster](../assets/img/pets/hamster.svg){ .pet-inline } hamster | **Society Pulse** | How a broader simulated society reacts |
 | ![turtle](../assets/img/pets/turtle.svg){ .pet-inline } turtle | **Readback** | The synthesised narrative of the council |
 | ![chick](../assets/img/pets/chick.svg){ .pet-inline } chick | **Simulation** | Population simulation of a scenario → macro impact |

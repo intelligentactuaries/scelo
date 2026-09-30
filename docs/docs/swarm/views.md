@@ -17,13 +17,23 @@ probability S(t), the outcome distribution, and the M/T/R components.
 
 From here you can **Forecast & convene** to run a council on the projection.
 
+The projection models a community: people, and the money, time and
+relationships that carry them. A scenario that isn't one (a fund's
+allocation, an insurer's capital decision, a reserving estimate or a pricing
+model's fit) gets no forecast. The tab says so, and the council judges the
+scenario as stated: **trust** means it holds up on what is given,
+**distrust** means something it states is wrong, and **uncertain** means
+there isn't enough to judge. There are no parameter interventions on such a
+run, since there is no forecast to adjust.
+
 ## Council reactions
 
 The heart of the deliberation:
 
 - A **force graph** of agents (Finance, Investor, Accountant, Actuary,
   Psychologist, Lawyer, …), coloured and bordered by their final stance.
-- A **readback Sankey**: profession → *trust the forecast?* → confidence band.
+- A **readback Sankey**: profession → *trust the forecast (or the scenario)?* →
+  confidence band.
 - A **decision sidebar** — click an agent to see its per-round reasoning,
   key risk, and final vote — or open an [audit interview](#audit-interviews)
   with them; click a profession to see the group's aggregate. The panel icon

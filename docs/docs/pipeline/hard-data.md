@@ -97,16 +97,18 @@ You can also open it from the toolbar: **report · pdf**.
 
 ## Convening the swarm
 
-From the result side panel you can send a result's forecast to the
-multi-agent swarm — the focused result or, with nothing focused, the dominant
-run:
+From the result side panel you can send a result to the multi-agent swarm —
+the focused result or, with nothing focused, the dominant run:
 
 1. **Convene council** — choose the number of agents (12 → 192) and whether to
    include the society pulse, then run.
 2. The council deliberates (this uses the [swarm server](../swarm/running.md) and
    the local LLM, so it takes time — a few seconds per agent).
-3. When it finishes, a **synthesis card** shows trust / dissent and the
-   dominant recommended intervention.
+3. When it finishes, a **synthesis card** shows how much of the council
+   trusts, distrusts or is uncertain about the result. A model result isn't a
+   community the swarm's forecast can simulate, so the council judges it as
+   stated; distrust means it found a flaw, uncertain that the result alone
+   isn't enough to judge.
 4. Click **Open in swarm** to jump into the full
    [swarm view](../swarm/index.md) for that run.
 
