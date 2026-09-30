@@ -90,6 +90,32 @@
     abandoned. Dates are the release publication dates on GitHub.
   -->
   <releases>
+    <release version="0.2.0" date="2026-09-30">
+      <description>
+        <p>
+          The Tools canvas is now a typed graph, in the manner of Unreal
+          Engine's Blueprints. The dataset offers only the inputs it really
+          contains, each model shows only the connectors it uses, and a wire
+          can only join pins whose types agree: a drag says why a drop will not
+          take, and dropping a wire on empty canvas lists the models that fit.
+          Every wire now carries a result the next model actually uses.
+        </p>
+        <p>
+          Hard Data fits real gradient-boosted models and exact SHAP
+          explanations, fits Lee-Carter and Cairns-Blake-Dowd to real mortality
+          tables, says plainly when a model does not apply, and writes the board
+          pack summary in plain English. The interface is quieter, panels
+          collapse and expand visibly, views and dialogs move with purpose, and
+          the swarm's pets breathe, blink and follow the cursor.
+        </p>
+        <p>
+          The installer now carries the whole bundled Python stack (SciPy,
+          scikit-learn, statsmodels, LightGBM, chainladder, climada), which
+          earlier builds left out, and the integrated terminal runs in a real
+          pseudo-terminal instead of a plain pipe.
+        </p>
+      </description>
+    </release>
     <release version="0.1.6" date="2026-08-20">
       <description>
         <p>

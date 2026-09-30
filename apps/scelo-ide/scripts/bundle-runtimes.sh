@@ -115,7 +115,55 @@ stage_python_packages() {
   # site-packages while we stage it — a developer's ~/.local lifelib or a
   # PYTHONPATH from another toolchain must not satisfy (or shadow) a pin.
   PYTHONNOUSERSITE=1 PYTHONPATH= "$py_bin" -I -m pip install --upgrade pip
-  PYTHONNOUSERSITE=1 PYTHONPATH= "$py_bin" -I -m pip install --no-cache-dir -r "$req"
+  # GDAL's Python bindings (osgeo) are published only as a source tarball that
+  # must compile against a libgdal of the SAME version — no wheel exists for
+  # any platform, and a build host's libgdal is neither that version nor
+  # something we can ship. climada is the only package asking for it, and it
+  # uses it in one legacy function (litpop.nightlight.read_bm_file, "not
+  # required for litpop module" in climada's own docstring); every other
+  # raster goes through rasterio, whose wheels carry their own GDAL. So the
+  # lock — already complete, hence --no-deps — is installed without gdal, and
+  # that one import is made lazy below.
+  if [ "$req" = "$lock" ]; then
+    local filtered; filtered="$(mktemp)"
+    grep -v -E '^gdal==' "$lock" > "$filtered"
+    PYTHONNOUSERSITE=1 PYTHONPATH= "$py_bin" -I -m pip install --no-cache-dir --no-deps -r "$filtered"
+    rm -f "$filtered"
+  else
+    PYTHONNOUSERSITE=1 PYTHONPATH= "$py_bin" -I -m pip install --no-cache-dir -r "$req"
+  fi
+  PYTHONNOUSERSITE=1 PYTHONPATH= "$py_bin" -I - <<'PY'
+import importlib.util, pathlib, py_compile, sys
+
+spec = importlib.util.find_spec("climada")
+if spec is None:
+    sys.exit(0)  # climada not in this stack — nothing to patch
+path = pathlib.Path(spec.submodule_search_locations[0], "entity/exposures/litpop/nightlight.py")
+src = path.read_text(encoding="utf-8")
+MARK = "# Scelo IDE: GDAL's Python bindings are not bundled"
+if MARK not in src:
+    imp = "from osgeo import gdal\n"
+    use = "    curr_file = gdal.Open(str(path))\n"
+    if src.count(imp) != 1 or src.count(use) != 1:
+        sys.exit(f"  ✗ climada's GDAL import moved in {path} — re-check it before shipping this climada")
+    src = src.replace(imp, (
+        "try:\n"
+        "    from osgeo import gdal\n"
+        f"except ImportError:  {MARK} (see bundle-runtimes.sh)\n"
+        "    gdal = None\n"
+    ))
+    src = src.replace(use, (
+        "    if gdal is None:\n"
+        "        raise ImportError(\n"
+        "            \"read_bm_file needs GDAL's Python bindings (osgeo), which Scelo IDE \"\n"
+        "            \"does not bundle; LitPop itself does not use them.\"\n"
+        "        )\n"
+        + use
+    ))
+    path.write_text(src, encoding="utf-8")
+    py_compile.compile(str(path), doraise=True)
+print("  ✓ climada: legacy GDAL import made lazy")
+PY
 
   # LSP-lite tooling: pyright for in-editor diagnostics on save (Phase 6).
   # Tolerates failure — the editor falls back to no-lint mode gracefully.
@@ -134,6 +182,20 @@ stage_python_packages() {
   fi
   LIFELIB_VERSION="$have_lifelib"
   MODELX_VERSION="$have_modelx"
+
+  # Prove the stack the bridges call actually imports — 0.1.x installers went
+  # out with a bare interpreter because nothing here checked.
+  PYTHONNOUSERSITE=1 PYTHONPATH= MPLBACKEND=Agg "$py_bin" -I -c '
+import numpy, pandas, scipy, sklearn, statsmodels, lightgbm, matplotlib, pyarrow, openpyxl
+import chainladder, fairlearn, lifelib, modelx
+from climada.entity import LitPop, ImpfTropCyclone, ImpactFuncSet
+from climada.hazard import TCTracks, TropCyclone, Centroids
+from climada.engine import ImpactCalc
+# Importing is not enough: chainladder 0.8.26 imported fine under pandas 3
+# and then failed every fit. RAA chain-ladder IBNR is 52,135 in every engine.
+ibnr = float(chainladder.Chainladder().fit(chainladder.load_sample("raa")).ibnr_.sum())
+assert round(ibnr) == 52135, f"chainladder RAA IBNR {ibnr}, expected 52135"
+' || { echo "  ✗ The bundled Python stack does not import, or does not work — not shipping it."; exit 1; }
   echo "  ✓ Python packages installed (lifelib $LIFELIB_VERSION · modelx $MODELX_VERSION)."
 }
 
@@ -197,7 +259,10 @@ stage_r_linux() {
   local sys_r="/usr/lib/R"
   if [ -d "$sys_r" ] && [ -x "$sys_r/bin/R" ]; then
     echo "  ↓ Repacking system R from $sys_r"
-    rsync -a --exclude='doc/manual/full_refman.pdf' \
+    # --copy-unsafe-links: Debian's etc/{ldpaths,Renviron,…} are links into
+    # /etc/R, which only exists where r-base-core is installed — copy the
+    # files so the bundle carries its own configuration.
+    rsync -a --copy-unsafe-links --exclude='doc/manual/full_refman.pdf' \
       "$sys_r/" "$dest/"
     # Rewrite R_HOME inside the launcher. R's bin/R is a shell script with
     # R_HOME_DIR pinned absolute; replace it with a self-resolving path so
@@ -216,7 +281,7 @@ stage_r_linux() {
   if command -v apt-get >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1; then
     echo "  ↓ No system R — installing r-base-core via apt"
     if sudo -n apt-get install -y r-base-core >/dev/null 2>&1 && [ -x /usr/lib/R/bin/R ]; then
-      rsync -a "/usr/lib/R/" "$dest/"
+      rsync -a --copy-unsafe-links "/usr/lib/R/" "$dest/"
       [ -f "$dest/bin/R" ] && sed -i 's|^R_HOME_DIR=.*|R_HOME_DIR="$(cd "$(dirname "$0")/.." \&\& pwd)"|' "$dest/bin/R"
       echo "  ✓ Linux R staged via apt ($(du -sh "$dest" | awk '{print $1}'))"
       return
@@ -291,6 +356,16 @@ stage_r_mac() {
   fi
   rsync -aL "$fw_root/" "$dest/"
   rm -rf "$tmp"
+  # Relocatable, like the Linux repack: bin/R pins R_HOME_DIR to
+  # /Library/Frameworks/R.framework/Resources, so inside the app it would run
+  # a system R (or none). Resolve it from the script's own location instead;
+  # etc/ldpaths then points DYLD_FALLBACK_LIBRARY_PATH at the bundled lib/.
+  # perl, not sed -i: BSD sed wants a suffix argument GNU sed does not.
+  if [ -f "$dest/Resources/bin/R" ]; then
+    perl -pi -e 's|^R_HOME_DIR=.*|R_HOME_DIR="\$(cd "\$(dirname "\$0")/.." && pwd)"|;
+                 s#^(R_(?:SHARE|INCLUDE|DOC)_DIR)=/Library/Frameworks/R\.framework/Resources#$1=\${R_HOME_DIR}#' \
+      "$dest/Resources/bin/R"
+  fi
   echo "  ✓ macOS R.framework staged"
 }
 
@@ -356,11 +431,33 @@ stage_r_packages() {
     return
   fi
   echo "  ↓ Installing IA R packages (ChainLadder, forecast, lifecontingencies, …)"
-  "$r_bin" --vanilla -e '
-    options(repos = c(CRAN = "https://cloud.r-project.org"))
-    pkgs <- c("ChainLadder", "lifecontingencies", "forecast", "mgcv", "data.table", "jsonlite", "lintr", "languageserver")
-    install.packages(pkgs, lib = file.path(R.home(), "library"), dependencies = TRUE)
-  ' || echo "  ! Some R packages failed; bundle may be incomplete."
+  # Every dependency must land IN the bundle. R skips a dependency that is
+  # installed anywhere on .libPaths(), so a build host whose own library had
+  # ggplot2 & co. produced a bundle that only loaded on hosts that had them
+  # too: 0.1.x shipped ChainLadder without 72 of its dependencies. Pointing
+  # the user and site libraries at nothing leaves the bundle's library as the
+  # only one R can see, and the check below fails loudly on anything missing.
+  # Linux repacks the build host's Ubuntu R, so it takes Posit Package
+  # Manager's prebuilt binaries for that release instead of compiling ~120
+  # packages from source.
+  local repo="https://cloud.r-project.org"
+  if [ "$TARGET_OS" = "linux" ] && [ -r /etc/os-release ]; then
+    repo="https://packagemanager.posit.co/cran/__linux__/$(. /etc/os-release && echo "$VERSION_CODENAME")/latest"
+  fi
+  R_LIBS_USER=/nonexistent R_LIBS_SITE=/nonexistent "$r_bin" --vanilla -e "
+    options(repos = c(CRAN = '$repo'),
+            HTTPUserAgent = sprintf('R/%s R (%s)', getRversion(),
+              paste(getRversion(), R.version['platform'], R.version['arch'], R.version['os'])))
+    pkgs <- c('ChainLadder', 'lifecontingencies', 'forecast', 'mgcv', 'data.table', 'jsonlite', 'lintr', 'languageserver')
+    lib <- file.path(R.home(), 'library')
+    install.packages(pkgs, lib = lib)
+    bad <- pkgs[!vapply(pkgs, requireNamespace, logical(1), lib.loc = lib, quietly = TRUE)]
+    if (length(bad)) {
+      message('  ! R packages that do not load from the bundle alone: ', paste(bad, collapse = ', '))
+      quit(status = 1)
+    }
+    cat('  ✓ R packages load from the bundle alone\n')
+  " || echo "  ! Some R packages failed; bundle may be incomplete."
 }
 
 # ─── 4. Manifest with versions + sizes ────────────────────────────────
@@ -369,10 +466,10 @@ write_manifest() {
   local py_size=0
   local r_size=0
   if [ -d "$RUNTIME_DIR/python" ]; then
-    py_size=$(du -sb "$RUNTIME_DIR/python" 2>/dev/null | awk '{print $1}' || echo 0)
+    py_size=$(du -sk "$RUNTIME_DIR/python" 2>/dev/null | awk '{print $1 * 1024}' || echo 0)
   fi
   if [ -d "$RUNTIME_DIR/r" ]; then
-    r_size=$(du -sb "$RUNTIME_DIR/r" 2>/dev/null | awk '{print $1}' || echo 0)
+    r_size=$(du -sk "$RUNTIME_DIR/r" 2>/dev/null | awk '{print $1 * 1024}' || echo 0)
   fi
   cat > "$manifest" <<EOF
 {

@@ -10,6 +10,11 @@ artifactName: ${productName}-${version}-${arch}.${ext}
 # node-pty build) instead of recompiling from source — node-gyp fails on this
 # deep, space-containing OneDrive path. Lets `electron-builder --win nsis` run
 # directly, without a fragile -c.npmRebuild=false CLI flag.
+#
+# node-pty for Electron is built separately, before packaging, by
+# scripts/build-pty-electron.mjs (`bun run build:pty`, part of dist:linux
+# and dist:mac): upstream has no Electron-33 binary, so without it the
+# terminal falls back to a PTY-less spawn.
 npmRebuild: false
 
 # ─── Publish ───────────────────────────────────────────────────────────
@@ -143,6 +148,28 @@ linux:
 # NOTE: needs a Linux build to verify; it could not be tested where it was
 # written. Check with: dpkg -c build/*.deb | grep metainfo
 deb:
+  # electron-builder's default Depends plus libgomp1. LightGBM's wheel (the
+  # Hard Data GBM) links the system OpenMP runtime instead of bundling it, so
+  # without libgomp1 `import lightgbm` fails; a clean ubuntu:24.04 / 22.04
+  # container showed it. Setting `depends` replaces the default list
+  # (app-builder-lib 25.1.8), so the defaults are repeated here.
+  depends:
+    - libgtk-3-0
+    - libnotify4
+    - libnss3
+    - libxss1
+    - libxtst6
+    - xdg-utils
+    - libatspi2.0-0
+    - libuuid1
+    - libsecret-1-0
+    - libgomp1
+  # The bundled R is the build host's r-base-core, repacked
+  # (scripts/bundle-runtimes.sh): it loads the system's BLAS/LAPACK, ICU and
+  # readline, and needs glibc 2.38+, so it runs on Ubuntu 24.04+ when these
+  # libraries are present. A default apt install pulls Recommends in.
+  recommends:
+    - r-base-core
   fpm:
     - "packaging/io.intelligentactuaries.scelo.metainfo.xml=/usr/share/metainfo/io.intelligentactuaries.scelo.metainfo.xml"
 
@@ -178,6 +205,9 @@ snap:
 #   APPLE_TEAM_ID             10-char team ID from developer.apple.com
 mac:
   category: public.app-category.developer-tools
+  # Without this electron-builder looks for resources/icon.icns, finds nothing
+  # and ships Electron's default icon.
+  icon: resources/icons/icon.icns
   target:
     - target: dmg
       arch: [x64, arm64]

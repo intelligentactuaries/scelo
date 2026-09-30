@@ -34,6 +34,9 @@ openpyxl
 
 # ── reserving / climate / fairness / R bridge ────────────────────────
 chainladder
+# chainladder imports IPython.display at import time but only lists ipython
+# under its dev/test/docs extras — without this, `import chainladder` fails.
+ipython
 climada
 fairlearn
 rpy2

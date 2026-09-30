@@ -1,0 +1,147 @@
+# Builds the Apple Silicon .dmg for a Scelo IDE release and attaches it to
+# that (already published) release. The Linux assets are uploaded from a
+# workstation first; then:
+#
+#   gh workflow run release-macos.yml -f tag=scelo-ide-v0.2.0
+#
+# Unsigned: there is no Apple Developer ID yet. Apple Silicon refuses to run
+# code with no signature at all, so the app is ad-hoc signed after packaging
+# (electron-builder's own signing is switched off), and it is not notarised —
+# the first launch needs the Gatekeeper steps in docs/docs/install.md.
+# Intel Macs are not built: the bundled Python is aarch64-only
+# (scripts/bundle-runtimes.sh).
+name: release-macos
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to build and attach the .dmg to (e.g. scelo-ide-v0.2.0)
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  dmg:
+    runs-on: macos-14
+    timeout-minutes: 150
+    env:
+      TAG: ${{ inputs.tag }}
+      GH_TOKEN: ${{ github.token }}
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.11
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Version must match the tag
+        id: v
+        run: |
+          v="${TAG#scelo-ide-v}"
+          have="$(node -p "require('./apps/scelo-ide/package.json').version")"
+          if [ "$have" != "$v" ]; then
+            echo "::error::apps/scelo-ide/package.json is $have, the tag says $v"; exit 1
+          fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Bundle the Python + R runtime (arm64)
+        working-directory: apps/scelo-ide
+        run: TARGET_OS=mac bash scripts/bundle-runtimes.sh
+
+      - name: Build renderer, main process and swarm
+        working-directory: apps/scelo-ide
+        run: bun run build
+
+      - name: Build node-pty for Electron
+        working-directory: apps/scelo-ide
+        run: bun run build:pty
+
+      - name: Package Scelo IDE.app (electron-builder signing off)
+        working-directory: apps/scelo-ide
+        run: |
+          npx electron-builder --mac dir --arm64 --publish never \
+            -c.mac.identity=null -c.mac.notarize=false
+
+      - name: Ad-hoc sign
+        id: app
+        working-directory: apps/scelo-ide
+        run: |
+          APP="$(ls -d build/mac*/*.app | head -1)"
+          echo "path=$PWD/$APP" >> "$GITHUB_OUTPUT"
+          codesign --force --deep --sign - "$APP"
+          codesign --verify --deep --verbose=2 "$APP" || echo "::warning::codesign --verify reported the above"
+
+      - name: Smoke test the packaged app
+        env:
+          APP: ${{ steps.app.outputs.path }}
+        run: |
+          set -x
+          R="$APP/Contents/Resources"
+          # The bundled Python stack, from inside the app.
+          PYTHONNOUSERSITE=1 MPLBACKEND=Agg "$R/runtime/python/bin/python3" -I -c '
+          import numpy, pandas, scipy, sklearn, statsmodels, lightgbm, pyarrow
+          import chainladder, fairlearn, lifelib, modelx
+          from climada.entity import LitPop
+          assert round(float(chainladder.Chainladder().fit(chainladder.load_sample("raa")).ibnr_.sum())) == 52135
+          print("python stack ok")'
+          # The bundled R must be the bundle's own, not a system R.
+          "$R/runtime/r/Resources/bin/R" --vanilla -s -e 'cat("R_HOME", R.home(), "\n"); suppressMessages(library(ChainLadder)); cat("ChainLadder", format(packageVersion("ChainLadder")), "\n")' | tee r.txt
+          grep -q "R_HOME $R/runtime/r/Resources" r.txt
+          # node-pty was packed with its Electron build.
+          ls "$R/app.asar.unpacked/node_modules/@homebridge/node-pty-prebuilt-multiarch/build/Release"
+          # Launch it and look.
+          EXE="$APP/Contents/MacOS/$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$APP/Contents/Info.plist")"
+          "$EXE" > app-stdout.log 2>&1 &
+          PID=$!
+          sleep 60
+          screencapture -x scelo-macos.png || true
+          kill "$PID" || true
+          sleep 3
+          find ~/Library/Logs -name main.log -exec cp {} app-main.log \; 2>/dev/null || true
+          grep -E "node-pty|swarm" app-main.log || true
+          kill -0 "$PID" 2>/dev/null && kill -9 "$PID" || true
+
+      - name: Build the .dmg
+        id: dmg
+        working-directory: apps/scelo-ide
+        env:
+          APP: ${{ steps.app.outputs.path }}
+          VERSION: ${{ steps.v.outputs.version }}
+        run: |
+          STAGE="$(mktemp -d)"
+          cp -R "$APP" "$STAGE/"
+          ln -s /Applications "$STAGE/Applications"
+          DMG="build/Scelo-IDE-$VERSION-arm64.dmg"
+          hdiutil create -volname "Scelo IDE $VERSION" -srcfolder "$STAGE" -ov \
+            -format UDZO -imagekey zlib-level=9 "$DMG"
+          hdiutil verify "$DMG"
+          shasum -a 256 "$DMG"
+          ls -lh "$DMG"
+          echo "path=$PWD/$DMG" >> "$GITHUB_OUTPUT"
+
+      - name: Attach to the release
+        run: gh release upload "$TAG" "${{ steps.dmg.outputs.path }}" --clobber --repo "$GITHUB_REPOSITORY"
+
+      - name: Keep the evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-smoke
+          path: |
+            scelo-macos.png
+            app-stdout.log
+            app-main.log
+            r.txt
+          if-no-files-found: ignore

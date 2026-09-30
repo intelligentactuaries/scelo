@@ -65,8 +65,8 @@ chmod +x "$OUT_DIR/$BIN_NAME" 2>/dev/null || true
 echo "  ✓ Server at $OUT_DIR/$BIN_NAME ($(du -h "$OUT_DIR/$BIN_NAME" | cut -f1))"
 
 # ─── 3. Manifest ────────────────────────────────────────────────────────
-bin_size=$(du -sb "$OUT_DIR/$BIN_NAME" 2>/dev/null | awk '{print $1}' || echo 0)
-ui_size=$(du -sb "$OUT_DIR/ui" 2>/dev/null | awk '{print $1}' || echo 0)
+bin_size=$(du -sk "$OUT_DIR/$BIN_NAME" 2>/dev/null | awk '{print $1 * 1024}' || echo 0)
+ui_size=$(du -sk "$OUT_DIR/ui" 2>/dev/null | awk '{print $1 * 1024}' || echo 0)
 cat > "$OUT_DIR/manifest.json" <<EOF
 {
   "target_os": "$TARGET_OS",

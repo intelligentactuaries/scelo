@@ -1,6 +1,6 @@
 {
   "name": "@ia/scelo-ide",
-  "version": "0.1.6",
+  "version": "0.2.0",
   "private": true,
   "description": "Scelo IDE — a downloadable desktop workbench for actuaries. Bundled Python + R + the IA actuarial stack, ready to run offline.",
   "homepage": "https://intelligentactuaries.com",
@@ -16,9 +16,10 @@
     "build": "bun run build:renderer && bun run build:main && bun run bundle:swarm",
     "bundle:runtime": "bash scripts/bundle-runtimes.sh",
     "bundle:swarm": "bash scripts/bundle-swarm.sh",
+    "build:pty": "node scripts/build-pty-electron.mjs",
     "dev": "bun run build:main && electron .",
-    "dist:linux": "bun run build && electron-builder --linux AppImage deb",
-    "dist:mac": "bun run build && electron-builder --mac dmg",
+    "dist:linux": "bun run build && bun run build:pty && electron-builder --linux AppImage deb",
+    "dist:mac": "bun run build && bun run build:pty && electron-builder --mac dmg",
     "dist:win": "bun run build && electron-builder --win nsis",
     "smoke:pty": "node --experimental-strip-types scripts/smoke-pty.ts",
     "test": "bun test src"
