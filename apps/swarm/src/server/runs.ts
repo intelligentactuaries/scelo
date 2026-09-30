@@ -25,6 +25,7 @@ import type {
   SocietySummary,
 } from '../shared/types';
 import type { WmtrSingleParams } from '../shared/wmtr';
+import { wantsForecast } from '../shared/forecastScope';
 import { PROFESSIONS, type LegalJurisdiction } from '../shared/constants';
 
 const DEFAULT_SOCIETY_PARAMS: SocietyParams = {
@@ -262,7 +263,11 @@ export interface StartRunArgs {
   canon?: string;
   legalJurisdiction?: LegalJurisdiction;
   justifyAll?: boolean;
-  /** If false, skip the pre-council WMTR Monte Carlo. Default true. */
+  /**
+   * The pre-council WMTR Monte Carlo. Unset: run it when the scenario is a
+   * community the engine can model (shared/forecastScope.ts); true forces it,
+   * false skips it.
+   */
   wmtrEnabled?: boolean;
   /** Custom overrides for the WMTR config (used by intervention re-runs). */
   wmtrOverrides?: Partial<WmtrSingleParams>;
@@ -329,7 +334,7 @@ async function executeRun(rec: ActiveRun, args: StartRunArgs): Promise<void> {
     // ---- WMTR (synchronous, before council so its evidence can inject) ----
     let wmtrEvidence: string | undefined;
     let wmtrMs: number | undefined;
-    if (args.wmtrEnabled !== false) {
+    if (wantsForecast(args)) {
       const tW = performance.now();
       const payload = runWmtrForScenario(run.scenario, args.wmtrOverrides ?? {});
       wmtrMs = Math.round(performance.now() - tW);

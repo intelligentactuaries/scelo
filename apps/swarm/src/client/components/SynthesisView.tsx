@@ -1,5 +1,6 @@
 import { explainSynthesisByProfession, explainSynthesisTrust } from '../lib/plotExplainers';
 import type { Run } from '../../shared/types';
+import { voteSubject } from '../../shared/forecastScope';
 import { colorsForTheme, PROFESSIONS, type Profession } from '../../shared/constants';
 import { useTheme } from '../lib/theme';
 import { HalfDonut } from './HalfDonut';
@@ -11,6 +12,7 @@ type Props = {
 
 export function SynthesisView({ run, onSelectAgent }: Props) {
   const s = run.summary;
+  const subject = voteSubject(run);
   const { resolved } = useTheme();
   const colors = colorsForTheme(resolved);
   if (!s) {
@@ -51,8 +53,9 @@ export function SynthesisView({ run, onSelectAgent }: Props) {
   return (
     <div className="synthesis-scroll">
       <div className="syn-note muted small">
-        council readback on the W(M,T,R) forecast — the simulator predicts, the
-        council interrogates, the professor decides.
+        {run.wmtr
+          ? 'council readback on the W(M,T,R) forecast — the simulator predicts, the council interrogates, the professor decides.'
+          : 'council readback on the scenario as stated — no forecast was run (the W(M,T,R) model simulates communities), so the council judged it directly; the professor decides.'}
       </div>
 
       <section className="syn-section">
@@ -62,10 +65,10 @@ export function SynthesisView({ run, onSelectAgent }: Props) {
           tabIndex={0}
           role="note"
         >
-          trust in the forecast
+          trust in {subject}
         </div>
         <HalfDonut
-          name="trust in the forecast"
+          name={`trust in ${subject}`}
           data={[
             { name: 'trust', value: s.supportPct, color: colors.consensus },
             { name: 'distrust', value: s.opposePct, color: colors.adversarial },
@@ -130,7 +133,9 @@ export function SynthesisView({ run, onSelectAgent }: Props) {
             draw on the same vocabulary, a supporter's endorsement clustered
             straight into an opposer's objection, which is what made trusting
             and distrusting agents look like they reasoned identically. */}
-        <div className="panel-label">what the forecast misses · from the agents who distrust it</div>
+        <div className="panel-label">
+          what {subject} {run.wmtr ? 'misses' : 'gets wrong'} · from the agents who distrust it
+        </div>
         <div className="syn-risks">
           {s.topRisks.length === 0 && <div className="muted small">no objections reported</div>}
           {s.topRisks.map((r, i) => (
@@ -160,7 +165,7 @@ export function SynthesisView({ run, onSelectAgent }: Props) {
             <div className="muted small">
               {s.supportPct > 0
                 ? 'the supporting agents stated objections rather than endorsements — see the note below'
-                : 'no agent trusted the forecast'}
+                : `no agent trusted ${subject}`}
             </div>
           )}
           {(s.topCaptures ?? []).map((r, i) => (

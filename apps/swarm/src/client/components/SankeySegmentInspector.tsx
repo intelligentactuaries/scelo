@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import type { Run, Stance, Sentiment, CouncilAgentResult, SocietyAgentResult } from '../../shared/types';
 import type { CrossHighlight } from './CouncilGraph';
 import { STANCE_CLASS, STANCE_LABEL, STANCE_ORDER } from '../lib/stance';
+import { voteSubject, type VoteSubject } from '../../shared/forecastScope';
 
 type Props = {
   run: Run;
@@ -32,7 +33,15 @@ export function SankeySegmentInspector({ run, highlight, onClose }: Props) {
 
   if (isCouncil) {
     const agents = run.councilResults.filter((r) => ids.has(r.agent.id));
-    return <CouncilSegment agents={agents} total={run.councilResults.length} segment={segment} onClose={onClose} />;
+    return (
+      <CouncilSegment
+        agents={agents}
+        total={run.councilResults.length}
+        segment={segment}
+        subject={voteSubject(run)}
+        onClose={onClose}
+      />
+    );
   }
   if (isSociety) {
     const members = run.societyResults.filter((r) => ids.has(r.agent.id));
@@ -59,11 +68,13 @@ function CouncilSegment({
   agents,
   total,
   segment,
+  subject,
   onClose,
 }: {
   agents: CouncilAgentResult[];
   total: number;
   segment: { label: string; sublabel: string };
+  subject: VoteSubject;
   onClose: () => void;
 }) {
   const n = agents.length;
@@ -92,7 +103,7 @@ function CouncilSegment({
   // Justification: a concise, deterministic English summary built from the
   // numbers — gives the user a takeaway without firing another LLM call.
   const justification = buildCouncilJustification({
-    n, total, pct, dominant, byStance, avgConf, segment, profCount,
+    n, total, pct, dominant, byStance, avgConf, segment, profCount, subject,
   });
 
   return (
@@ -220,13 +231,14 @@ function buildCouncilJustification(p: {
   avgConf: number;
   segment: { label: string; sublabel: string };
   profCount: Map<string, number>;
+  subject: VoteSubject;
 }): string {
   if (p.n === 0) return 'No council agents flow through this segment.';
   const verb = p.byStance[p.dominant] === p.n ? 'unanimously' : 'predominantly';
   const stanceText =
-    p.dominant === 'support' ? 'trust the forecast'
-      : p.dominant === 'oppose' ? 'distrust the forecast'
-        : 'are uncertain about the forecast';
+    p.dominant === 'support' ? `trust ${p.subject}`
+      : p.dominant === 'oppose' ? `distrust ${p.subject}`
+        : `are uncertain about ${p.subject}`;
   const confText =
     p.avgConf >= 80 ? `with strong conviction (avg confidence ${p.avgConf})`
       : p.avgConf >= 60 ? `with moderate conviction (avg confidence ${p.avgConf})`

@@ -10,6 +10,7 @@ import { useTheme } from '../lib/theme';
 import { layoutCells, forceClusterLayout, type Group, type FNode, type FEdge } from '../lib/groupLayout';
 import { installGroupHulls, type HullDatum } from '../lib/groupHulls';
 import { STANCE_LABEL, stanceColors } from '../lib/stance';
+import { voteSubject } from '../../shared/forecastScope';
 
 echarts.use([GraphChart, LegendComponent, TooltipComponent, TitleComponent, GridComponent, GraphicComponent, CanvasRenderer]);
 
@@ -493,7 +494,7 @@ function buildOption(
     const avg = s.internal ? s.wSum / s.internal : 0;
     const statsHtml =
       `<b style="color:${c.color}">${escapeHtml(c.label)}</b><br/>` +
-      `${ids.length} agent${ids.length === 1 ? '' : 's'} · mostly <b>${STANCE_LABEL[domStance]}</b> the forecast<br/>` +
+      `${ids.length} agent${ids.length === 1 ? '' : 's'} · mostly <b>${STANCE_LABEL[domStance]}</b> ${voteSubject(run)}<br/>` +
       `<span style="opacity:.7">shared-reasoning edges</span><br/>` +
       `within group: <b>${s.internal}</b>${s.internal ? ` · avg agreement <b>${avg.toFixed(2)}</b>` : ''}<br/>` +
       `to other groups: <b>${s.external}</b>`;
@@ -576,7 +577,7 @@ function buildOption(
             conf: number;
             keyRisk: string;
           };
-          return `${d.agent.id}<br/>${d.agent.profession} · ${d.agent.mbti} · ${d.agent.gender}<br/>verdict: <b>${STANCE_LABEL[d.stance as CouncilAgentResult['finalStance']]}s the forecast</b> · conf: <b>${d.conf}</b>/100<br/>risk: ${escapeHtml(d.keyRisk)}<br/><span style="opacity:0.7">circle size = confidence · ring colour = verdict</span>`;
+          return `${d.agent.id}<br/>${d.agent.profession} · ${d.agent.mbti} · ${d.agent.gender}<br/>verdict: <b>${STANCE_LABEL[d.stance as CouncilAgentResult['finalStance']]}s ${voteSubject(run)}</b> · conf: <b>${d.conf}</b>/100<br/>risk: ${escapeHtml(d.keyRisk)}<br/><span style="opacity:0.7">circle size = confidence · ring colour = verdict</span>`;
         }
         if (p.dataType === 'edge') {
           const e = p.data as { source: string; target: string; value: number };

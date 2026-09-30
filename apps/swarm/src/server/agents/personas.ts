@@ -73,14 +73,27 @@ export function buildSystemPrompt(
   opts: { legalJurisdiction?: LegalJurisdiction; wmtrEvidence?: string } = {},
 ): string {
   const { id, profession, mbti, gender } = agent;
+  const wmtrBlock = opts.wmtrEvidence?.trim() ?? '';
+
+  // Without a forecast the council judges the scenario itself. This brief
+  // used to announce a forecast unconditionally, so a run without one asked
+  // every agent to interrogate an artifact it was never shown.
+  const brief = wmtrBlock
+    ? `You are convened to interrogate a W(M, T, R) Nanoeconomics FORECAST. The forecast
+is the primary artifact — your job is to test whether it is trustworthy and,
+where it is not, to name the WMTR parameter most responsible for the
+mis-calibration. You do not "decide" anything; you stress-test a prediction.`
+    : `You are convened to assess a SCENARIO as it is stated: its central result,
+estimate or proposal. No simulated forecast is attached (the W(M, T, R) model
+simulates communities, and this scenario is not one), so judge it on its own
+terms from your domain. You do not "decide" anything; you test whether it holds
+up, and say so either way.`;
+
   const head = `You are agent ${id}: a ${GENDER_WORD[gender]} ${profession} in the top 1% of the top 1% of your field.
 Your cognitive style is ${mbti} — ${MBTI_SUMMARIES[mbti]}.
 Your domain anchor: ${PROFESSION_BRIEF[profession]}.
 
-You are convened to interrogate a W(M, T, R) Nanoeconomics FORECAST. The forecast
-is the primary artifact — your job is to test whether it is trustworthy and,
-where it is not, to name the WMTR parameter most responsible for the
-mis-calibration. You do not "decide" anything; you stress-test a prediction.
+${brief}
 
 Your standing brief includes the IAAI Canon below. Apply it where relevant; if a
 work directly bears on the scenario, cite it by title. If the canon is empty or
@@ -88,8 +101,6 @@ irrelevant, say so — do not fabricate.`;
 
   const canonBlock = `## IAAI Canon — apply where relevant
 ${canonText.trim() || '(canon is empty — do not fabricate citations.)'}`;
-
-  const wmtrBlock = opts.wmtrEvidence?.trim() ?? '';
 
   const interventionRule = wmtrBlock
     ? `
@@ -122,12 +133,28 @@ stance words for backwards compatibility, but they mean the following IN THIS RU
               If stance is "support", name the dominant risk it correctly captures.${interventionRule}
 
 Be terse. Engage with the simulator's actual numbers. Do not invent metrics.`
-    : `## Deliberation protocol
-- Round 1: state your independent view in <=120 words, with a confidence score 0-100.
-- Round 2: respond to peers; update or hold your view, explain why.
-- Round 3: vote: { stance: "support" | "oppose" | "abstain", confidence: 0-100, key_risk: string }.
+    : `## Deliberation protocol (scenario assessment)
 
-Be terse. No filler. No hedging caveats unless materially warranted.`;
+Vote on the SCENARIO as stated. The vote shape uses stance words for backwards
+compatibility, but they mean the following IN THIS RUN:
+  - "support"  → you TRUST it: on what is given, its central result, estimate or
+                 proposal is sound and you would rely on it. Caveats are fine;
+                 name them.
+  - "oppose"   → you DISTRUST it: something it STATES (a number, a method, an
+                 assumption) is wrong or implausible enough that it should not
+                 be relied on.
+  - "abstain"  → you are UNCERTAIN: what is given is not enough to judge.
+                 Missing detail is a reason for this, not for distrust, unless
+                 the gap would sink it whatever the detail turned out to be.
+
+- Round 1: independent view in <=120 words. End with: CONFIDENCE: <0-100>
+- Round 2: respond to peers; update or hold; explain. End with: CONFIDENCE: <0-100>
+- Round 3: JSON vote with shape { stance, confidence, key_risk }.
+  - key_risk: if stance is "oppose", the flaw in what it states; if "abstain",
+              what you would need in order to decide; if "support", the main
+              thing it gets right.
+
+Be terse. Engage with the scenario's actual numbers. Do not invent metrics.`;
 
   let tail = '';
   if (profession === 'ConspiracyTheorist') {

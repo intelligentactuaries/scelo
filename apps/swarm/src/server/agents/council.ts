@@ -2,6 +2,7 @@ import type { CouncilAgent, CouncilAgentResult, CouncilRound, Intervention, Inte
 import type { LegalJurisdiction } from '../../shared/constants';
 import { router, type Message } from '../llm/router';
 import { buildAllPersonas, buildSystemPrompt } from './personas';
+import { subjectFor } from '../../shared/forecastScope';
 
 export interface CouncilOpts {
   subset?: number;        // limit to first N agents (for fast iteration)
@@ -50,10 +51,12 @@ Read the Simulator Evidence (W(M, T, R) forecast) in your standing brief.
 Round 1 — your independent view on whether to TRUST the forecast.
 What does it get right? What does it miss for this profession's domain?
 Respond in <=120 words.`
-    : `Scenario:
+    : `Scenario (the result, estimate or proposal the council is assessing):
 ${scenario}
 
-Round 1 — your independent view. Respond in <=120 words.`;
+Round 1 — your independent view on whether to TRUST it as stated.
+What holds up? What does it miss for this profession's domain?
+Respond in <=120 words.`;
   return `${lead}
 End with a single final line in this exact format:
 CONFIDENCE: <0-100>`;
@@ -75,16 +78,17 @@ ${digest}
 Round 2 — respond to peers; update or hold your trust / distrust position;
 name the specific WMTR parameter you think is mis-calibrated (if any).
 Respond in <=140 words.`
-    : `Scenario:
+    : `Scenario (the result, estimate or proposal the council is assessing):
 ${scenario}
 
-Your round-1 view:
+Your round-1 view (on whether to trust it):
 ${yourR1}
 
 Peer digest (round-1 sample, intra- and cross-profession):
 ${digest}
 
-Round 2 — respond to peers; update or hold your view; explain why. Respond in <=140 words.`;
+Round 2 — respond to peers; update or hold your trust / distrust position; explain why.
+Respond in <=140 words.`;
   return `${lead}
 End with a single final line in this exact format:
 CONFIDENCE: <0-100>`;
@@ -109,6 +113,7 @@ export function stanceContradictsRisk(stance: string, keyRisk: string): boolean 
 }
 
 function r3Prompt(scenario: string, yourR2: string, withIntervention: boolean): string {
+  const subject = subjectFor(withIntervention);
   const baseShape = `{"stance":"support"|"oppose"|"abstain","confidence":0-100,"key_risk":"<<=120 chars>"}`;
   const interventionShape = `{"stance":"support"|"oppose"|"abstain","confidence":0-100,"key_risk":"<<=120 chars>","recommended_intervention":{"param":"alphaR","direction":"increase"|"decrease","magnitude":"small"|"large","rationale":"<<=120 chars>"}}`;
   // The stance vocabulary is NOT conditional on the intervention shape. It
@@ -122,14 +127,24 @@ function r3Prompt(scenario: string, yourR2: string, withIntervention: boolean): 
   // tenure", "misses inherent stability"), which reads as an agent arguing
   // against the forecast and then voting to trust it. Hence the worked
   // examples and the explicit self-check below.
+  // Without a forecast, distrust needs a flaw in what the scenario states. A
+  // Scelo result arrives as a few headline numbers, and "the method isn't
+  // shown" was being voted as distrust when the protocol calls it uncertain.
+  const oppose = withIntervention
+    ? `"ignores <the specific thing ${subject} leaves out>"`
+    : '"wrong on <the specific number, method or assumption that fails>"';
   const frame = `
-Stance vocabulary in THIS run (you are interrogating a forecast):
-  support = you TRUST the forecast | oppose = you DISTRUST it | abstain = insufficient evidence.
+Stance vocabulary in THIS run (you are ${withIntervention ? 'interrogating a forecast' : 'assessing the scenario as stated'}):
+  support = you TRUST ${subject} | oppose = you DISTRUST it | abstain = insufficient evidence.${
+    withIntervention
+      ? ''
+      : '\n  Missing detail alone makes you UNCERTAIN (abstain), not distrustful.'
+  }
 
 key_risk must MATCH your stance. Fill the shape from THIS scenario, in your
 own words — the angle brackets are slots, not text to reuse:
-  • support  → "captures <the specific thing that makes the forecast right here>"
-  • oppose   → "ignores <the specific thing the forecast leaves out>"
+  • support  → "captures <the specific thing that makes ${subject} right here>"
+  • oppose   → ${oppose}
   • abstain  → "no evidence on <what you would need in order to decide>"
 
 Do NOT copy the wording of these shapes; an answer that reads like the
@@ -137,7 +152,7 @@ template rather than like this scenario is wrong.
 
 Self-check before answering: a key_risk that would justify the OTHER vote is
 the wrong one. If you voted support and wrote "ignores…", you have argued
-against your own stance — rewrite it as what the forecast gets right.
+against your own stance — rewrite it as what ${subject} gets right.
 `;
 
   return `Scenario:
@@ -410,7 +425,7 @@ export async function runCouncil(
           const retry = await runAgentRound(
             agent,
             sys.get(agent.id)!,
-            `${prompt}\n\nYour previous answer voted "support" but gave "${first.key_risk}" as key_risk — that is a reason to OPPOSE, not to support. Either state what the forecast gets RIGHT, or change your stance to "oppose". Respond with the JSON only.`,
+            `${prompt}\n\nYour previous answer voted "support" but gave "${first.key_risk}" as key_risk — that is a reason to OPPOSE, not to support. Either state what ${subjectFor(withIntervention)} gets RIGHT, or change your stance to "oppose". Respond with the JSON only.`,
             3,
             R3_MAX,
             // Bypass the cache: the same prompt just produced the reply we

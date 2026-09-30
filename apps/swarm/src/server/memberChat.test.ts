@@ -12,6 +12,7 @@ import {
   parseRestatedPosition,
   stripRestatedFooter,
 } from './memberChat';
+import { runWmtrForScenario } from './wmtr';
 
 const council: CouncilAgentResult = {
   agent: { id: 'c-actuary-intj-f', profession: 'Actuary', mbti: 'INTJ', gender: 'F' },
@@ -50,9 +51,13 @@ const society: SocietyAgentResult = {
   cluster: 2,
 };
 
+const scenario = 'A township savings cooperative faces a 30% drop in remittances over five years.';
+
 const run: Run = {
   id: 'run-test',
-  scenario: 'A township savings cooperative faces a 30% drop in remittances over five years.',
+  scenario,
+  // A community scenario, so the run carries the forecast the council voted on.
+  wmtr: runWmtrForScenario(scenario),
   societyParams: {} as Run['societyParams'],
   providerPrefs: { councilProvider: 'auto', societyProvider: 'auto', chatProvider: 'auto' },
   createdAt: 0,
@@ -97,6 +102,22 @@ describe('council interview prompt', () => {
     expect(system).toContain('Recorded verdict: TRUST the forecast, confidence 72/100');
     // the raw vote JSON is not echoed as prose
     expect(system).not.toContain('"stance":"support"');
+  });
+  test('a run without a forecast is about the scenario, with no WMTR levers', () => {
+    const plain: Run = {
+      ...run,
+      scenario: 'A pension fund weighs an 8% allocation to a levered EM infrastructure REIT.',
+      wmtr: undefined,
+      councilResults: [{ ...council, intervention: undefined }],
+    };
+    const { system: s } = buildMemberInterviewPrompt(plain, findMember(plain, 'c-actuary-intj-f')!);
+    expect(s).toContain('Round 3 — VOTE: TRUST the scenario, confidence 72');
+    expect(s).toContain('Recorded verdict: TRUST the scenario, confidence 72/100');
+    expect(s).toContain('TRUST / DISTRUST / UNCERTAIN about the scenario');
+    expect(s).toContain('No simulated forecast is attached');
+    expect(s).not.toContain('Recommended WMTR intervention');
+    expect(s).not.toContain('WMTR parameter re-calibration');
+    expect(s).not.toContain('the simulator evidence');
   });
   test("falls back to the profession's toolkit when no justification is recorded", () => {
     expect(system).toContain('TOOLKIT (Actuary)');

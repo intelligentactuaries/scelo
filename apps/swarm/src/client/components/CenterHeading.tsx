@@ -3,6 +3,7 @@ import { clusterRisks } from '../../shared/risks';
 import { colorsForTheme } from '../../shared/constants';
 import { useTheme } from '../lib/theme';
 import type { TabId } from './ViewTabs';
+import type { VoteSubject } from '../../shared/forecastScope';
 
 type Props = {
   scenario: string | null;
@@ -15,6 +16,8 @@ type Props = {
   /** Per-agent votes, used to explain the dominant stance from the votes
    *  that produced it. */
   councilResults?: CouncilAgentResult[];
+  /** What the council voted on: the forecast, or the scenario when none ran. */
+  subject?: VoteSubject;
   tab: TabId;
   /** Reveal the refine bar prefilled with this run's scenario. Omitted on
    *  surfaces where there is nothing to edit. */
@@ -37,6 +40,7 @@ export function CenterHeading({
   scenarioSummary,
   summary,
   councilResults,
+  subject = 'the forecast',
   tab,
   onEditScenario,
   onNewScenario,
@@ -72,7 +76,7 @@ export function CenterHeading({
           {text}
         </div>
         {summary && (
-          <StanceDominantPill summary={summary} councilResults={councilResults} />
+          <StanceDominantPill summary={summary} councilResults={councilResults} subject={subject} />
         )}
         {/* The scenario is otherwise read-only once a run exists: the composer
             that created it is only rendered in the empty state, so there was
@@ -171,12 +175,15 @@ function explainStance(
 function StanceDominantPill({
   summary,
   councilResults,
+  subject,
 }: {
   summary: RunSummary;
   councilResults?: CouncilAgentResult[];
+  subject: VoteSubject;
 }) {
-  // In this run the council votes on the FORECAST, not on a proposition.
-  // We reuse the existing stance vocabulary but re-label for that frame:
+  // The council votes on the forecast, or on the scenario itself when no
+  // forecast ran (shared/forecastScope.ts). The stored stance vocabulary is
+  // re-labelled for that frame:
   //   support → trust   |   oppose → distrust   |   abstain → uncertain.
   const { resolved } = useTheme();
   const colors = colorsForTheme(resolved);
@@ -210,13 +217,13 @@ function StanceDominantPill({
       className="stance-dominant-pill"
       tabIndex={0}
       role="img"
-      aria-label={`Council readback: ${dominant.label} the forecast at ${dominant.pct}%. Trust ${summary.supportPct}%, distrust ${summary.opposePct}%, uncertain ${summary.abstainPct}%.${spoken}`}
+      aria-label={`Council readback: ${dominant.label} ${subject} at ${dominant.pct}%. Trust ${summary.supportPct}%, distrust ${summary.opposePct}%, uncertain ${summary.abstainPct}%.${spoken}`}
     >
       <span className="stance-dot" style={{ background: dominant.color }} aria-hidden="true" />
       <span className="stance-pill-label">{dominant.label}</span>
       <span className="stance-pill-pct num">{dominant.pct}%</span>
       <div className="stance-popup" role="tooltip">
-        <div className="stance-popup-title">council trust in forecast</div>
+        <div className="stance-popup-title">council trust in {subject.replace('the ', '')}</div>
         <div className="stance-popup-bar">
           {entries.map((e) => (
             <div

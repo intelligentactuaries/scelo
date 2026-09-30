@@ -10,6 +10,7 @@
 // numbers on the canvas — never boilerplate that could drift from the data.
 
 import type { Run } from '../../shared/types';
+import { voteSubject } from '../../shared/forecastScope';
 
 const pct = (n: number | undefined) => `${Math.round(n ?? 0)}%`;
 
@@ -19,12 +20,12 @@ export function explainCouncilGraph(run: Run): string {
   const profs = new Set(run.councilResults.map((r) => r.agent.profession)).size;
   const s = run.summary;
   const verdictLine = s
-    ? ` Bottom line here: ${pct(s.opposePct)} of the council distrusts the forecast, ${pct(s.supportPct)} trusts it, ${pct(s.abstainPct)} is undecided.`
+    ? ` Bottom line here: ${pct(s.opposePct)} of the council distrusts ${voteSubject(run)}, ${pct(s.supportPct)} trusts it, ${pct(s.abstainPct)} is undecided.`
     : '';
   return (
     `Each circle is one adviser — ${n} in total, seated in ${profs} profession groups. ` +
     `A bigger circle means that adviser is more confident in their own verdict (0–100). ` +
-    `The ring colour is the verdict itself: green trusts the forecast, red distrusts it, amber is undecided. ` +
+    `The ring colour is the verdict itself: green trusts ${voteSubject(run)}, red distrusts it, amber is undecided. ` +
     `Lines join advisers whose written reasons overlap — the thicker the line, the closer their thinking.` +
     verdictLine
   );
@@ -38,7 +39,7 @@ export function explainCouncilSankey(run: Run): string {
     ? ` Across all ${n} advisers: ${pct(s.supportPct)} trust · ${pct(s.opposePct)} distrust · ${pct(s.abstainPct)} undecided.`
     : '';
   return (
-    `Read it left to right. Each profession's band flows into its verdict on the forecast (trust or distrust), ` +
+    `Read it left to right. Each profession's band flows into its verdict on ${voteSubject(run)} (trust or distrust), ` +
     `then into how sure those advisers are (the confidence bands on the right). ` +
     `A thicker band simply means more advisers took that path — so a profession whose band splits is divided internally.` +
     split
@@ -59,7 +60,7 @@ export function explainSocietyGraph(run: Run): string {
     : '';
   return (
     `Each dot is one simulated citizen — ${size} in this sample${k ? `, grouped into ${k} circles of look-alike neighbours (similar age, income, education, work)` : ''}. ` +
-    `The dot's colour is their reaction to the forecast, from enthusiastic (green) through neutral (grey) to hostile (red); ` +
+    `The dot's colour is their reaction to the scenario, from enthusiastic (green) through neutral (grey) to hostile (red); ` +
     `a bigger dot feels it more strongly (0–100). Hover any dot to read that person's own words.` +
     tail
   );
@@ -70,7 +71,7 @@ export function explainSocietySankey(run: Run): string {
   const soc = run.societySummary;
   if (!soc) {
     return (
-      `Read it left to right. Each cluster of citizens flows into how they feel about the forecast, ` +
+      `Read it left to right. Each cluster of citizens flows into how they feel about the scenario, ` +
       `then into how strongly they feel it. Thicker bands = more people.`
     );
   }
@@ -82,7 +83,7 @@ export function explainSocietySankey(run: Run): string {
       ? ` The single biggest feeling is ${top[0]} — ${Math.round(((top[1] ?? 0) / soc.size) * 100)}% of the ${soc.size} sampled.`
       : '';
   return (
-    `Read it left to right. Each cluster of citizens flows into how they feel about the forecast, ` +
+    `Read it left to right. Each cluster of citizens flows into how they feel about the scenario, ` +
     `then into how strongly they feel it (intensity, 0–100). Thicker bands = more people; ` +
     `average intensity across the sample is ${Math.round(soc.averageIntensity)}/100.` +
     topLine
@@ -93,9 +94,9 @@ export function explainSocietySankey(run: Run): string {
 export function explainSynthesisTrust(run: Run): string {
   const s = run.summary;
   const n = run.councilResults.length;
-  if (!s) return `The council's verdict at a glance: green trusts the forecast, red distrusts, grey is undecided.`;
+  if (!s) return `The council's verdict at a glance: green trusts ${voteSubject(run)}, red distrusts, grey is undecided.`;
   return (
-    `The council's verdict at a glance: of ${n} advisers, ${pct(s.supportPct)} trust the forecast (green), ` +
+    `The council's verdict at a glance: of ${n} advisers, ${pct(s.supportPct)} trust ${voteSubject(run)} (green), ` +
     `${pct(s.opposePct)} distrust it (red) and ${pct(s.abstainPct)} are undecided (grey). ` +
     `Consensus ${s.consensusScore}/100 just means ${s.consensusScore}% sit with the majority view — ` +
     `the higher it is, the less argument there was.`
@@ -127,7 +128,7 @@ export function explainSynthesisByProfession(run: Run): string {
       ? ` The most sceptical group here is ${sceptic} (${Math.round(bestShare * 100)}% distrust).`
       : '';
   return (
-    `One row per profession: how many of its advisers trust, distrust, or can't decide on the forecast. ` +
+    `One row per profession: how many of its advisers trust, distrust, or can't decide on ${voteSubject(run)}. ` +
     `A row split across columns means that profession disagrees with itself — those advisers' notes are usually ` +
     `the most useful reading.` +
     scepticLine

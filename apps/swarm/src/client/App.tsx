@@ -36,6 +36,7 @@ import { DecisionSankey } from './components/DecisionSankey';
 import { SocietySankey, absentSentiments } from './components/SocietySankey';
 import { SankeySegmentInspector } from './components/SankeySegmentInspector';
 import { CenterHeading } from './components/CenterHeading';
+import { voteSubject } from '../shared/forecastScope';
 import {
   PanelLeftIcon,
   PanelRightIcon,
@@ -1281,6 +1282,7 @@ export function App() {
               scenarioSummary={run?.scenarioSummary ?? null}
               summary={run?.summary ?? null}
               councilResults={run?.councilResults}
+              subject={run ? voteSubject(run) : undefined}
               tab={tab}
               busy={runBusy}
               onEditScenario={run ? editScenario : undefined}
@@ -1510,7 +1512,7 @@ export function App() {
                           role="note"
                           aria-label={`council readback. ${explainCouncilSankey(run)}`}
                         >
-                          council readback · profession → trust the forecast? → confidence
+                          council readback · profession → trust {voteSubject(run)}? → confidence
                         </div>
                         <DecisionSankey
                           run={run}
@@ -1581,7 +1583,7 @@ export function App() {
                           role="note"
                           aria-label={`society reactions. ${explainSocietySankey(run)}`}
                         >
-                          society reactions to the forecast · cluster → sentiment → intensity
+                          society reactions to the scenario · cluster → sentiment → intensity
                           {run && absentSentiments(run).length > 0 && (
                             <span className="muted">
                               {' · no '}

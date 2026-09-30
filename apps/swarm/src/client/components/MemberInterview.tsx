@@ -58,7 +58,7 @@ const COUNCIL_PROBES = [
 const SOCIETY_PROBES = [
   'Why do you feel that way about it?',
   'What in your own life makes you react like this?',
-  'If someone told you the forecast was wrong, would you feel differently?',
+  'If someone told you it was wrong, would you feel differently?',
   'What would make you feel more positive about it?',
 ];
 

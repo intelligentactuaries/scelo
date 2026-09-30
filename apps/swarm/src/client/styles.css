@@ -4356,6 +4356,16 @@ body.is-resizing * {
   color: var(--muted);
 }
 
+/* A run whose scenario isn't a community: why there's no forecast, above
+   the council readback that is its result. */
+.forecast-scope-note {
+  margin: 0;
+  max-width: 72ch;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--muted);
+}
+
 .forecast-empty-eyebrow {
   font-size: 11px;
   letter-spacing: var(--track);

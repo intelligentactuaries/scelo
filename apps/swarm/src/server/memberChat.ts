@@ -29,6 +29,7 @@ import { buildCondensedCanon } from './iaai';
 import { buildSystemPrompt as buildCouncilPersonaPrompt } from './agents/personas';
 import { describeSocietyAgent } from './agents/society';
 import { buildEvidenceBlock } from './wmtr';
+import { voteSubject } from '../shared/forecastScope';
 import { readJustification } from './justify';
 import { JUSTIFICATION_TOOLKITS } from './agents/toolkits';
 
@@ -96,6 +97,9 @@ function councilInterviewPrompt(
 ): { system: string; recorded: { label: string; score: number } } {
   const canon = buildCondensedCanon();
   const evidence = run.wmtr ? buildEvidenceBlock(run.wmtr.config, run.wmtr.result) : undefined;
+  // What the vote was about (shared/forecastScope.ts); a run without a
+  // forecast voted on the scenario itself and has no WMTR parameters to move.
+  const subject = voteSubject(run);
   // The very brief the agent deliberated with — persona, canon, evidence,
   // protocol. Putting the interview on top of it keeps the voice and the
   // frame identical to the run.
@@ -110,7 +114,7 @@ function councilInterviewPrompt(
     .map((rd) => {
       const head =
         rd.round === 3
-          ? `Round 3 — VOTE: ${STANCE_WORD[rd.stance ?? r.finalStance].toUpperCase()} the forecast, confidence ${rd.confidence}${rd.keyRisk ? ` · key_risk: "${clean(rd.keyRisk, 200)}"` : ''}`
+          ? `Round 3 — VOTE: ${STANCE_WORD[rd.stance ?? r.finalStance].toUpperCase()} ${subject}, confidence ${rd.confidence}${rd.keyRisk ? ` · key_risk: "${clean(rd.keyRisk, 200)}"` : ''}`
           : `Round ${rd.round} (${rd.round === 1 ? 'independent view' : 'after the peer digest'}, confidence ${rd.confidence})`;
       const body = rd.round === 3 ? clean(stripJson(rd.content), 400) : clean(rd.content, 900);
       return `${head}${body ? `\n  "${body}"` : ''}`;
@@ -119,7 +123,9 @@ function councilInterviewPrompt(
 
   const interv = r.intervention
     ? `Recommended WMTR intervention: ${r.intervention.direction} ${r.intervention.param} (${r.intervention.magnitude}) — "${clean(r.intervention.rationale, 200)}"`
-    : 'Recommended WMTR intervention: none.';
+    : run.wmtr
+      ? 'Recommended WMTR intervention: none.'
+      : '';
 
   const just = readJustification(run.id, r.agent.id);
   let theory: string;
@@ -157,18 +163,17 @@ An auditor (the professor, or someone checking the professor's work) is intervie
 
 ### Your record in this run
 Scenario: ${clean(run.scenario, 1500)}
-${rounds}
-${interv}
-Recorded verdict: ${stanceWord.toUpperCase()} the forecast, confidence ${r.finalConfidence}/100.
+${rounds}${interv ? `\n${interv}` : ''}
+Recorded verdict: ${stanceWord.toUpperCase()} ${subject}, confidence ${r.finalConfidence}/100.
 
 ${theory}
 
 ### Rules for this interview
 1. Speak in the first person as ${r.agent.id} — a ${r.agent.gender === 'F' ? 'female' : 'male'} ${r.agent.profession}, cognitive style ${r.agent.mbti} (${MBTI_SUMMARIES[r.agent.mbti]}). Keep that voice and that profession's way of thinking throughout.
 2. Your recorded verdict is ${stanceWord.toUpperCase()} at ${r.finalConfidence}. Everything you say must be consistent with it and with your three rounds. Elaborate, give examples, walk through the reasoning and the ${r.agent.profession} theory behind it — but never contradict the record. If a question exposes a tension between rounds (say, round 1 leaned the other way), acknowledge it and explain what moved you, exactly as the record shows; do not paper over it.
-3. If the interviewer pushes you to change your vote: you may concede a specific point, but the recorded vote stands for this run. Say precisely what evidence — or which WMTR parameter re-calibration — WOULD change it, and roughly how far your confidence would move. If, and only if, you decide a change is genuinely warranted, say so explicitly in words and reflect it in the final line.
-4. Facts: use only the scenario, the simulator evidence, the IAAI canon and your record. Do not invent numbers, peers' quotes, or sources. If you do not know something, say so as yourself.
-5. Vocabulary: say TRUST / DISTRUST / UNCERTAIN about the forecast (never "support" / "oppose").
+3. If the interviewer pushes you to change your vote: you may concede a specific point, but the recorded vote stands for this run. Say precisely what evidence${run.wmtr ? ' — or which WMTR parameter re-calibration —' : ''} WOULD change it, and roughly how far your confidence would move. If, and only if, you decide a change is genuinely warranted, say so explicitly in words and reflect it in the final line.
+4. Facts: use only the scenario, ${run.wmtr ? 'the simulator evidence, ' : ''}the IAAI canon and your record. Do not invent numbers, peers' quotes, or sources. If you do not know something, say so as yourself.
+5. Vocabulary: say TRUST / DISTRUST / UNCERTAIN about ${subject} (never "support" / "oppose").
 6. Be concise — at most 160 words per reply unless the interviewer asks you to expand. No filler, no preamble.
 7. Formulas and theory: this is a conversation, not the justification form. Name the theory and, when a formula helps, write it inline in plain notation (e.g. "P = 1000·A¹x:n / äx:n", "δ = ln(1.23)/60 ≈ 0.35 % a year") with the scenario's numbers plugged in. Never emit JSON objects, code fences or LaTeX macros in a reply.
 8. End EVERY reply with one final line, exactly in this form and nothing after it:

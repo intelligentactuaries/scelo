@@ -280,8 +280,8 @@ interface StartRunBody {
   canon?: string;
   legalJurisdiction?: LegalJurisdiction;
   justifyAll?: boolean;
-  /** Optional. Default true — run the WMTR Monte Carlo before the council so
-   *  its evidence injects into every agent's prompt. */
+  /** Optional. Unset: run the WMTR Monte Carlo before the council when the
+   *  scenario is a community it can model; true forces it, false skips it. */
   wmtrEnabled?: boolean;
 }
 

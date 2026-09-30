@@ -14,6 +14,7 @@ import { colorsForTheme } from '../../shared/constants';
 import { useTheme } from '../lib/theme';
 import { PauseIcon, PlayIcon, StopIcon } from './Icons';
 import { voiceFor } from '../lib/forecastVoice';
+import { forecastAppliesTo, voteSubject } from '../../shared/forecastScope';
 import {
   InterventionRow,
   MIX_ORDER,
@@ -161,6 +162,32 @@ export function ForecastCanvas({
   );
 
   if (!wmtr) {
+    // A scenario that is not a community gives the W(M,T,R) engine nothing to
+    // simulate (shared/forecastScope.ts), so the council judged the scenario
+    // as stated. That readback is the run's result, so it heads the tab
+    // rather than an empty "no forecast" line.
+    if (!forecastAppliesTo(run.scenario)) {
+      return (
+        <div className="forecast-canvas">
+          <header className="forecast-verdict">
+            <div className="forecast-eyebrow">
+              <span className="forecast-eyebrow-dot" /> forecast · not applicable
+            </div>
+            <p className="forecast-scope-note">
+              The W(M, T, R) model simulates a community: people, and the money, time and
+              relationships that carry them. This scenario is not one, so no forecast was run and
+              the council judged the scenario as stated.
+            </p>
+          </header>
+          <CouncilReadback
+            run={run}
+            onShowCouncil={onShowCouncil}
+            onShowSociety={onShowSociety}
+            onShowSynthesis={onShowSynthesis}
+          />
+        </div>
+      );
+    }
     return (
       <div className="forecast-canvas forecast-canvas--empty">
         <div className="forecast-empty">
@@ -398,6 +425,7 @@ function CouncilReadback({
   onShowSynthesis?: () => void;
 }) {
   const total = run.councilResults.length;
+  const subject = voteSubject(run);
 
   // Stance interpretation in the forecast frame:
   //   support → trust the forecast
@@ -435,7 +463,7 @@ function CouncilReadback({
           <span className="forecast-eyebrow-dot" /> council readback
         </span>
         <span className="forecast-readback-pending">
-          council pending… swarm will react to this forecast once round 3 lands.
+          council pending… swarm will react to {subject} once round 3 lands.
         </span>
       </section>
     );
@@ -444,23 +472,27 @@ function CouncilReadback({
   return (
     <section className="forecast-readback">
       <div className="forecast-readback-eyebrow">
-        <span className="forecast-eyebrow-dot" /> council readback on this forecast
+        <span className="forecast-eyebrow-dot" /> council readback on{' '}
+        {run.wmtr ? 'this forecast' : 'this scenario'}
       </div>
 
       <div className="forecast-readback-row">
         <ReadbackStat
           big={`${trustPct}%`}
-          label="trust the forecast"
+          label={`trust ${subject}`}
           sub={`${distrustPct ?? 0}% distrust · ${total} agents`}
           onClick={onShowCouncil}
         />
-        <ReadbackStat
-          big={topCluster ? `${topCluster.direction === 'increase' ? '↑' : '↓'} ${paramShortLabel(topCluster.param)}` : '—'}
-          label="dominant proposed shift"
-          sub={topCluster ? `${topCluster.count} agents · ${topCluster.magnitude}` : 'no intervention consensus'}
-          accent
-          onClick={onShowSynthesis}
-        />
+        {/* Shifts are WMTR parameter changes; a run without a forecast has none. */}
+        {run.wmtr && (
+          <ReadbackStat
+            big={topCluster ? `${topCluster.direction === 'increase' ? '↑' : '↓'} ${paramShortLabel(topCluster.param)}` : '—'}
+            label="dominant proposed shift"
+            sub={topCluster ? `${topCluster.count} agents · ${topCluster.magnitude}` : 'no intervention consensus'}
+            accent
+            onClick={onShowSynthesis}
+          />
+        )}
         {societyPositive !== null && (
           <ReadbackStat
             big={`${societyPositive}%`}

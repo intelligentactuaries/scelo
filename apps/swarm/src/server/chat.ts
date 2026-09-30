@@ -1,25 +1,41 @@
 import type { Run } from '../shared/types';
+import { voteSubject } from '../shared/forecastScope';
 import { db } from './db';
 import { router, type Message } from './llm/router';
 import { getRun } from './runs';
 import { buildCondensedCanon } from './iaai';
 import { listJustifications } from './justify';
 
-const SYSTEM = `You are the SWARM COUNCIL chatbot.
-
-The professor ran a W(M,T,R) Nanoeconomics FORECAST for a scenario, then convened
+// The council votes on the forecast when one was simulated, and on the
+// scenario as stated when it was not (shared/forecastScope.ts), so the brief
+// names whichever one this run's votes are about.
+function systemFor(run: Run): string {
+  const subject = voteSubject(run);
+  const setup = run.wmtr
+    ? `The professor ran a W(M,T,R) Nanoeconomics FORECAST for a scenario, then convened
 a council of expert agents (professions × MBTI × gender; the exact roster is in
 the data below) to interrogate whether that forecast is trustworthy, plus an
 optional society sample reacting to it. The full run state is provided below as
-structured data.
+structured data.`
+    : `The professor put a scenario to a council of expert agents (professions × MBTI ×
+gender; the exact roster is in the data below) to judge whether it holds up as
+stated, plus an optional society sample reacting to it. No W(M,T,R) forecast was
+run: the model simulates communities, and this scenario is not one. The full run
+state is provided below as structured data.`;
+  const reporting = run.wmtr
+    ? 'what the forecast predicts and what the swarm said about it'
+    : 'what the swarm said about the scenario';
+  return `You are the SWARM COUNCIL chatbot.
+
+${setup}
 
 Rules:
 - Answer ONLY from the data provided. If the data does not contain what is asked,
   say so plainly — do NOT invent agents, quotes, or numbers.
 - Stance vocabulary: the stored votes read support/oppose/abstain, but they mean
-  TRUST / DISTRUST / UNCERTAIN about the forecast — and that is how the UI labels
-  them. Prefer the trust wording in your answers ("22 agents distrust the
-  forecast"), keeping ids and quoted data verbatim.
+  TRUST / DISTRUST / UNCERTAIN about ${subject} — and that is how the UI labels
+  them. Prefer the trust wording in your answers ("22 agents distrust
+  ${subject}"), keeping ids and quoted data verbatim.
 - Cite agents by their id (e.g. c-actuary-intj-f) when relevant.
 - When the Justifications section is present, you can answer queries like "which
   lawyers cited the Companies Act" or "which actuaries used Bornhuetter-Ferguson"
@@ -29,8 +45,8 @@ Rules:
   questions like "what is the Finance group's position" or "summarise the
   lawyers' collective view".
 - Be terse. No filler. No hedging caveats unless materially warranted.
-- The swarm does NOT make the decision; you are reporting on what the forecast
-  predicts and what the swarm said about it so the professor can decide.`;
+- The swarm does NOT make the decision; you are reporting on ${reporting} so the professor can decide.`;
+}
 
 export function buildChatContext(run: Run): string {
   const lines: string[] = [];
@@ -72,7 +88,7 @@ export function buildChatContext(run: Run): string {
   }
 
   if (run.summary) {
-    lines.push('\n## Council synthesis (verdict on the forecast)');
+    lines.push(`\n## Council synthesis (verdict on ${voteSubject(run)})`);
     lines.push(
       `trust: ${run.summary.supportPct}%   distrust: ${run.summary.opposePct}%   uncertain: ${run.summary.abstainPct}%`,
     );
@@ -246,7 +262,7 @@ export async function* streamChat(
 
   const context = buildChatContext(run);
   const messages: Message[] = [
-    { role: 'system', content: `${SYSTEM}\n\n${context}` },
+    { role: 'system', content: `${systemFor(run)}\n\n${context}` },
     ...history.slice(-8).map((m) => ({ role: m.role, content: m.content })),
     { role: 'user', content: message },
   ];

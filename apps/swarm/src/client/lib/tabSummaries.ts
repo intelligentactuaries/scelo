@@ -9,6 +9,7 @@
 
 import type { Run } from '../../shared/types';
 import { clusterRisks } from '../../shared/risks';
+import { forecastAppliesTo, voteSubject } from '../../shared/forecastScope';
 import {
   explainComponents,
   explainDriverBridge,
@@ -37,6 +38,9 @@ export function summariesFor(
 
   switch (tab) {
     case 'forecast':
+      if (run && !w && !forecastAppliesTo(run.scenario)) {
+        return ['not applicable: no community to simulate', 'the council judged the scenario as stated'];
+      }
       if (!run || !w) return [extras.busy ? 'forecast running…' : 'no forecast yet'];
       return [
         lead(explainOutcomeGauge(w, run.scenario)),
@@ -48,7 +52,7 @@ export function summariesFor(
       if (!run || !s) return [extras.busy ? 'the council is deliberating…' : 'council has not reported'];
       const top = clusterRisks(run.councilResults.map((r) => r.keyRisk))[0];
       return [
-        `${pct(s.supportPct)} trust the forecast · ${run.councilResults.length} agents`,
+        `${pct(s.supportPct)} trust ${voteSubject(run)} · ${run.councilResults.length} agents`,
         `${s.dissentingAgentIds.length} dissent from the majority`,
         top ? `most-cited risk: ${top.risk} (${top.count})` : 'no risks stated',
       ];
