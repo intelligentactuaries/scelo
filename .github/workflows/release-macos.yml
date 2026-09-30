@@ -4,6 +4,9 @@
 #
 #   gh workflow run release-macos.yml -f tag=scelo-ide-v0.2.0
 #
+# `-f ref=<sha>` builds a later commit of the same version instead of the tag
+# (0.2.0's dmg: the tag plus the macOS OpenMP fix for LightGBM).
+#
 # Unsigned: there is no Apple Developer ID yet. Apple Silicon refuses to run
 # code with no signature at all, so the app is ad-hoc signed after packaging
 # (electron-builder's own signing is switched off), and it is not notarised —
@@ -18,6 +21,10 @@ on:
       tag:
         description: Release tag to build and attach the .dmg to (e.g. scelo-ide-v0.2.0)
         required: true
+      ref:
+        description: Commit to build instead of the tag itself, when a macOS-only fix landed after tagging (same version)
+        required: false
+        default: ""
 
 permissions:
   contents: write
@@ -33,7 +40,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.tag }}
+          ref: ${{ inputs.ref || inputs.tag }}
 
       - uses: oven-sh/setup-bun@v2
         with:

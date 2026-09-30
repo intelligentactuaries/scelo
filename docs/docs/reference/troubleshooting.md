@@ -69,11 +69,12 @@ see [Linux installation](../installation/linux.md).
 ## Windows / macOS: "unknown publisher", or macOS blocks the app
 
 The installers are not code-signed yet. On Windows, choose **More info → Run
-anyway**. On macOS, allow the app once under **System Settings → Privacy &
-Security → Open Anyway** (or Control-click → **Open** on macOS 14). If macOS
-calls it **"damaged and can't be opened"**, the download's quarantine flag is
-the cause, not the file; clear it with
-`xattr -dr com.apple.quarantine "/Applications/Scelo IDE.app"`. Step by step:
+anyway**. On macOS, clear the download's quarantine flag once with
+`xattr -dr com.apple.quarantine "/Applications/Scelo IDE.app"`: it covers the
+app and the Python, R and swarm programs inside it, and it is also the fix when
+macOS calls the app **"damaged and can't be opened"**. (Allowing the app under
+**System Settings → Privacy & Security → Open Anyway** works for the app
+itself.) Step by step:
 [Windows & macOS](../installation/windows-macos.md#one-click-installer).
 
 ## R bridges fail on Linux ("libR.so: cannot open shared object file")

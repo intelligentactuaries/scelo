@@ -24,24 +24,24 @@ the download tile always points at the newest build for your platform.
 
     1. Download the `.dmg` from the macOS tile and open it.
     2. Drag **Scelo IDE** onto **Applications**.
-    3. Open it once and allow it. The app is not signed or notarised by Apple
-       yet, so Gatekeeper stops the first launch:
+    3. Clear the download flag once, in **Terminal**. The app is not signed or
+       notarised by Apple yet, so macOS quarantines it; this lifts that for
+       the app and for the Python, R and swarm programs bundled inside it:
 
-        - **macOS 15 Sequoia and later:** open Scelo IDE, close the warning,
-          then go to **System Settings → Privacy & Security**, scroll to
-          *"Scelo IDE" was blocked…* and click **Open Anyway**, then confirm.
-        - **macOS 14 Sonoma:** in **Applications**, Control-click (right-click)
-          Scelo IDE, choose **Open**, then **Open** again.
+        ```bash
+        xattr -dr com.apple.quarantine "/Applications/Scelo IDE.app"
+        ```
 
-        After that it opens normally.
+    4. Open Scelo IDE from Applications.
 
-    If macOS instead says Scelo IDE **"is damaged and can't be opened"**,
-    that is the quarantine flag on an unsigned download, not a broken file.
-    Clear it once in Terminal, then open the app:
+    **Without Terminal:** open Scelo IDE, close the warning, then go to
+    **System Settings → Privacy & Security**, scroll to *"Scelo IDE" was
+    blocked…* and click **Open Anyway** (on macOS 14 you can instead
+    Control-click the app and choose **Open**). If Scelo then reports that its
+    Python, R or swarm cannot start, run the command in step 3.
 
-    ```bash
-    xattr -dr com.apple.quarantine "/Applications/Scelo IDE.app"
-    ```
+    If macOS says Scelo IDE **"is damaged and can't be opened"**, that is the
+    same quarantine flag, not a broken file: step 3 fixes it.
 
 ## Build the latest on your own machine
 

@@ -49,8 +49,9 @@ Downloaded installers are not yet code-signed, so:
 
 - **Windows** SmartScreen warns on first launch (choose *More info → Run
   anyway*).
-- **macOS** Gatekeeper blocks the first launch until you allow it once — see
-  the [macOS steps](windows-macos.md#one-click-installer).
+- **macOS** quarantines the unsigned app: clear the flag once (one Terminal
+  command) or allow it in Privacy & Security — see the
+  [macOS steps](windows-macos.md#one-click-installer).
 - A side-loaded Linux `.deb` shows "third party" in App Center.
 
 The **verified, signed** way to install on Linux is the **apt repository** —

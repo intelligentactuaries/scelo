@@ -66,9 +66,10 @@ always links each platform's newest build. To build one yourself, see
 Caveats worth knowing before you download:
 
 - **Not code-signed yet** — Windows SmartScreen warns on first launch
-  (**More info → Run anyway**), and macOS blocks the first launch until you
-  allow it under **System Settings → Privacy & Security → Open Anyway** (steps
-  in the [install guide](https://docs.intelligentactuaries.com/scelo/installation/windows-macos/)).
+  (**More info → Run anyway**). On macOS, clear the download's quarantine flag
+  once: `xattr -dr com.apple.quarantine "/Applications/Scelo IDE.app"` (or use
+  **Open Anyway** in Privacy & Security; steps in the
+  [install guide](https://docs.intelligentactuaries.com/scelo/installation/windows-macos/)).
 - **R on Linux needs Ubuntu 24.04.** The bundled R is Ubuntu 24.04's, repacked,
   and loads its system libraries (a default `apt install` pulls them in via the
   recommended `r-base-core`). On 22.04 everything but the R bridges works.

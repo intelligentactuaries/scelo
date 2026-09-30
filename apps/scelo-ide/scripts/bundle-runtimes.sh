@@ -165,6 +165,44 @@ if MARK not in src:
 print("  ✓ climada: legacy GDAL import made lazy")
 PY
 
+  # LightGBM's wheels do not carry the OpenMP runtime they link, so on a
+  # machine without it `import lightgbm` fails (on Linux the .deb depends on
+  # libgomp1 instead). scikit-learn's wheels do carry one; LightGBM is pointed
+  # at that. Exactly one OpenMP runtime may load per process — two copies
+  # abort with "OMP: Error #15".
+  local site
+  site="$(PYTHONNOUSERSITE=1 PYTHONPATH= "$py_bin" -I -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')"
+  [ "$TARGET_OS" = "win" ] && command -v cygpath >/dev/null 2>&1 && site="$(cygpath -u "$site")"
+  case "$TARGET_OS" in
+    mac)
+      # lib_lightgbm.dylib loads @rpath/libomp.dylib with rpaths only into
+      # Homebrew and MacPorts. Swap them for scikit-learn's bundled copy (the
+      # same file sklearn loads, so dyld maps it once) and re-sign, since
+      # editing a Mach-O voids its signature.
+      local lgb="$site/lightgbm/lib/lib_lightgbm.dylib" rp
+      if [ -f "$lgb" ] && [ -f "$site/sklearn/.dylibs/libomp.dylib" ]; then
+        for rp in $(otool -l "$lgb" | awk '/cmd LC_RPATH/ {getline; getline; print $2}'); do
+          [ "$rp" = "@loader_path/../../sklearn/.dylibs" ] || install_name_tool -delete_rpath "$rp" "$lgb"
+        done
+        otool -l "$lgb" | grep -q "@loader_path/../../sklearn/.dylibs" \
+          || install_name_tool -add_rpath "@loader_path/../../sklearn/.dylibs" "$lgb"
+        codesign --force --sign - "$lgb"
+        echo "  ✓ lightgbm: OpenMP from scikit-learn's bundled libomp"
+      fi
+      ;;
+    win)
+      # lib_lightgbm.dll needs vcomp140.dll (and msvcp140.dll), which a fresh
+      # Windows does not have. ctypes searches the DLL's own folder, and
+      # Windows maps an already-loaded DLL by name, so copies there still
+      # give one runtime alongside scikit-learn's.
+      if [ -f "$site/lightgbm/bin/lib_lightgbm.dll" ] && [ -f "$site/sklearn/.libs/vcomp140.dll" ]; then
+        cp -f "$site/sklearn/.libs/vcomp140.dll" "$site/lightgbm/bin/"
+        [ -f "$site/sklearn/.libs/msvcp140.dll" ] && cp -f "$site/sklearn/.libs/msvcp140.dll" "$site/lightgbm/bin/"
+        echo "  ✓ lightgbm: MSVC OpenMP runtime copied from scikit-learn"
+      fi
+      ;;
+  esac
+
   # LSP-lite tooling: pyright for in-editor diagnostics on save (Phase 6).
   # Tolerates failure — the editor falls back to no-lint mode gracefully.
   PYTHONNOUSERSITE=1 PYTHONPATH= "$py_bin" -I -m pip install --no-cache-dir pyright || \
