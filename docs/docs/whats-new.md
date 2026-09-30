@@ -1,5 +1,40 @@
 # What's new
 
+## 0.2.1
+
+*Released 2026-10-01.*
+
+### The swarm judges what it is given
+
+- **No more blanket distrust.** The swarm's forecast models a community:
+  people, and the money, time and relationships that carry them. A scenario
+  that isn't one (a fund's allocation, an insurer's capital decision, or a
+  model result sent from Hard Data) used to get the same generic forecast,
+  and the council distrusted it every time. The council now judges such a
+  scenario as stated: **trust** means it holds up on what is given,
+  **distrust** that something it states is wrong, and **uncertain** that
+  there isn't enough to judge. Community scenarios still get the forecast,
+  and the council still votes on it. See
+  [Council, society & simulation](swarm/views.md#forecast).
+
+### Opening on the pipeline
+
+- **A launch intro.** The S₀.₂ mark draws itself in, and the window opens in
+  your theme's colour, with no white flash. A click or a key skips it. See
+  [First launch](installation/first-launch.md).
+- **Straight to the pipeline.** Scelo opens on Soft → Tools → Hard. The bar
+  above it carries **workspace** and **reset session**, and **get started**,
+  top left, leads to the welcome screen.
+- **Level cards.** The three pipeline cards share one height, so their chat
+  boxes line up and the wires between them run straight. The chat's send
+  button is now an enter key.
+
+### One typeface
+
+- The whole interface uses SN Pro, with its own arrows: labels, headings,
+  charts and the swarm alike. The code editor and terminal keep a
+  fixed-width font, so columns line up.
+
 ## 0.2.0
 
 *Released 2026-09-30.*

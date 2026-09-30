@@ -90,6 +90,24 @@
     abandoned. Dates are the release publication dates on GitHub.
   -->
   <releases>
+    <release version="0.2.1" date="2026-10-01">
+      <description>
+        <p>
+          The swarm's council no longer distrusts everything. Its forecast
+          models a community, and a scenario that is not one, such as a fund's
+          allocation or a model result sent from Scelo, used to get a generic
+          forecast that every expert rejected. The council now judges such a
+          scenario as stated, and says it is uncertain when there is not
+          enough to judge.
+        </p>
+        <p>
+          Scelo opens with a short intro and lands on the pipeline. The whole
+          interface uses one typeface, SN Pro, with its own arrows; the three
+          pipeline cards share one height; the chat's send button is an enter
+          key; and "get started" leads to the welcome screen.
+        </p>
+      </description>
+    </release>
     <release version="0.2.0" date="2026-09-30">
       <description>
         <p>
