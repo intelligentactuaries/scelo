@@ -9,6 +9,23 @@ API, because Windows and Linux have drifted apart before (Windows sat on 0.1.2
 while Linux shipped 0.1.6) and a hard-coded version here is how that goes
 unnoticed.
 
+## The easy way: GitHub's Windows runner
+
+Since 0.2.0 the installer is built by `.github/workflows/release-windows.yml`,
+natively on `windows-2022` (Git Bash, the runner's Visual Studio for node-pty),
+and attached to the release it names. From any machine:
+
+```bash
+gh workflow run release-windows.yml --repo intelligentactuaries/scelo -f tag=scelo-ide-v<version>
+# add  -f ref=<sha>  to build a later commit of the same version
+```
+
+It stages the runtime, builds, smoke-tests the unpacked app (Python stack, the
+RAA chain-ladder check, R with only its own library, the ConPTY binary),
+installs it silently, launches it for a screenshot (artifact `windows-smoke`),
+then uploads **only** the hyphenated `.exe`. The steps below are the same
+build by hand, for when CI is not an option.
+
 ## Why this can't be done on the Linux host
 
 The app cross-compiles fine, but electron-builder finishes an NSIS installer by

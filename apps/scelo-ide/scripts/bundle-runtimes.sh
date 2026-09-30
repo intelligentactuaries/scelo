@@ -436,7 +436,12 @@ stage_r_windows() {
   # which also drives Wine).
   case "$(uname -s)" in
     MINGW*|MSYS*|CYGWIN*)
-      "$tmp/r.exe" /VERYSILENT /SUPPRESSMSGBOXES "/DIR=$(cygpath -w "$dest" 2>/dev/null || echo "$dest")"
+      # Inno Setup's switches start with "/", which Git Bash would rewrite
+      # into paths (/VERYSILENT → C:/Program Files/Git/VERYSILENT), leaving
+      # the installer waiting on a dialog; turn argument conversion off here.
+      # /CURRENTUSER installs without elevation where the installer allows it.
+      MSYS2_ARG_CONV_EXCL='*' "$tmp/r.exe" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /CURRENTUSER \
+        "/DIR=$(cygpath -w "$dest" 2>/dev/null || echo "$dest")"
       ;;
     *)
       if ! command -v wine >/dev/null 2>&1; then
@@ -492,26 +497,33 @@ stage_r_packages() {
   if [ "$TARGET_OS" = "linux" ] && [ -r /etc/os-release ]; then
     repo="https://packagemanager.posit.co/cran/__linux__/$(. /etc/os-release && echo "$VERSION_CODENAME")/latest"
   fi
-  R_LIBS_USER=/nonexistent R_LIBS_SITE=/nonexistent "$r_bin" --vanilla -e "
-    options(repos = c(CRAN = '$repo'),
-            HTTPUserAgent = sprintf('R/%s R (%s)', getRversion(),
-              paste(getRversion(), R.version['platform'], R.version['arch'], R.version['os'])))
-    pkgs <- c('ChainLadder', 'lifecontingencies', 'forecast', 'mgcv', 'data.table', 'jsonlite', 'lintr', 'languageserver')
-    lib <- file.path(R.home(), 'library')
-    # Binaries only off Linux: CRAN's macOS/Windows binaries for R 4.4 are
-    # frozen, so 'both' sees newer source versions and tries to compile them
-    # (no toolchain; the first macOS build lost ggplot2 and 70 others that
-    # way). The frozen binary index is complete for this set. On Linux the
-    # Posit repo serves binaries under the source type.
-    type <- if (Sys.info()[['sysname']] == 'Linux') 'source' else 'binary'
-    install.packages(pkgs, lib = lib, type = type)
-    bad <- pkgs[!vapply(pkgs, requireNamespace, logical(1), lib.loc = lib, quietly = TRUE)]
-    if (length(bad)) {
-      message('  ! R packages that do not load from the bundle alone: ', paste(bad, collapse = ', '))
-      quit(status = 1)
-    }
-    cat('  ✓ R packages load from the bundle alone\n')
-  " || { echo "  ✗ The bundled R packages do not load on their own — not shipping them."; exit 1; }
+  # The R code goes in a file run with -f: a multi-line -e is fragile through
+  # Windows' R.exe front-end and Git Bash quoting.
+  local rscript; rscript="$(mktemp)"
+  cat > "$rscript" <<'RS'
+repo <- Sys.getenv("SCELO_R_REPO")
+options(repos = c(CRAN = repo),
+        HTTPUserAgent = sprintf("R/%s R (%s)", getRversion(),
+          paste(getRversion(), R.version["platform"], R.version["arch"], R.version["os"])))
+pkgs <- c("ChainLadder", "lifecontingencies", "forecast", "mgcv", "data.table", "jsonlite", "lintr", "languageserver")
+lib <- file.path(R.home(), "library")
+# Binaries only off Linux: CRAN's macOS/Windows binaries for R 4.4 are
+# frozen, so "both" sees newer source versions and tries to compile them
+# (no toolchain; the first macOS build lost ggplot2 and 70 others that
+# way). The frozen binary index is complete for this set. On Linux the
+# Posit repo serves binaries under the source type.
+type <- if (Sys.info()[["sysname"]] == "Linux") "source" else "binary"
+install.packages(pkgs, lib = lib, type = type)
+bad <- pkgs[!vapply(pkgs, requireNamespace, logical(1), lib.loc = lib, quietly = TRUE)]
+if (length(bad)) {
+  message("  ! R packages that do not load from the bundle alone: ", paste(bad, collapse = ", "))
+  quit(status = 1)
+}
+cat("  \u2713 R packages load from the bundle alone\n")
+RS
+  SCELO_R_REPO="$repo" R_LIBS_USER=/nonexistent R_LIBS_SITE=/nonexistent "$r_bin" --vanilla -f "$rscript" \
+    || { rm -f "$rscript"; echo "  ✗ The bundled R packages do not load on their own — not shipping them."; exit 1; }
+  rm -f "$rscript"
 }
 
 # ─── 4. Manifest with versions + sizes ────────────────────────────────

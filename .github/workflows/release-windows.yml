@@ -1,0 +1,174 @@
+# Builds the Windows NSIS installer (.exe) for a Scelo IDE release on GitHub's
+# Windows runner and attaches it to that (already published) release:
+#
+#   gh workflow run release-windows.yml -f tag=scelo-ide-v0.2.0
+#
+# `-f ref=<sha>` builds a later commit of the same version instead of the tag
+# (0.2.0's installer: the tag plus the macOS/Windows packaging fixes).
+#
+# A native Windows build — Git Bash is the shell, so the bash staging scripts
+# run as they do on a workstation, with no Wine — and the runner's Visual
+# Studio compiles node-pty for Electron, so the terminal gets a real ConPTY.
+# Unsigned: SmartScreen warns on first launch. Uploads ONLY the .exe: shipping
+# latest.yml would switch on Windows auto-update, which is a product decision,
+# not a side effect of a build (BUILD-WINDOWS.md).
+name: release-windows
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to build and attach the .exe to (e.g. scelo-ide-v0.2.0)
+        required: true
+      ref:
+        description: Commit to build instead of the tag itself, when a Windows-only fix landed after tagging (same version)
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+jobs:
+  exe:
+    runs-on: windows-2022
+    timeout-minutes: 240
+    defaults:
+      run:
+        shell: bash
+    env:
+      TAG: ${{ inputs.tag }}
+      GH_TOKEN: ${{ github.token }}
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+    steps:
+      # The staging scripts are bash; a CRLF checkout breaks them.
+      - name: Keep LF line endings
+        run: git config --global core.autocrlf false && git config --global core.eol lf
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || inputs.tag }}
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.11
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Version must match the tag
+        id: v
+        run: |
+          v="${TAG#scelo-ide-v}"
+          have="$(node -p "require('./apps/scelo-ide/package.json').version")"
+          if [ "$have" != "$v" ]; then
+            echo "::error::apps/scelo-ide/package.json is $have, the tag says $v"; exit 1
+          fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Bundle the Python + R runtime (win-x64)
+        working-directory: apps/scelo-ide
+        run: TARGET_OS=win bash scripts/bundle-runtimes.sh
+
+      - name: Build renderer, main process and swarm
+        working-directory: apps/scelo-ide
+        run: bun run build
+
+      # Without it the terminal falls back to a plain pipe; worth a warning,
+      # not a failed release.
+      - name: Build node-pty for Electron (ConPTY)
+        id: pty
+        continue-on-error: true
+        working-directory: apps/scelo-ide
+        run: bun run build:pty
+
+      - name: Package the NSIS installer (unsigned)
+        working-directory: apps/scelo-ide
+        run: node node_modules/electron-builder/cli.js --win nsis --x64 --publish never
+
+      - name: Smoke test the unpacked app
+        working-directory: apps/scelo-ide/build/win-unpacked/resources
+        env:
+          PTY_BUILT: ${{ steps.pty.outcome }}
+        run: |
+          set -x -o pipefail
+          T="$(cygpath -u "$RUNNER_TEMP")"
+          test -f swarm/swarm-server.exe
+          # The bundled Python stack, from inside the app.
+          PYTHONNOUSERSITE=1 MPLBACKEND=Agg runtime/python/python.exe -I -c "
+          import numpy, pandas, scipy, sklearn, statsmodels, lightgbm, pyarrow
+          import chainladder, fairlearn, lifelib, modelx
+          from climada.entity import LitPop
+          assert round(float(chainladder.Chainladder().fit(chainladder.load_sample('raa')).ibnr_.sum())) == 52135
+          print('python stack ok')"
+          # LightGBM's OpenMP runtime travels with it (a fresh Windows has none).
+          test -f runtime/python/Lib/site-packages/lightgbm/bin/vcomp140.dll
+          # The bundled R, with only its own library visible.
+          printf '%s\n' 'suppressMessages(library(ChainLadder))' \
+            'cat("R_HOME", R.home(), "\n")' \
+            'cat("Mack IBNR", round(sum(summary(MackChainLadder(RAA))$ByOrigin$IBNR)), "\n")' > "$T/r-smoke.R"
+          R_LIBS_USER=/nonexistent R_LIBS_SITE=/nonexistent runtime/r/bin/R.exe --vanilla -s -f "$T/r-smoke.R" | tee "$T/r.txt"
+          grep -q "Mack IBNR 52135" "$T/r.txt"
+          cp "$T/r.txt" "$(cygpath -u "$GITHUB_WORKSPACE")/r.txt"
+          # The terminal's ConPTY binary, when build:pty succeeded.
+          if [ "$PTY_BUILT" = "success" ]; then
+            ls app.asar.unpacked/node_modules/@homebridge/node-pty-prebuilt-multiarch/build/Release
+            test -f app.asar.unpacked/node_modules/@homebridge/node-pty-prebuilt-multiarch/build/Release/conpty.node
+          else
+            echo "::warning::build:pty failed; this installer's terminal falls back to a plain pipe"
+          fi
+
+      - name: Install it silently and check the installed files
+        shell: pwsh
+        working-directory: apps/scelo-ide/build
+        run: |
+          $exe = Get-ChildItem "Scelo IDE-*-x64.exe" | Select-Object -First 1
+          "installer: $($exe.Name)  $([math]::Round($exe.Length / 1MB)) MB"
+          Start-Process -FilePath $exe.FullName -ArgumentList "/S" -Wait
+          $app = Get-ChildItem "$env:LOCALAPPDATA\Programs" -Recurse -Depth 2 -Filter "scelo-ide.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $app) { throw "the installer did not install scelo-ide.exe under $env:LOCALAPPDATA\Programs" }
+          "installed: $($app.FullName)"
+          $res = Join-Path $app.DirectoryName "resources"
+          foreach ($f in "runtime\python\python.exe", "runtime\r\bin\R.exe", "swarm\swarm-server.exe", "app.asar") {
+            if (-not (Test-Path (Join-Path $res $f))) { throw "installed app is missing $f" }
+          }
+          "APP=$($app.FullName)" >> $env:GITHUB_ENV
+
+      - name: Launch the installed app and look
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath $env:APP -PassThru
+          Start-Sleep -Seconds 60
+          Add-Type -AssemblyName System.Windows.Forms, System.Drawing
+          $b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+          $bmp = New-Object System.Drawing.Bitmap $b.Width, $b.Height
+          [System.Drawing.Graphics]::FromImage($bmp).CopyFromScreen($b.Location, [System.Drawing.Point]::Empty, $b.Size)
+          $bmp.Save("$env:GITHUB_WORKSPACE\scelo-windows.png")
+          $log = Join-Path $env:APPDATA "@ia\scelo-ide\logs\main.log"
+          if (Test-Path $log) { Copy-Item $log "$env:GITHUB_WORKSPACE\app-main.log"; Select-String -Path $log -Pattern "swarm|node-pty|autoUpdater" }
+          Get-Process scelo-ide, swarm-server -ErrorAction SilentlyContinue | Stop-Process -Force
+
+      - name: Attach to the release
+        working-directory: apps/scelo-ide/build
+        env:
+          VERSION: ${{ steps.v.outputs.version }}
+        run: |
+          cp "Scelo IDE-$VERSION-x64.exe" "Scelo-IDE-$VERSION-x64.exe"
+          sha256sum "Scelo-IDE-$VERSION-x64.exe"
+          ls -l "Scelo-IDE-$VERSION-x64.exe"
+          gh release upload "$TAG" "Scelo-IDE-$VERSION-x64.exe" --clobber --repo "$GITHUB_REPOSITORY"
+
+      - name: Keep the evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-smoke
+          path: |
+            scelo-windows.png
+            app-main.log
+            r.txt
+          if-no-files-found: ignore
