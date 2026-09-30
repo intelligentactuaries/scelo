@@ -385,8 +385,11 @@ stage_r_mac() {
   (cd "$tmp/payload-out" && gunzip -dc "$payload" | cpio -i)
   # Move R.framework/Versions/Current → dest/. We keep just the Current
   # version's contents (Resources/, lib/, etc.) so the bundle is flat.
+  # Versions/Current is a SYMLINK (to e.g. 4.4-arm64), which `find -type d`
+  # never matches; fall back to the versioned folder itself.
   local fw_root
-  fw_root=$(find "$tmp/payload-out" -type d -name 'Current' -path '*R.framework*' | head -1)
+  fw_root=$(find "$tmp/payload-out" -path '*R.framework/Versions/Current' | head -1)
+  [ -z "$fw_root" ] && fw_root=$(find "$tmp/payload-out" -type d -path '*R.framework/Versions/[0-9]*' -prune | head -1)
   if [ -z "$fw_root" ]; then
     echo "  ! R.framework Current symlink missing in payload. Skipping."
     rm -rf "$tmp"
