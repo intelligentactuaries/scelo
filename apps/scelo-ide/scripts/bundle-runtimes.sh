@@ -498,14 +498,20 @@ stage_r_packages() {
               paste(getRversion(), R.version['platform'], R.version['arch'], R.version['os'])))
     pkgs <- c('ChainLadder', 'lifecontingencies', 'forecast', 'mgcv', 'data.table', 'jsonlite', 'lintr', 'languageserver')
     lib <- file.path(R.home(), 'library')
-    install.packages(pkgs, lib = lib)
+    # Binaries only off Linux: CRAN's macOS/Windows binaries for R 4.4 are
+    # frozen, so 'both' sees newer source versions and tries to compile them
+    # (no toolchain; the first macOS build lost ggplot2 and 70 others that
+    # way). The frozen binary index is complete for this set. On Linux the
+    # Posit repo serves binaries under the source type.
+    type <- if (Sys.info()[['sysname']] == 'Linux') 'source' else 'binary'
+    install.packages(pkgs, lib = lib, type = type)
     bad <- pkgs[!vapply(pkgs, requireNamespace, logical(1), lib.loc = lib, quietly = TRUE)]
     if (length(bad)) {
       message('  ! R packages that do not load from the bundle alone: ', paste(bad, collapse = ', '))
       quit(status = 1)
     }
     cat('  ✓ R packages load from the bundle alone\n')
-  " || echo "  ! Some R packages failed; bundle may be incomplete."
+  " || { echo "  ✗ The bundled R packages do not load on their own — not shipping them."; exit 1; }
 }
 
 # ─── 4. Manifest with versions + sizes ────────────────────────────────

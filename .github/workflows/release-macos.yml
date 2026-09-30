@@ -94,7 +94,7 @@ jobs:
         env:
           APP: ${{ steps.app.outputs.path }}
         run: |
-          set -x
+          set -x -o pipefail
           R="$APP/Contents/Resources"
           # The bundled Python stack, from inside the app.
           PYTHONNOUSERSITE=1 MPLBACKEND=Agg "$R/runtime/python/bin/python3" -I -c '
@@ -106,6 +106,7 @@ jobs:
           # The bundled R must be the bundle's own, not a system R.
           "$R/runtime/r/Resources/bin/R" --vanilla -s -e 'cat("R_HOME", R.home(), "\n"); suppressMessages(library(ChainLadder)); cat("ChainLadder", format(packageVersion("ChainLadder")), "\n")' | tee r.txt
           grep -q "R_HOME $R/runtime/r/Resources" r.txt
+          grep -q "^ChainLadder " r.txt
           # node-pty was packed with its Electron build.
           ls "$R/app.asar.unpacked/node_modules/@homebridge/node-pty-prebuilt-multiarch/build/Release"
           # Launch it and look.

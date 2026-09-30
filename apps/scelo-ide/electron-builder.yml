@@ -208,6 +208,9 @@ mac:
   # Without this electron-builder looks for resources/icon.icns, finds nothing
   # and ships Electron's default icon.
   icon: resources/icons/icon.icns
+  # The top-level executableName (scelo-ide, for Linux) would otherwise name
+  # the bundle scelo-ide.app; on macOS the app is "Scelo IDE".
+  executableName: Scelo IDE
   target:
     - target: dmg
       arch: [x64, arm64]
