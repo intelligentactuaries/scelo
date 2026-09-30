@@ -38,6 +38,9 @@ export type CatalogModel = {
   /** What the dataset must contain for the model to run at all — shown to
    *  the AI picker, whose picks are then checked by modelApplicability. */
   needs?: string;
+  /** Set when the in-app figures come from built-in assumptions rather than
+   *  the dataset — the Tools canvas labels the node, the picker is told. */
+  illustrative?: string;
   // Free-form tags used by the local heuristic to match a column signature.
   // E.g. a dataset with `origin_year`, `dev_period`, `paid` triggers
   // tags `triangle`, `paid`, `reserving`.
@@ -159,6 +162,8 @@ export const MODEL_CATALOG: CatalogModel[] = [
     id: "scr-standard",
     name: "SCR · Standard Formula",
     family: "capital",
+    illustrative:
+      "an illustrative 18% of `paid` (floor 250,000), not a Standard Formula calculation on your data",
     description: "Solvency II / SAM Standard Formula SCR.",
     applicableTo: ["capital", "solvency", "scr"],
   },
@@ -166,6 +171,7 @@ export const MODEL_CATALOG: CatalogModel[] = [
     id: "esg",
     name: "Economic Scenario Generator",
     family: "capital",
+    illustrative: "a canned 1-in-100 rate path, not scenarios generated from your data",
     description: "Stochastic economic paths for ALM / capital.",
     applicableTo: ["capital", "esg", "simulation"],
   },
@@ -174,6 +180,7 @@ export const MODEL_CATALOG: CatalogModel[] = [
     id: "db-valuation",
     name: "DB / DC Valuation",
     family: "pensions",
+    illustrative: "an illustrative multiple of `paid`, not a valuation of member data",
     description: "Actuarial liability valuation for pension funds.",
     applicableTo: ["pensions", "liability", "mortality"],
   },
@@ -252,6 +259,7 @@ export const MODEL_CATALOG: CatalogModel[] = [
     id: "smithwilson-curve",
     name: "Smith-Wilson · curve fit",
     family: "life",
+    illustrative: "a built-in EIOPA-style curve, not fitted to your rates",
     description: "Risk-free curve extrapolation to the UFR (EIOPA / SAM). Lifelib → smithwilson.",
     applicableTo: ["life", "capital", "yield_curve", "rates", "ufr", "smith-wilson"],
   },
@@ -268,6 +276,7 @@ export const MODEL_CATALOG: CatalogModel[] = [
     id: "economic-curves",
     name: "Economic curves",
     family: "life",
+    illustrative: "a built-in zero curve, not bootstrapped from your quotes",
     description:
       "Discount / forward / zero curves with bootstrap + interpolation. Lifelib → economic_curves scripts + economic / BasicHullWhite.",
     applicableTo: ["life", "capital", "yield_curve", "rates", "discount"],

@@ -449,6 +449,21 @@ function buildTriangle(dataset: Dataset): {
   return { origins, devs, cells, cumByRow };
 }
 
+/** The claims triangle the reserving runners would build, in brief — or null
+ *  when `origin_year`, `dev_period` and `paid` are not all there. */
+export function triangleShape(
+  dataset: Dataset,
+): { origins: number; devs: number; columns: string[] } | null {
+  const tri = buildTriangle(dataset);
+  if (!tri) return null;
+  const pick = (name: string) => dataset.columns.find((c) => c.toLowerCase() === name) ?? name;
+  return {
+    origins: tri.origins.length,
+    devs: tri.devs.length,
+    columns: [pick("origin_year"), pick("dev_period"), pick("paid")],
+  };
+}
+
 // Cumulative development-to-ultimate factor array. cdf[k] = factors[k] *
 // factors[k+1] * ... * factors[n-1]; cdf[n] = 1 (no further development).
 function buildCdf(factors: number[]): number[] {
@@ -590,17 +605,16 @@ function runChainLadder({ dataset }: Args): RunResult {
   };
 }
 
-function runMack({ dataset, upstream }: Args): RunResult {
+function runMack({ dataset }: Args): RunResult {
   const tri = buildTriangle(dataset);
   if (!tri) {
     return makeUnsupported("mack", "reserving", "Triangle not detected.");
   }
   const { factors, sigmas, dens } = ataFactors(tri);
-  // Point estimate: a wired chain-ladder result wins (same triangle, same
-  // maths — but the provenance is explicit and the numbers are guaranteed
-  // consistent with the card the actuary is looking at); otherwise refit.
-  const wiredCl = wired(upstream, "chain-ladder");
-  const base = wiredCl ?? runChainLadder({ dataset });
+  // Mack's point estimate IS chain ladder on the same triangle — refit here
+  // rather than taken off a wire: a wired chain-ladder result is the same
+  // number, so the Tools canvas gives Mack no pin for it.
+  const base = runChainLadder({ dataset });
   const ibnr = base.headline.value;
   // Mack (1993) mean-squared error of the total reserve. Per origin i with
   // diagonal at dev t_i and projected cumulatives Ĉ_{i,k}:
@@ -681,17 +695,10 @@ function runMack({ dataset, upstream }: Args): RunResult {
     series: base.series,
     blurb: `Mack reproduces chain-ladder's ${fmt(ibnr, 0)} IBNR with a CV of ${pct(cv)} (SE ≈ ${fmt(se, 0)}).`,
     detail: { factors, sigmas, ibnr, se, cv },
-    ...(wiredCl
-      ? {
-          wiredFrom: [
-            { id: "chain-ladder", note: "point estimate from the wired chain-ladder run" },
-          ],
-        }
-      : {}),
   };
 }
 
-function runBornhuetterFerguson({ dataset, upstream }: Args): RunResult {
+function runBornhuetterFerguson({ dataset }: Args): RunResult {
   const tri = buildTriangle(dataset);
   if (!tri) {
     return makeUnsupported("bornhuetter-ferguson", "reserving", "Triangle not detected.");
@@ -699,18 +706,14 @@ function runBornhuetterFerguson({ dataset, upstream }: Args): RunResult {
   const { factors } = ataFactors(tri);
   const cdf = buildCdf(factors);
   // A-priori expected ultimates. BF's whole point is blending the
-  // development view with an INDEPENDENT prior — when a chain-ladder run
-  // is wired in, its per-origin ultimates BECOME that prior (the classic
-  // CL-seeded BF an actuary reaches for when no plan loss ratio exists).
-  // Standalone, the prior is the book-average ultimate held constant per
-  // origin. (The old standalone back-solved premium from a flat ELR, which
-  // cancelled algebraically back to the chain-ladder ultimate — a BF whose
-  // prior cannot move the answer isn't a BF.)
-  const wiredCl = wired(upstream, "bornhuetter-ferguson") ? null : wired(upstream, "chain-ladder");
-  const clUlts = Array.isArray(wiredCl?.detail?.ultByOrigin)
-    ? (wiredCl?.detail?.ultByOrigin as number[])
-    : null;
-  // Book-average CL-style ultimate for the standalone prior.
+  // development view with an INDEPENDENT prior. With no plan / pricing loss
+  // ratio in the data, the prior is the book-average ultimate held constant
+  // per origin. It is deliberately NOT chain ladder's per-origin ultimate:
+  // that prior collapses BF onto chain ladder exactly (Ĉ·F × (1 − 1/F) =
+  // Ĉ·(F − 1), the CL reserve), which is why the Tools canvas no longer
+  // wires chain ladder into BF. (The older standalone back-solved premium
+  // from a flat ELR, which cancelled back to the chain-ladder ultimate the
+  // same way — a BF whose prior cannot move the answer isn't a BF.)
   let bookUltSum = 0;
   let bookUltN = 0;
   for (const o of tri.origins) {
@@ -734,7 +737,7 @@ function runBornhuetterFerguson({ dataset, upstream }: Args): RunResult {
   // node's small table can show "where the reserve comes from" cohort by
   // cohort, which is the most useful diagnostic for a BF estimate.
   const perOrigin: Array<{ origin: number; reserve: number }> = [];
-  for (const [oi, o] of tri.origins.entries()) {
+  for (const o of tri.origins) {
     const row = tri.cumByRow.get(o) ?? [];
     let lastK = -1;
     let lastC = 0;
@@ -747,9 +750,7 @@ function runBornhuetterFerguson({ dataset, upstream }: Args): RunResult {
     if (lastK < 0) continue;
     const remainingCdf = cdf[lastK] ?? 1;
     const pctDevelopedRatio = remainingCdf > 0 ? 1 / remainingCdf : 1;
-    const clPrior = clUlts?.[oi];
-    const expectedUltimate =
-      clPrior !== undefined && Number.isFinite(clPrior) ? clPrior : bookAvgUlt || lastC;
+    const expectedUltimate = bookAvgUlt || lastC;
     const bfRes = expectedUltimate * (1 - pctDevelopedRatio);
     bfReserve += bfRes;
     ult += lastC + bfRes;
@@ -768,9 +769,7 @@ function runBornhuetterFerguson({ dataset, upstream }: Args): RunResult {
     headline: { label: "BF reserve", value: bfReserve, precision: 0 },
     secondary: [
       { label: "ultimate", value: fmt(ult, 0) },
-      clUlts
-        ? { label: "a-priori", value: "chain-ladder ultimates (wired)" }
-        : { label: "a-priori", value: `book-avg ultimate ${fmt(bookAvgUlt, 0)}` },
+      { label: "a-priori", value: `book-avg ultimate ${fmt(bookAvgUlt, 0)}` },
     ],
     // Top contributors to the total reserve — bf has no time-series since
     // it isn't a development-pattern model, so the in-card visual is a
@@ -781,9 +780,7 @@ function runBornhuetterFerguson({ dataset, upstream }: Args): RunResult {
       // printed a numeric year with a thousands separator ("2,024").
       rows: topOrigins.map((p) => [String(p.origin), p.reserve]),
     },
-    blurb: clUlts
-      ? `BF gives a reserve of ${fmt(bfReserve, 0)} with the a-priori seeded from the wired chain-ladder ultimates.`
-      : `BF gives a reserve of ${fmt(bfReserve, 0)} against a book-average ultimate prior of ${fmt(bookAvgUlt, 0)}.`,
+    blurb: `BF gives a reserve of ${fmt(bfReserve, 0)} against a book-average ultimate prior of ${fmt(bookAvgUlt, 0)}.`,
     detail: {
       factors,
       cdf,
@@ -791,24 +788,15 @@ function runBornhuetterFerguson({ dataset, upstream }: Args): RunResult {
       ult,
       bookAvgUlt,
       perOrigin,
-      aprioriSource: clUlts ? "chain-ladder" : "book-average",
+      aprioriSource: "book-average",
     },
-    ...(clUlts
-      ? {
-          wiredFrom: [
-            {
-              id: "chain-ladder",
-              note: "per-origin a-priori ultimates from the wired chain-ladder",
-            },
-          ],
-        }
-      : {}),
   };
 }
 
-function runBootstrap({ dataset, upstream }: Args): RunResult {
-  const wiredCl = wired(upstream, "chain-ladder");
-  const base = wiredCl ?? runChainLadder({ dataset });
+function runBootstrap({ dataset }: Args): RunResult {
+  // Centred on chain ladder refitted on the same triangle (the ODP bootstrap
+  // IS chain ladder's stochastic twin), so no wire feeds it.
+  const base = runChainLadder({ dataset });
   if (base.status === "error") return { ...base, modelId: "bootstrap-ibnr", family: "reserving" };
   const ibnr = base.headline.value;
   // Pretend we ran 5000 bootstrap resamples with ±18% noise around the
@@ -831,13 +819,6 @@ function runBootstrap({ dataset, upstream }: Args): RunResult {
     series: base.series,
     blurb: `Bootstrap brackets IBNR between ${fmt(p5, 0)} (p5) and ${fmt(p95, 0)} (p95) around ${fmt(ibnr, 0)}.`,
     detail: { ibnr, p5, p95 },
-    ...(wiredCl
-      ? {
-          wiredFrom: [
-            { id: "chain-ladder", note: "resampling centred on the wired chain-ladder reserve" },
-          ],
-        }
-      : {}),
   };
 }
 
@@ -930,23 +911,77 @@ export type LifeBasis = {
   /** One-year death probabilities faced at ages x, x+1, … x+n−1. */
   q: number[];
   x: number;
-  source: "lee-carter" | "table";
+  source: "lee-carter" | "cbd" | "table";
   /** Human description of where q came from, for the card. */
   note: string;
 };
 
+/** A wired CBD fit's projected cohort: logit q(x+t, T+1+t) = κ₁ + κ₂(x+t − x̄)
+ *  with both κ's walked forward on their drifts — the same projection the CBD
+ *  card plots, read along the diagonal. Stays inside the fitted ages. */
+function cbdCohort(detail: Record<string, unknown> | undefined): LifeBasis | null {
+  const d = detail as
+    | {
+        ages?: unknown;
+        kappa1?: unknown;
+        kappa2?: unknown;
+        drift1?: unknown;
+        drift2?: unknown;
+        xbar?: unknown;
+        projYears?: unknown;
+      }
+    | undefined;
+  if (
+    !d ||
+    !Array.isArray(d.ages) ||
+    !Array.isArray(d.kappa1) ||
+    !Array.isArray(d.kappa2) ||
+    !Array.isArray(d.projYears) ||
+    typeof d.drift1 !== "number" ||
+    typeof d.drift2 !== "number" ||
+    typeof d.xbar !== "number"
+  ) {
+    return null;
+  }
+  const ages = d.ages as number[];
+  const k1 = d.kappa1 as number[];
+  const k2 = d.kappa2 as number[];
+  const years = d.projYears as number[];
+  if (ages.length === 0 || k1.length === 0 || k1.length !== k2.length) return null;
+  const T = k1.length - 1;
+  const x = ages[nearestAge(ages, LIFE_AGE)];
+  const maxAge = ages[ages.length - 1];
+  const q: number[] = [];
+  for (let t = 0; t < Math.min(LIFE_TERM, years.length); t++) {
+    const age = x + t;
+    if (age > maxAge) break; // the cohort has aged past the fitted ages
+    const z = k1[T] + (t + 1) * d.drift1 + (k2[T] + (t + 1) * d.drift2) * (age - d.xbar);
+    q.push(1 / (1 + Math.exp(-z)));
+  }
+  if (q.length === 0) return null;
+  return {
+    q,
+    x,
+    source: "cbd",
+    note: `wired CBD cohort, ages ${x}–${x + q.length - 1} in ${years[0]}–${years[q.length - 1]}`,
+  };
+}
+
 /**
- * The mortality a life-contingencies run prices on: a wired Lee–Carter's
- * projected COHORT (a life aged x next year meets q(x) that year, q(x+1) the
- * year after, …) or, failing that, the dataset's own life table (its latest
- * year). Shared by the in-browser runner and the R bridge so both price the
- * same q vector. The old runner walked the wired q(65) PATH — one age's rate
- * over ten calendar years — as if it were a cohort ageing through 65…74.
+ * The mortality a life-contingencies run prices on: a wired projection's
+ * COHORT — Lee–Carter or CBD, whichever the Tools canvas plugs into the
+ * mortality pin (a life aged x next year meets q(x) that year, q(x+1) the
+ * year after, …) — or, with nothing wired, the dataset's own life table (its
+ * latest year). Shared by the in-browser runner and the R bridge so both
+ * price the same q vector. The old runner walked the wired q(65) PATH — one
+ * age's rate over ten calendar years — as if it were a cohort ageing
+ * through 65…74.
  */
 export function resolveLifeBasis(
   dataset: Dataset,
   upstream?: Map<string, RunResult>,
 ): LifeBasis | { reason: string } {
+  const cbd = cbdCohort(wired(upstream, "cbd")?.detail);
   const lc = wired(upstream, "lee-carter")?.detail as
     | { ages?: unknown; alpha?: unknown; beta?: unknown; kappaForecast?: unknown; projYears?: unknown }
     | undefined;
@@ -979,9 +1014,10 @@ export function resolveLifeBasis(
       };
     }
   }
+  if (cbd) return cbd;
   const found = detectMortalityTable(dataset);
   if ("reason" in found) {
-    // (A wired Lee–Carter cannot help here: it needs the same table.)
+    // (A wired projection cannot help here: it needs the same table.)
     return { reason: found.reason };
   }
   const t = found.table;
@@ -1050,7 +1086,9 @@ function lifeResult(basis: LifeBasis, v: LifeValues, runtime?: string): RunResul
             { id: "lee-carter", note: "cohort mortality from the wired Lee–Carter projection" },
           ],
         }
-      : {}),
+      : basis.source === "cbd"
+        ? { wiredFrom: [{ id: "cbd", note: "cohort mortality from the wired CBD projection" }] }
+        : {}),
   };
 }
 
@@ -1325,29 +1363,30 @@ function isShapSummary(v: unknown): v is ShapSummary {
   );
 }
 
-function runSHAP({ dataset, upstream }: Args): RunResult {
-  // Exact TreeSHAP on the in-browser GBM. A wired GBM's own attribution is
-  // used when present (same model, explicit provenance); standalone, the
-  // same deterministic fit is made (shared via the fit cache). Numeric AND
-  // categorical features count — the old runner only looked at categorical
-  // columns, so an all-numeric dataset errored, and otherwise handed the
-  // first three columns fixed 0.42 / 0.27 / 0.18 "weights".
-  const wiredGbm = wired(upstream, "gbm");
-  const candidate = wiredGbm?.detail?.shap;
-  const wiredShap = wiredGbm && isShapSummary(candidate) ? candidate : null;
-  let shap: ShapSummary;
-  let target: string;
-  if (wiredGbm && wiredShap) {
-    shap = wiredShap;
-    target = String(wiredGbm.detail?.target ?? "the target");
-  } else {
-    const res = gbmFitFor(dataset);
-    if ("error" in res) {
-      return makeUnsupported("shap", "pricing", `Nothing to explain: ${res.error}.`);
-    }
-    shap = res.fit.shap;
-    target = res.target.column;
+function runSHAP({ upstream }: Args): RunResult {
+  // Exact TreeSHAP of the GBM wired into SHAP's "model to explain" pin. SHAP
+  // explains A model, so it runs on the one the canvas plugs in — never a
+  // hidden refit. (It used to refit the same GBM when standalone: identical
+  // numbers, but a SHAP card explaining a model the canvas did not show, and
+  // a GBM → SHAP wire that carried nothing.) Numeric AND categorical
+  // features count — the older runner only looked at categorical columns,
+  // so an all-numeric dataset errored, and otherwise handed the first three
+  // columns fixed 0.42 / 0.27 / 0.18 "weights".
+  const gbm = upstream?.get("gbm");
+  if (!gbm) {
+    return makeUnsupported(
+      "shap",
+      "pricing",
+      "SHAP explains a fitted model, and no GBM feeds it — wire a switched-on GBM into its “model to explain” pin on the Tools canvas.",
+    );
   }
+  const candidate = gbm.detail?.shap;
+  if (gbm.status !== "done" || !isShapSummary(candidate)) {
+    const why = gbm.error ? `: ${gbm.error.replace(/\.$/, "")}` : "";
+    return makeUnsupported("shap", "pricing", `Nothing to explain — the wired GBM did not fit${why}.`);
+  }
+  const shap: ShapSummary = candidate;
+  const target = String(gbm.detail?.target ?? "the target");
   const arrow = (d: ShapSummary["direction"][number]) =>
     d === "up" ? " ↑" : d === "down" ? " ↓" : d === "mixed" ? " ↕" : "";
   const top = shap.features[0];
@@ -1376,11 +1415,9 @@ function runSHAP({ dataset, upstream }: Args): RunResult {
       target,
       importances: shap.features.map((f, i) => ({ feature: f, weight: shap.share[i] })),
       shap,
-      source: wiredShap ? "wired-gbm" : "fit",
+      source: "wired-gbm",
     },
-    ...(wiredShap
-      ? { wiredFrom: [{ id: "gbm", note: "exact TreeSHAP of the wired GBM's fitted trees" }] }
-      : {}),
+    wiredFrom: [{ id: "gbm", note: "exact TreeSHAP of the wired GBM's fitted trees" }],
   };
 }
 
@@ -2703,6 +2740,17 @@ export async function runModelAsync(
         // the real artefact; UI shows it via the detail panel.
         const intercept = py.coefficients.find((c) => c.name === "Intercept");
         const baseline = intercept ? Math.exp(intercept.estimate) : 0;
+        // Frequency wired into severity (the Tools canvas's frequency pin):
+        // the base-cell pure premium exp(β₀ freq) × exp(β₀ sev) — the base
+        // rate a GLM tariff multiplies its relativities onto. Only when the
+        // frequency is also a statsmodels baseline: the in-browser fallback's
+        // headline is a portfolio MEAN, and a mean × a baseline is nothing.
+        const wiredFreq = kind === "severity" ? wired(upstream, "glm-frequency") : null;
+        const sameEngine = wiredFreq?.source === "python-bridge";
+        const purePremium =
+          wiredFreq && sameEngine && Number.isFinite(wiredFreq.headline.value)
+            ? wiredFreq.headline.value * baseline
+            : null;
         return {
           modelId,
           family: "pricing",
@@ -2715,6 +2763,11 @@ export async function runModelAsync(
             precision: kind === "frequency" ? 4 : 0,
           },
           secondary: [
+            ...(purePremium !== null
+              ? [{ label: "base pure premium (freq × sev)", value: fmt(purePremium, 0) }]
+              : wiredFreq
+                ? [{ label: "pure premium", value: "not combined — frequency ran in-browser" }]
+                : []),
             { label: "family", value: `${py.family} (log)` },
             { label: "covariates", value: py.covariates.join(" + ") || "(intercept-only)" },
             { label: "observations", value: py.nObservations.toLocaleString() },
@@ -2734,8 +2787,21 @@ export async function runModelAsync(
             (py.rowsSent < py.rowsTotal
               ? `, fitted on ${py.rowsSent.toLocaleString()} of ${py.rowsTotal.toLocaleString()} rows`
               : "") +
-            ").",
-          detail: { ...py },
+            ")" +
+            (purePremium !== null
+              ? `; × the wired frequency's baseline ${(wiredFreq?.headline.value ?? 0).toFixed(4)} gives a base pure premium of ${fmt(purePremium, 0)}.`
+              : "."),
+          detail: { ...py, ...(purePremium !== null ? { purePremium } : {}) },
+          ...(purePremium !== null
+            ? {
+                wiredFrom: [
+                  {
+                    id: "glm-frequency",
+                    note: "baseline frequency crossed in for the base pure premium",
+                  },
+                ],
+              }
+            : {}),
           source: "python-bridge",
         };
       }

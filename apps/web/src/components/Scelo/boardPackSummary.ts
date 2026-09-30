@@ -177,14 +177,11 @@ function reservingParagraph(runs: RunResult[]): { text: string; caveats: string[
   }
   if (unc.length > 0) sentences.push(`${capitalise(unc.join("; "))}.`);
 
-  // What the Bornhuetter–Ferguson figure leans on.
-  const bf = runs.find((r) => r.modelId === "bornhuetter-ferguson");
-  if (bf) {
-    const wiredCl = bf.wiredFrom?.some((w) => w.id === "chain-ladder");
+  // What the Bornhuetter–Ferguson figure leans on. (Its prior is always the
+  // book average now: a chain-ladder prior would just reproduce chain ladder.)
+  if (runs.some((r) => r.modelId === "bornhuetter-ferguson")) {
     caveats.push(
-      wiredCl
-        ? "The Bornhuetter–Ferguson prior was taken from the chain-ladder ultimates, so it is not an independent view."
-        : "The Bornhuetter–Ferguson prior is the book-average ultimate rather than a plan or pricing loss ratio; a signed figure would normally use the latter.",
+      "The Bornhuetter–Ferguson prior is the book-average ultimate rather than a plan or pricing loss ratio; a signed figure would normally use the latter.",
     );
   }
 
@@ -286,7 +283,9 @@ function mortalityParagraph(runs: RunResult[]): string {
     const src =
       life.detail?.mortalitySource === "lee-carter"
         ? "the projected Lee–Carter mortality"
-        : "the dataset's own life table";
+        : life.detail?.mortalitySource === "cbd"
+          ? "the projected Cairns–Blake–Dowd mortality"
+          : "the dataset's own life table";
     sentences.push(
       `An annuity of 1 a year for ${n} years to a ${x}-year-old is worth ${plainAmount(life.headline.value)}${i !== null ? ` at ${plainPct(i)} interest` : ""}, using ${src}.`,
     );

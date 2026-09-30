@@ -80,6 +80,8 @@ The reserve is the second term — what the prior says *should* still emerge.
 - The prior ELR is reasonably calibrated (often via a benchmark or a peer book).
 - The development pattern is borrowed from chain-ladder and assumed transferable.
 
+**In the app** — the data carries no premium or plan loss ratio, so the prior is the book-average chain-ladder ultimate held constant per origin. Deliberately not chain ladder's own per-origin ultimate: that prior reproduces chain ladder exactly, since $\hat C F (1 - 1/F) = \hat C (F - 1)$.
+
 **Caveat** — sensitivity to the ELR is steep on green origins. Stress-test ±10 % ELR and report the range.
 `.trim(),
 
@@ -182,7 +184,7 @@ Pair with a frequency model and $\\mathbb{E}[\\text{Loss}] = \\mathbb{E}[N] \\cd
 
 **Outputs** — local: per-row force plot. Global: feature importance + summary swarm.
 
-**In the app** — exact path-dependent TreeSHAP (Lundberg, Erion & Lee 2018) over every tree of the in-browser GBM, on the held-out rows: $f(x) = \\mathbb{E}[f] + \\sum_j \\phi_j(x)$ holds to rounding error. The card ranks features by mean $|\\phi_j|$ as a share of the total; ↑ / ↓ mark whether higher values of a numeric feature raise or lower the prediction (on the log-odds or log-mean scale for 0/1 and count targets).
+**In the app** — SHAP explains the GBM wired into its "model to explain" pin (with none wired in, there is nothing to explain): exact path-dependent TreeSHAP (Lundberg, Erion & Lee 2018) over every tree of that GBM, on its held-out rows: $f(x) = \\mathbb{E}[f] + \\sum_j \\phi_j(x)$ holds to rounding error. The card ranks features by mean $|\\phi_j|$ as a share of the total; ↑ / ↓ mark whether higher values of a numeric feature raise or lower the prediction (on the log-odds or log-mean scale for 0/1 and count targets).
 `.trim(),
 
   climada: `
@@ -459,7 +461,7 @@ $$
 **Life contingencies** turn a survival model into prices: every annuity or assurance is an expected present value — discount each cash flow by interest AND by the probability it is paid.
 
 **Assumptions**
-- Deaths are governed by the wired Lee-Carter projection when connected — priced along the cohort (the life aged 65 next year meets that year's $q_{65}$, then the following year's $q_{66}$, …) — otherwise by the latest year of the dataset's own life table. No table and no wire: not computed.
+- Deaths are governed by the projection wired into the mortality pin — Lee-Carter or CBD, priced along the cohort (the life aged 65 next year meets that year's $q_{65}$, then the following year's $q_{66}$, …) — otherwise by the latest year of the dataset's own life table. No table and no wire: not computed.
 - A flat deterministic discount rate (4%); no expense or selection loadings. The card quotes a 65-year-old over 10 years.
 
 **Formula**
@@ -467,7 +469,7 @@ $$
 \\ddot a_x = \\sum_{t\\ge 0} v^t\\,{}_tp_x, \\qquad A_x = \\sum_{t\\ge 0} v^{t+1}\\,{}_tp_x\\,q_{x+t}, \\qquad v = \\tfrac{1}{1+i}.
 $$
 
-**Caveat** — EPVs are only as good as the mortality behind them: a period table ignores future improvement, so wire Lee-Carter in to price on the projected cohort.
+**Caveat** — EPVs are only as good as the mortality behind them: a period table ignores future improvement, so wire Lee-Carter or CBD in to price on the projected cohort.
 `.trim(),
 
   esg: `

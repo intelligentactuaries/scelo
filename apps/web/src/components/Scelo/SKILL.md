@@ -256,16 +256,24 @@ shuffle, not a re-call — the panel never repeats the same trio twice.
 
 ## 4. Tools workstation (`ToolsWorkstation.tsx`)
 
-Hub-and-spoke React Flow canvas. The dataset hub sits centre; selected
-models orbit around it; cross-model workflow edges connect siblings inside
-a domain.
+A Blueprint-style React Flow graph (Unreal Engine's Blueprints are the
+model). The dataset hub on the left is a source node whose output pins are
+the data roles the file can actually feed; each model node shows only the
+pins it really has — inputs left, outputs right — and wires join pins
+whose types agree. Models flow left to right by pipeline depth. The typed
+contract lives in `modelPorts.ts`, the hub's roles in `dataRoles.ts`, and
+the pin / wire / menu components in `BlueprintCanvas.tsx`.
 
 ### Model catalog (`modelCatalog.ts`)
 
 Fixed list. Family ∈ `reserving | mortality | pricing | climate | capital |
-pensions | life | forecast | general`. Each entry has `id`, `name`,
-`family`, `description`, `applicableTo` tags. The AI picker is constrained
-to ids in this list — invented ids are dropped.
+pensions | life | forecast | workspace | general`. Each entry has `id`,
+`name`, `family`, `description`, `applicableTo` tags, optionally `needs`
+(what the dataset must contain — shown to the AI picker) and
+`illustrative` (set when the in-app figures come from built-in
+assumptions rather than the data: ESG, SCR, DB valuation, Smith-Wilson,
+economic curves — labelled on the node and told to the picker). The AI
+picker is constrained to ids in this list — invented ids are dropped.
 
 The `forecast` family is the **WMTR / Nanoeconomics survival capability**
 ([github.com/intelligentactuaries/nanoeconomics-simulation](https://github.com/intelligentactuaries/nanoeconomics-simulation)).
@@ -487,47 +495,94 @@ prefixes (t2m / tp / wind / etc.) routes to `climate` even without a
 geographic column. Reasoning: the user is doing climate-actuarial work,
 exposure can be added later.
 
-### Canvas behaviour
+The LLM prompt carries a `DATA PROVIDES` block — the hub's data roles
+(`detectDataRoles`, the same detectors the runners use) with their columns
+and evidence — so picks are checked against what the data can feed, not
+column names. Every pick path ends in `finalizePick`: models that cannot
+run without another are paired with it (SHAP arrives with the GBM it
+explains), then `switchOffInapplicable` attaches whatever the data can't
+feed switched off, with the reason. With no family signal the fallback
+offers what a generic table supports (descriptive; GBM + SHAP with
+something to predict; the workspace bottleneck for 3+ numeric columns; a
+frequency GLM only with real claim counts and rating factors).
 
-- **N handles per side per node.** `MultiHandles` renders `slotCount`
-  target+source pairs evenly down the left edge and the right edge of
-  every node. Slot 0 on each side is reserved for the hub feed; cross-model
-  workflow edges start at slot 1.
-- **Two-way connections.** Handles live on left + right only (no top /
-  bottom). Users can drag from any handle to any handle.
-- **Handle fill state.** A handle dot is **hollow** when nothing is wired
-  to it (canvas-bg fill, family-coloured ring) and **solid** when any edge
-  — workflow default or user-drawn — lands on either co-located handle at
-  that slot.
-- **Family-coloured edges.** Hub spokes are tinted by destination
-  (matches the model node colour); workflow edges and user-drawn edges
-  are tinted by source. Colors come from `FAMILY_COLOR_DARK` /
-  `FAMILY_COLOR_LIGHT` in `modelCatalog.ts`.
-- **Removable edges.** Every edge uses `type: "removable"` and is rendered
-  by `RemovableEdge.tsx`. Hovering reveals a × at the midpoint with a
-  solid `bg-bg` backing disc that masks the animated dashed stroke
-  underneath. Backspace / Delete also works.
-- **Edge labels** also get the `bg-bg` masking treatment so the dashed
-  animation never strobes through the text. `labelStyle.fill` is mapped to
-  CSS `color` (React Flow's `labelBgStyle` is SVG-only and does nothing on
-  HTML labels).
+### Canvas behaviour (Blueprint pins)
+
+- **Typed pins, only where something flows.** `MODEL_PORTS`
+  (`modelPorts.ts`) lists every model's inputs and outputs. Data pins
+  (round) come from the hub: claims triangle, mortality table, model
+  points, claim counts, claim amounts, rating factors, target & features,
+  exposure, numeric columns, WMTR parameters. Result pins (diamond) come
+  from another model: projected mortality (Lee–Carter / CBD → life
+  contingencies), claim frequency (GLM frequency → severity, for the pure
+  premium), fitted GBM (GBM → SHAP, required: SHAP explains the model
+  plugged into it) and rate scenarios (ESG → SCR). A model whose output
+  nothing consumes has no output pin; one that reads no columns has no
+  input pin. Reserving methods have no model inputs: Mack and the
+  bootstrap refit chain ladder themselves, and a chain-ladder prior would
+  collapse Bornhuetter–Ferguson onto chain ladder exactly.
+- **Pins are coloured by type** (`PORT_TYPES`), hollow until plugged in;
+  a required input nothing can feed is dashed in the error colour with
+  "not in this data" (or a one-click fix — "+ GBM", "plug in …", "switch
+  on …"). Unplugged optional pins show their default beside the label, the
+  way Blueprints do ("severity only", "no rate stress").
+- **The hub's pins are the data's roles** (`detectDataRoles`), each with
+  its evidence ("7 origins × 7 dev periods"). Roles an attached model
+  reads are shown; the rest sit behind "▸ N more this data can feed".
+  Clicking a role lists the models that read it.
+- **Connection rules** (`checkConnection`): output → input, types must
+  agree, no loops, one wire per input (plugging a new one replaces the
+  old — dragging CBD onto the annuity's mortality pin unplugs Lee–Carter;
+  dragging the hub's mortality table there hands it back to the data).
+  While dragging, the wire is drawn in its type's colour and a tag at the
+  cursor says whether the drop will take, or why not.
+- **Drop a wire on empty canvas** (or right-click the pane) for a menu of
+  the models that fit, ranked: fits this data / illustrative / on the
+  canvas / can't run (with the reason). Picking one adds it and plugs it
+  in; type to filter, ↑/↓, Enter.
+- **Wires**: `WireEdge` — a horizontal-tangent spline, no arrowhead. Hub
+  feeds are not removable (the data always feeds what reads it); model →
+  model wires carry a × at the midpoint (Delete / Backspace on a selected
+  wire also works). A wire whose source is switched off is dashed and the
+  pin falls back to its default.
+- **Layout**: left to right by `pipelineDepths`; the first model column
+  follows the order of the hub pins it reads; later columns sit level
+  with their sources. Measured node heights drive it, so a node that
+  grows pushes its column down. Dragging a node hands the arrangement to
+  the actuary (dropped nodes then land where dropped, clear of the
+  others); **re-layout** hands it back.
+- **Status chip** in the banner: "✓ N ready · M can't run · K off · W
+  wires" — what Hard will actually run.
 
 ### Node controls (`ToolNode`)
 
 - **× remove** — drops the model from the canvas (round disc, solid
   `bg-bg`, ring in `border-border`).
-- **↻ swap** — inline picker grouped by family; the new model takes the
-  old model's canvas position.
+- **↻ swap** — inline picker: drop-ins that read the same inputs first,
+  then by family, each marked ✓ fits / ~ illustrative / ✗ can't run
+  (not selectable). The new model takes the old one's slot, switched on
+  only if the data can feed it.
 - **toggle switch** — enable / disable. **Tinted with the node's family
   colour** (orange for climate, blue for mortality, etc.) so the switch
   reads as part of the node, not a generic primary control.
+- The right panel's model details list the focused model's pins and what
+  feeds each; the catalog below marks every model ✓ / ~ / ✗ against the
+  loaded data and ranks what fits first.
 
-### Workflows table
+### Wiring (`modelPorts.ts`, session in `sceloContext.tsx`)
 
-`WORKFLOWS` in `ToolsWorkstation.tsx` declares domain-specific edge
-sequences (e.g. `glm-frequency → glm-severity → × combine`) so that when a
-matching set of models is on the canvas, the wires draw themselves with
-sensible labels (`feeds`, `combine`, etc.).
+`modelWires` in the session IS the canvas's model → model wiring, and Hard
+executes exactly it (`pipelinePlan`: sources first, results handed on).
+The session provider auto-wires models as they arrive — from the picker,
+the catalog, a chat directive or the macro autopick (`autoWire`: each free
+result input is plugged into the first enabled producer in catalog order,
+when either end is new) and drops wires of models that leave; a wire the
+actuary unplugged stays unplugged. Sessions and `.sce` files from the
+decorative-arrow canvas are migrated once (`WIRES_VERSION`,
+`migrateWires`): wires that carried nothing are dropped and today's
+defaults laid down. The IDE's bridged runners honour the same wires (the
+Python Lee–Carter returns its projection; a bridged severity GLM crosses a
+wired statsmodels frequency into the base pure premium).
 
 ---
 

@@ -1,9 +1,9 @@
 // Pipeline planning for the Tools canvas wiring. The wires between model
 // nodes are not decoration: they define a DAG that (a) orders execution so
 // upstream models run first and (b) tells each runner which upstream
-// results to consume (chain-ladder ultimates seeding Bornhuetter-Ferguson's
-// a-priori, a fitted Lee-Carter table pricing the annuity, GBM importances
-// feeding SHAP, …).
+// results to consume (a Lee–Carter or CBD projection pricing the annuity as
+// a cohort, the fitted GBM that SHAP explains, frequency × severity into a
+// pure premium, …). Which wires can exist is modelPorts.ts's typed pins.
 //
 // Kept dependency-free and pure so the plan is unit-testable.
 

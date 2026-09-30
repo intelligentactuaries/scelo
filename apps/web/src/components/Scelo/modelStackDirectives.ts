@@ -11,13 +11,21 @@
 // view, and the assistant is the one holding it.
 
 import { MODEL_BY_ID, MODEL_CATALOG } from "./modelCatalog";
+import { connectWire, createsCycle, disconnectWire, resolveWire, wireInto } from "./modelPorts";
+import type { ModelWire } from "./pipeline";
 import type { SelectedModel } from "./sceloContext";
+
+export type WireOp = { from: string; to: string };
 
 export type ModelDirective = {
   add: Array<{ id: string; rationale?: string }>;
   remove: string[];
   enable: string[];
   disable: string[];
+  /** Plug `from`'s output into `to`'s input (Tools canvas wiring). */
+  wire?: WireOp[];
+  /** Pull that wire out. */
+  unwire?: WireOp[];
 };
 
 export type DirectiveReport = {
@@ -33,6 +41,15 @@ export type DirectiveReport = {
 
 const FENCE_RE = /```scelo-models\s*([\s\S]*?)```/;
 
+/** Every model → model wire the typed pins allow, as "source → target". */
+function wireableFlows(): string[] {
+  const out: string[] = [];
+  for (const s of MODEL_CATALOG) {
+    for (const t of MODEL_CATALOG) if (resolveWire(s.id, t.id)) out.push(`${s.id} → ${t.id}`);
+  }
+  return out;
+}
+
 /** System-prompt addendum teaching the protocol. Appended to every Tools
  *  chat context so hub, per-model, and stage chats can all mutate the stack. */
 export function modelDirectiveProtocol(): string {
@@ -47,6 +64,8 @@ export function modelDirectiveProtocol(): string {
     '{"add":[{"id":"<catalog id>","rationale":"<≤14 words>"}],"remove":["<catalog id>"],"enable":[],"disable":[]}',
     "```",
     `Ids MUST come from this fixed catalog (anything else is refused): ${catalog}.`,
+    'Wiring: to plug one model\'s output into another\'s input, add "wire":[{"from":"<id>","to":"<id>"}] (or "unwire" to pull one out) to the same block. Only these wires exist:',
+    `${wireableFlows().join(", ")}. An input takes one wire: wiring cbd into lifecontingencies unplugs lee-carter. Both models must be attached (add them in the same block).`,
     "There is NO other way to change the stack from chat — never claim a",
     "model was added or locked in without emitting the block. Without a",
     "block, the stack is unchanged. Do not emit a block unless the user",
@@ -90,21 +109,116 @@ export function parseModelDirective(text: string): ModelDirective | null {
     }
     return out;
   };
+  // Wires: {"from","to"} objects, or "a -> b" / "a → b" strings.
+  const wireList = (v: unknown): WireOp[] => {
+    if (!Array.isArray(v)) return [];
+    const out: WireOp[] = [];
+    for (const item of v) {
+      if (typeof item === "string") {
+        const m = /^\s*([\w-]+)\s*(?:->|→|=>)\s*([\w-]+)\s*$/.exec(item);
+        if (m) out.push({ from: m[1], to: m[2] });
+      } else if (item && typeof item === "object") {
+        const it = item as { from?: unknown; to?: unknown };
+        if (typeof it.from === "string" && typeof it.to === "string") {
+          out.push({ from: it.from, to: it.to });
+        }
+      }
+    }
+    return out;
+  };
   const d: ModelDirective = {
     add: addList(r.add),
     remove: strList(r.remove),
     enable: strList(r.enable),
     disable: strList(r.disable),
+    wire: wireList(r.wire),
+    unwire: wireList(r.unwire),
   };
   if (
     d.add.length === 0 &&
     d.remove.length === 0 &&
     d.enable.length === 0 &&
-    d.disable.length === 0
+    d.disable.length === 0 &&
+    (d.wire?.length ?? 0) === 0 &&
+    (d.unwire?.length ?? 0) === 0
   ) {
     return null;
   }
   return d;
+}
+
+export type WireReport = {
+  wired: WireOp[];
+  /** Wires a new one displaced (a pin takes one wire). */
+  replaced: WireOp[];
+  unwired: WireOp[];
+  refused: Array<WireOp & { reason: string }>;
+};
+
+/**
+ * Apply a directive's wire / unwire ops to the canvas wiring. Pure. Both
+ * ends must be attached (`attachedIds` — the stack AFTER the directive's
+ * adds / removes), the pins must agree, and no loop may close.
+ */
+export function applyWireDirective(
+  wires: ModelWire[],
+  d: ModelDirective,
+  attachedIds: Iterable<string>,
+): { next: ModelWire[]; report: WireReport } {
+  const attached = new Set(attachedIds);
+  const report: WireReport = { wired: [], replaced: [], unwired: [], refused: [] };
+  let next = wires;
+  for (const op of d.unwire ?? []) {
+    const after = disconnectWire(next, op.from, op.to);
+    if (after === next) report.refused.push({ ...op, reason: "no such wire" });
+    else report.unwired.push(op);
+    next = after;
+  }
+  for (const op of d.wire ?? []) {
+    const refuse = (reason: string) => report.refused.push({ ...op, reason });
+    if (!MODEL_BY_ID.has(op.from) || !MODEL_BY_ID.has(op.to)) {
+      refuse("not in the catalog");
+      continue;
+    }
+    if (!attached.has(op.from) || !attached.has(op.to)) {
+      refuse("both models must be on the canvas");
+      continue;
+    }
+    const pair = resolveWire(op.from, op.to);
+    if (!pair) {
+      refuse(`${name(op.to)} takes nothing ${name(op.from)} produces`);
+      continue;
+    }
+    if (next.some((w) => w.source === op.from && w.target === op.to)) {
+      refuse("already wired");
+      continue;
+    }
+    const displaced = wireInto(next, op.to, pair.input.id);
+    const others = displaced ? next.filter((w) => w !== displaced) : next;
+    if (createsCycle(others, op.from, op.to)) {
+      refuse("that wire would close a loop");
+      continue;
+    }
+    next = connectWire(next, op.from, op.to);
+    report.wired.push(op);
+    if (displaced) report.replaced.push({ from: displaced.source, to: displaced.target });
+  }
+  return { next, report };
+}
+
+/** Human confirmation of the wire ops, "" when there were none. */
+export function describeWireReport(report: WireReport): string {
+  const arrow = (op: WireOp) => `${name(op.from)} → ${name(op.to)}`;
+  const parts: string[] = [];
+  if (report.wired.length) {
+    const replaced = report.replaced.length
+      ? ` (unplugging ${report.replaced.map(arrow).join(", ")})`
+      : "";
+    parts.push(`✔ wired ${report.wired.map(arrow).join(", ")}${replaced}`);
+  }
+  if (report.unwired.length) parts.push(`✔ unplugged ${report.unwired.map(arrow).join(", ")}`);
+  for (const r of report.refused) parts.push(`✕ ${arrow(r)} refused: ${r.reason}`);
+  return parts.join(" · ");
 }
 
 /** Apply a directive to the current stack. Pure — returns the next stack
@@ -250,6 +364,24 @@ export function parseStackCommand(
   const wantsRemove = REMOVE_VERB.test(text);
   const wantsEnable = ENABLE_VERB.test(text);
   const wantsDisable = DISABLE_VERB.test(text);
+
+  // "wire / connect / plug X into Y" and "unplug / disconnect X from Y".
+  const unwire = /\b(?:unwire|unplug|disconnect)\b(.+?)\bfrom\b(.+)/.exec(text);
+  if (unwire) {
+    const from = catalogIdsIn(unwire[1])[0];
+    const to = catalogIdsIn(unwire[2])[0];
+    if (from && to) {
+      return { add: [], remove: [], enable: [], disable: [], unwire: [{ from, to }] };
+    }
+  }
+  const wire = /\b(?:wire|connect|plug|feed)\b(.+?)\b(?:into|to)\b(.+)/.exec(text);
+  if (wire) {
+    const from = catalogIdsIn(wire[1])[0];
+    const to = catalogIdsIn(wire[2])[0];
+    if (from && to) {
+      return { add: [], remove: [], enable: [], disable: [], wire: [{ from, to }] };
+    }
+  }
 
   // "swap X for Y" / "replace X with Y" → remove X, add Y.
   const swap = /\b(?:swap|replace)\b(.+?)\b(?:for|with)\b(.+)/.exec(text);

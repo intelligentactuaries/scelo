@@ -194,6 +194,13 @@ export type ActivityEvent =
     }
   | {
       ts: number;
+      stage: "tools";
+      kind: "model.wire";
+      /** A Tools-canvas wire plugged in (`connected`) or pulled out. */
+      payload: { source: string; target: string; connected: boolean };
+    }
+  | {
+      ts: number;
       stage: "hard";
       kind: "runs.execute";
       payload: { models: string[]; wired?: number; cyclicWiring?: boolean };

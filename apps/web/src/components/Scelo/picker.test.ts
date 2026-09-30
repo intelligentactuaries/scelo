@@ -12,9 +12,11 @@ import { MODEL_CATALOG } from "./modelCatalog";
 import {
   dataSignature,
   fetchModelPicks,
+  finalizePick,
   heuristicPick,
   switchOffInapplicable,
 } from "./modelPicker";
+import { requiredProducers } from "./modelPorts";
 import { modelApplicability, runModel } from "./modelRunner";
 
 function pickFor(key: "claims" | "climate" | "dirty" | "lifelib-mp" | "wmtr-scenarios") {
@@ -562,7 +564,10 @@ describe("picks are checked against the data before they reach Hard", () => {
   test("applicability agrees with what the runner actually does, model by model", () => {
     for (const m of MODEL_CATALOG) {
       const a = modelApplicability(m.id, demo);
-      const r = runModel(m.id, demo);
+      // Run it as the canvas would: with what it cannot run without wired
+      // in (SHAP explains the GBM plugged into it).
+      const upstream = new Map(requiredProducers(m.id).map((p) => [p, runModel(p, demo)] as const));
+      const r = runModel(m.id, demo, upstream);
       // Whatever the check rejects, the runner reports as not applicable.
       if (!a.ok) expect(r.notApplicable).toBe(true);
       // Whatever the runner reports as not applicable, the check rejects.
@@ -579,5 +584,26 @@ describe("picks are checked against the data before they reach Hard", () => {
   test("a pick that fits the data passes through untouched", () => {
     const fits = { ...aiPick, selected: [aiPick.selected[0], aiPick.selected[3]] };
     expect(switchOffInapplicable(fits, demo)).toBe(fits);
+  });
+
+  test("SHAP arrives with the GBM it explains (and the canvas wires them)", () => {
+    const shapOnly = {
+      ...aiPick,
+      selected: [
+        { id: "descriptive", rationale: "baseline" },
+        { id: "shap", rationale: "which drivers matter" },
+      ],
+    };
+    const res = finalizePick(shapOnly, demo);
+    expect(res.selected.map((s) => s.id)).toEqual(["descriptive", "gbm", "shap"]);
+    expect(res.selected[1].rationale).toContain("SHAP");
+    expect(res.selected.every((s) => !s.disabled)).toBe(true);
+    // Already paired: nothing added.
+    const paired = { ...shapOnly, selected: [{ id: "gbm", rationale: "" }, ...shapOnly.selected] };
+    expect(finalizePick(paired, demo).selected.map((s) => s.id)).toEqual([
+      "gbm",
+      "descriptive",
+      "shap",
+    ]);
   });
 });

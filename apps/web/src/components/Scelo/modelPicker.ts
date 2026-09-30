@@ -5,7 +5,9 @@
 import { hasLocalLlmBridge, llmChatActive } from "@/lib/aiProviders";
 import { streamOrchestrator } from "@/lib/api";
 import type { ColumnMeta, Dataset } from "@scelo/core";
+import { detectDataRoles } from "./dataRoles";
 import { type CatalogModel, MODEL_BY_ID, MODEL_CATALOG, type ModelFamily } from "./modelCatalog";
+import { PORT_TYPES, requiredProducers } from "./modelPorts";
 import { modelApplicability } from "./modelRunner";
 
 export type PickResult = {
@@ -284,7 +286,7 @@ function basePick(sig: DataSignature): PickResult {
         {
           id: "bornhuetter-ferguson",
           rationale:
-            "Useful when later development periods are sparse — borrows from a prior loss ratio.",
+            "Useful when later development is sparse — blends the pattern with an a-priori ultimate (the book average: no plan loss ratio in the data).",
         },
         {
           id: "bootstrap-ibnr",
@@ -469,16 +471,41 @@ function basePick(sig: DataSignature): PickResult {
         "Yield-curve quotes: Smith-Wilson fit + curve bundle, with an ESG for stochastic extensions.",
     };
   }
-  // Fallback — descriptive only with a couple of general companions.
+  // Fallback — no family signal. Offer what a generic table can actually
+  // feed rather than hopeful candidates that arrive switched off: descriptive
+  // stats always; a boosted model with its SHAP explanation when there is
+  // something to predict; the workspace bottleneck when several numeric
+  // drivers want compressing; a frequency GLM only when a claim count and
+  // rating factors are really there.
+  const selected: PickResult["selected"] = [
+    { id: "descriptive", rationale: "Headline summary while we figure out the right family." },
+  ];
+  if (sig.numNumeric >= 2 && sig.rowCount >= 50) {
+    selected.push(
+      {
+        id: "gbm",
+        rationale: "Generic nonlinear baseline: predicts the target column, scored on a holdout.",
+      },
+      { id: "shap", rationale: "Which columns drive the GBM's predictions, and which way." },
+    );
+  }
+  if (sig.numNumeric >= 3) {
+    selected.push({
+      id: "workspace-bottleneck",
+      rationale: `${sig.numNumeric} numeric columns — compress them into a few nameable drivers.`,
+    });
+  }
+  if (sig.hasClaimsCount && sig.numCategorical >= 1) {
+    selected.push({
+      id: "glm-frequency",
+      rationale: "Claim-count column with rating factors — Poisson frequency GLM.",
+    });
+  }
   return {
     domain: "general",
-    selected: [
-      { id: "descriptive", rationale: "Headline summary while we figure out the right family." },
-      { id: "glm-frequency", rationale: "Generic candidate if claim-like signal emerges." },
-      { id: "gbm", rationale: "Generic nonlinear baseline for any tabular regression." },
-    ],
+    selected,
     summary:
-      "No strong domain signal detected — descriptive stats plus generic GLM/GBM candidates.",
+      "No strong domain signal detected — descriptive stats plus the generic models these columns support.",
   };
 }
 
@@ -525,7 +552,11 @@ function describeColumnsForPrompt(metas: ColumnMeta[]): string {
         const range =
           m.min !== undefined && m.max !== undefined ? `, range=[${m.min}, ${m.max}]` : "";
         const centre =
-          m.median !== undefined ? `, median=${m.median}` : m.mean !== undefined ? `, mean=${m.mean}` : "";
+          m.median !== undefined
+            ? `, median=${m.median}`
+            : m.mean !== undefined
+              ? `, mean=${m.mean}`
+              : "";
         const out = m.outlierCount ? `, outliers=${m.outlierCount}` : "";
         const mixed = m.mixedCount ? `, mixed_text=${m.mixedCount}` : "";
         return `  • ${m.name} (num, ${m.unique} unique${range}${centre}${miss}${out}${mixed})`;
@@ -552,8 +583,25 @@ function buildPickerPrompt(args: {
 }): string {
   const { dataset, metas, variant, previousIds } = args;
   const catalogLines = MODEL_CATALOG.map(
-    (m) => `- "${m.id}" | ${m.family} | ${m.description}${m.needs ? ` | NEEDS: ${m.needs}` : ""}`,
+    (m) =>
+      `- "${m.id}" | ${m.family} | ${m.description}${m.needs ? ` | NEEDS: ${m.needs}` : ""}${
+        m.illustrative ? ` | ILLUSTRATIVE: ${m.illustrative}` : ""
+      }`,
   ).join("\n");
+  // What the dataset can actually feed, found by the same detectors the
+  // models run — the picker's ground truth, not column-name guesswork.
+  const roles = detectDataRoles(dataset);
+  const provides =
+    roles.length > 0
+      ? roles
+          .map(
+            (r) =>
+              `  • ${PORT_TYPES[r.type].label}: ${r.columns.slice(0, 6).join(", ")}${
+                r.columns.length > 6 ? ` +${r.columns.length - 6} more` : ""
+              } (${r.evidence})${r.caveat ? ` — note: ${r.caveat}` : ""}`,
+          )
+          .join("\n")
+      : "  • nothing a catalog model reads";
 
   const variantNudge =
     variant > 0
@@ -570,11 +618,16 @@ rows: ${dataset.rows.length}
 columns:
 ${describeColumnsForPrompt(metas)}
 
-CATALOG (id | family | description | NEEDS) — pick ids ONLY from this list:
+DATA PROVIDES (detected by the same checks the models run — this is what the data can feed):
+${provides}
+
+CATALOG (id | family | description | NEEDS | ILLUSTRATIVE) — pick ids ONLY from this list:
 ${catalogLines}
 
 RULES
-- A model runs ONLY when the dataset has what its NEEDS field names. Never pick a model whose inputs are absent — a mortality model on data with no age × year death rates, a reserving model without a claims triangle, a lifelib model without model points. Column names that merely sound related (e.g. "mortality_trend", "life_exp_60") are not a mortality table.
+- A model runs ONLY when the dataset has what its NEEDS field names — check it against DATA PROVIDES. Never pick a model whose inputs are absent — a mortality model on data with no age × year death rates, a reserving model without a claims triangle, a lifelib model without model points. Column names that merely sound related (e.g. "mortality_trend", "life_exp_60") are not a mortality table.
+- "shap" explains a fitted "gbm" — never pick shap without gbm.
+- ILLUSTRATIVE models compute from built-in assumptions, not this data; pick one only when the data is of its kind (e.g. capital aggregates for scr-standard), and say so in its rationale.
 - Pick 3 to 6 models that fit this data shape — every model the data genuinely supports, not just the headline one.
 - Prefer one dominant family (e.g. reserving) and optionally 1-2 models from related families.
 - Use ids EXACTLY as written above; do not invent new ids.
@@ -676,6 +729,27 @@ function coercePickResult(raw: unknown): PickResult | null {
 }
 
 /**
+ * Every pick path (LLM, strong-signal heuristic, offline fallback, the macro
+ * autopick) finishes here: first add what a pick cannot run without — SHAP
+ * explains a fitted model, so it arrives with the GBM that makes it (the
+ * Tools canvas then wires them) — then switch off what the data cannot feed.
+ */
+export function finalizePick(pick: PickResult, dataset: Dataset): PickResult {
+  const ids = new Set(pick.selected.map((s) => s.id));
+  const selected: PickResult["selected"] = [];
+  for (const s of pick.selected) {
+    for (const need of requiredProducers(s.id)) {
+      if (ids.has(need)) continue;
+      ids.add(need);
+      const name = MODEL_BY_ID.get(s.id)?.name ?? s.id;
+      selected.push({ id: need, rationale: `Supplies the fitted model ${name} explains.` });
+    }
+    selected.push(s);
+  }
+  return switchOffInapplicable({ ...pick, selected }, dataset);
+}
+
+/**
  * Switch off picks the dataset cannot feed, and say so. The LLM picks from
  * one-line descriptions and — reported 2026-09-29 — attached Lee–Carter
  * ("rank-1 baseline on mortality_trend") and life contingencies to the
@@ -759,7 +833,7 @@ export async function fetchModelPicks(args: {
   // the LLM never has the chance to ignore the family-routing prompt.
   const sig = dataSignature(args.dataset, args.metas);
   const strong = strongSignalPick(sig, args.variant);
-  if (strong) return switchOffInapplicable(strong, args.dataset);
+  if (strong) return finalizePick(strong, args.dataset);
 
   const prompt = buildPickerPrompt(args);
 
@@ -774,7 +848,7 @@ export async function fetchModelPicks(args: {
     const parsedBridge = extractFirstJson(res.text ?? "");
     const coercedBridge = coercePickResult(parsedBridge);
     if (!coercedBridge) throw new Error("could not parse a model pick from the model reply");
-    return switchOffInapplicable(coercedBridge, args.dataset);
+    return finalizePick(coercedBridge, args.dataset);
   }
 
   let buffer = "";
@@ -798,7 +872,7 @@ export async function fetchModelPicks(args: {
   const parsed = extractFirstJson(buffer);
   const coerced = coercePickResult(parsed);
   if (!coerced) throw new Error("could not parse a model pick from the model reply");
-  return switchOffInapplicable(coerced, args.dataset);
+  return finalizePick(coerced, args.dataset);
 }
 
 // Re-export so callers don't need two imports

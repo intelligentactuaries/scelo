@@ -1,7 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import {
   applyModelDirective,
+  applyWireDirective,
   describeDirectiveReport,
+  describeWireReport,
+  modelDirectiveProtocol,
   parseModelDirective,
   parseStackCommand,
   replaceDirectiveBlock,
@@ -152,5 +155,89 @@ describe("parseStackCommand — deterministic chat commands", () => {
   test("plain conversation falls through to the provider", () => {
     expect(parseStackCommand("why did you pick these?", [], attached)).toBeNull();
     expect(parseStackCommand("add more detail to your explanation", [], attached)).toBeNull();
+  });
+});
+
+describe("wiring from chat — wire / unwire", () => {
+  const mortality: SelectedModel[] = [
+    { id: "lee-carter", enabled: true, source: "ai" },
+    { id: "cbd", enabled: true, source: "ai" },
+    { id: "lifecontingencies", enabled: true, source: "ai" },
+  ];
+  const ids = mortality.map((m) => m.id);
+  const lcWired = [{ source: "lee-carter", target: "lifecontingencies" }];
+
+  test("a wire-only block parses; objects and 'a -> b' strings both work", () => {
+    const d = parseModelDirective(
+      '```scelo-models\n{"wire":[{"from":"cbd","to":"lifecontingencies"},"gbm -> shap"],"unwire":["lee-carter → lifecontingencies"]}\n```',
+    );
+    expect(d?.wire).toEqual([
+      { from: "cbd", to: "lifecontingencies" },
+      { from: "gbm", to: "shap" },
+    ]);
+    expect(d?.unwire).toEqual([{ from: "lee-carter", to: "lifecontingencies" }]);
+  });
+
+  test("wiring CBD into the annuity unplugs Lee–Carter, and says so", () => {
+    const { next, report } = applyWireDirective(
+      lcWired,
+      {
+        add: [],
+        remove: [],
+        enable: [],
+        disable: [],
+        wire: [{ from: "cbd", to: "lifecontingencies" }],
+      },
+      ids,
+    );
+    expect(next).toEqual([{ source: "cbd", target: "lifecontingencies" }]);
+    expect(describeWireReport(report)).toBe(
+      "✔ wired Cairns–Blake–Dowd → Life Contingencies (unplugging Lee–Carter → Life Contingencies)",
+    );
+  });
+
+  test("refusals: not attached, no matching pins, no such wire", () => {
+    const { next, report } = applyWireDirective(
+      lcWired,
+      {
+        add: [],
+        remove: [],
+        enable: [],
+        disable: [],
+        wire: [
+          { from: "gbm", to: "shap" },
+          { from: "cbd", to: "lee-carter" },
+        ],
+        unwire: [{ from: "cbd", to: "lifecontingencies" }],
+      },
+      ids,
+    );
+    expect(next).toBe(lcWired);
+    expect(report.refused.map((r) => r.reason)).toEqual([
+      "no such wire",
+      "both models must be on the canvas",
+      "Lee–Carter takes nothing Cairns–Blake–Dowd produces",
+    ]);
+  });
+
+  test("deterministic commands: wire / connect / plug … into, unplug … from", () => {
+    expect(parseStackCommand("wire CBD into life contingencies", [], mortality)?.wire).toEqual([
+      { from: "cbd", to: "lifecontingencies" },
+    ]);
+    expect(parseStackCommand("connect gbm to shap please", [], mortality)?.wire).toEqual([
+      { from: "gbm", to: "shap" },
+    ]);
+    expect(
+      parseStackCommand("unplug lee-carter from lifecontingencies", [], mortality)?.unwire,
+    ).toEqual([{ from: "lee-carter", to: "lifecontingencies" }]);
+    // No catalog ids → not a command.
+    expect(parseStackCommand("what data do you feed to it?", [], mortality)).toBeNull();
+  });
+
+  test("the protocol lists exactly the wires the pins allow", () => {
+    const p = modelDirectiveProtocol();
+    expect(p).toContain("cbd → lifecontingencies");
+    expect(p).toContain("gbm → shap");
+    expect(p).not.toContain("chain-ladder → bornhuetter-ferguson");
   });
 });

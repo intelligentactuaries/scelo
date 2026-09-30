@@ -40,10 +40,10 @@ import ReactFlow, {
 } from "reactflow";
 import "reactflow/dist/style.css";
 import { emitWorkspaceFact } from "@/lib/workspaceFactsBus";
+import { swarmApiLabel, swarmIsBundled, swarmStartHint } from "../../lib/swarmConfig";
 import { SwarmLiveDot } from "../SwarmLiveDot";
 import { useSwarmProbe } from "../SwarmStatus";
 import { SWARM_DOCS_URL, swarmStartCommand } from "../workspace/SwarmPanel";
-import { swarmApiLabel, swarmIsBundled, swarmStartHint } from "../../lib/swarmConfig";
 import { ChatInputPill } from "./ChatInputPill";
 import { ClimateDataPanel, isClimateFamilyModel } from "./ClimateDataPanel";
 import { CouncilDeliberationOverlay } from "./CouncilDeliberationOverlay";
@@ -55,7 +55,6 @@ import { SceloLogo } from "./SceloLogo";
 import { ScrollFade } from "./ScrollFade";
 import { type Dataset, formatNumber } from "./SoftDataWorkstation";
 import { StageChatPanel } from "./StageChatPanel";
-import { useActuarialTableChat } from "./useActuarialTableChat";
 import { UploadIndicator, nextPaint } from "./UploadIndicator";
 import { executiveSummary } from "./boardPackSummary";
 import { type CouncilSynthesis, conveneCouncil, swarmApiUrl } from "./forecast/councilClient";
@@ -74,6 +73,7 @@ import {
   MODEL_BY_ID,
   type ModelFamily,
 } from "./modelCatalog";
+import { resolveWire } from "./modelPorts";
 import {
   BRIDGED_MODEL_IDS,
   type NumericColumnProfile,
@@ -87,6 +87,7 @@ import {
 import { modelTheoryFor } from "./modelTheory";
 import { pipelinePlan } from "./pipeline";
 import { type SelectedModel, useScelo } from "./sceloContext";
+import { useActuarialTableChat } from "./useActuarialTableChat";
 import { useNodeChat } from "./useNodeChat";
 import {
   type FairnessReadout,
@@ -431,7 +432,11 @@ function ResultNode({ data }: NodeProps<ResultNodeData>) {
                   : "computed in the browser"
             }
           >
-            {run.source === "r-bridge" ? "R" : run.source === "python-bridge" ? "python" : "in-browser"}
+            {run.source === "r-bridge"
+              ? "R"
+              : run.source === "python-bridge"
+                ? "python"
+                : "in-browser"}
           </span>
         )}
       </div>
@@ -749,7 +754,11 @@ function buildHardStageContext(args: {
           ? ` [wired ← ${r.wiredFrom.map((w) => w.id).join(", ")}]`
           : "";
       const src =
-        r.source === "python-bridge" ? " · python-bridge" : r.source === "r-bridge" ? " · r-bridge" : "";
+        r.source === "python-bridge"
+          ? " · python-bridge"
+          : r.source === "r-bridge"
+            ? " · r-bridge"
+            : "";
       lines.push(
         `  • ${r.modelId} (${r.family}, ${statusWord(r)}${src}): ${headline}${wired} — ${r.blurb}`,
       );
@@ -2955,7 +2964,9 @@ function CouncilAttachCta({ focused }: { focused: RunResult }) {
       )}
       {error && (
         <div className="mt-1.5 text-[10px] text-error">
-          {/failed to fetch/i.test(error) ? `swarm server unreachable at ${swarmApiLabel()}` : error}
+          {/failed to fetch/i.test(error)
+            ? `swarm server unreachable at ${swarmApiLabel()}`
+            : error}
           <div className="text-[9px] text-fg-dim mt-0.5">
             {/timed out/i.test(error)
               ? "A large council (192 agents + society) on a local model can take a long time. Try a smaller agent count, enable “Skip society pulse”, or point the swarm at a faster provider — the run may still be finishing server-side."
@@ -3440,8 +3451,8 @@ export function HardDataWorkstation() {
     });
     // The Tools wiring that ordered this batch and fed results downstream
     // is part of the story the canvas tells — draw it here too, dashed and
-    // labelled, so "why does BF cite chain-ladder ultimates?" is visible
-    // where the results live.
+    // labelled with what flowed, so "why is the annuity priced on the CBD
+    // cohort?" is visible where the results live.
     const present = new Set(runsList.map((r) => r.modelId));
     const wireEdges: Edge[] = modelWires
       .filter((w) => present.has(w.source) && present.has(w.target))
@@ -3459,7 +3470,8 @@ export function HardDataWorkstation() {
           type: "smoothstep",
           pathOptions: { offset: 22, borderRadius: 8 },
           animated: false,
-          label: "feeds",
+          // What flows, in the Tools canvas's pin vocabulary.
+          label: resolveWire(w.source, w.target)?.output.label ?? "feeds",
           labelStyle: { fill: color, fontSize: 8, fontFamily: "'SN Pro', sans-serif" },
           labelBgStyle: { fill: "rgb(var(--rgb-bg))", opacity: 0.8 },
           style: { stroke: color, strokeWidth: 1.1, strokeDasharray: "5 4", opacity: 0.75 },

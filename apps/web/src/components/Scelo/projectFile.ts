@@ -130,6 +130,9 @@ export function parseSce(text: string): ParsedSce {
     pickSummary: session.pickSummary ?? null,
     picksDatasetName: session.picksDatasetName ?? null,
     modelWires: Array.isArray(session.modelWires) ? session.modelWires : [],
+    // Kept so a file saved under typed pins is not re-migrated (restore
+    // lays default wiring down only for pre-typed files).
+    ...(typeof session.wiresVersion === "number" ? { wiresVersion: session.wiresVersion } : {}),
     runs: session.runs && typeof session.runs === "object" ? session.runs : {},
     derivedColumns:
       session.derivedColumns && typeof session.derivedColumns === "object"

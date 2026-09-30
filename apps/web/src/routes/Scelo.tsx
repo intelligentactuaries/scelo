@@ -16,16 +16,12 @@ import { HardDataWorkstation } from "@/components/Scelo/HardDataWorkstation";
 import { SceloFlow } from "@/components/Scelo/SceloFlow";
 import { SceloLogo } from "@/components/Scelo/SceloLogo";
 import {
-  clearSceloSession,
-  SceloProvider,
-  useScelo,
-} from "@/components/Scelo/sceloContext";
-import {
   SAMPLE_OPTIONS_LIST,
   type SampleKey,
   SoftDataWorkstation,
 } from "@/components/Scelo/SoftDataWorkstation";
 import { ToolsWorkstation } from "@/components/Scelo/ToolsWorkstation";
+import { SceloProvider, clearSceloSession, useScelo } from "@/components/Scelo/sceloContext";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { useLocation } from "react-router-dom";
 
@@ -64,7 +60,12 @@ function SceloBootstrap() {
     setDomain,
     runs,
     setRuns,
+    modelWires,
   } = useScelo();
+  // Read after the async imports below: the provider wires a fresh pick in
+  // an effect that lands after this component's.
+  const modelWiresRef = useRef(modelWires);
+  modelWiresRef.current = modelWires;
   const fired = useRef(false);
   const ranPicks = useRef(false);
   const ranAutorun = useRef(false);
@@ -93,15 +94,13 @@ function SceloBootstrap() {
     if (sp.get("autopick") !== "1" && sp.get("autorun") !== "1") return;
     ranPicks.current = true;
     void (async () => {
-      const { dataSignature, heuristicPick, switchOffInapplicable } = await import(
+      const { dataSignature, heuristicPick, finalizePick } = await import(
         "@/components/Scelo/modelPicker"
       );
-      const { summariseDataset } = await import(
-        "@/components/Scelo/SoftDataWorkstation"
-      );
+      const { summariseDataset } = await import("@/components/Scelo/SoftDataWorkstation");
       const metas = summariseDataset(dataset);
       const sig = dataSignature(dataset, metas);
-      const pick = switchOffInapplicable(heuristicPick(sig), dataset);
+      const pick = finalizePick(heuristicPick(sig), dataset);
       setDomain(pick.domain);
       setSelectedModels(
         pick.selected.map((s) => ({
@@ -125,17 +124,25 @@ function SceloBootstrap() {
     ranAutorun.current = true;
     void (async () => {
       const { runModel } = await import("@/components/Scelo/modelRunner");
+      const { pipelinePlan } = await import("@/components/Scelo/pipeline");
       const next: Record<string, ReturnType<typeof runModel>> = {};
-      for (const m of selectedModels) {
-        if (!m.enabled) continue;
+      // Same plan as Hard Data: wire sources first, their results handed on.
+      const enabled = selectedModels.filter((m) => m.enabled).map((m) => m.id);
+      const plan = pipelinePlan(enabled, modelWiresRef.current);
+      for (const id of plan.order) {
+        const upstream = new Map(
+          (plan.upstreamOf.get(id) ?? [])
+            .filter((src) => next[src])
+            .map((src) => [src, next[src]] as const),
+        );
         try {
-          next[m.id] = runModel(m.id, dataset);
+          next[id] = runModel(id, dataset, upstream);
         } catch (e) {
           // Surface the offending model + error to the console so the
           // debug screenshot has something to grep on. The runner already
           // catches most failures itself; this is the belt-and-braces
           // path for runtime exceptions in the runner dispatch.
-          console.error("[autorun] model", m.id, "threw:", e);
+          console.error("[autorun] model", id, "threw:", e);
         }
       }
       setRuns(next);
@@ -159,9 +166,7 @@ function SceloRoutes() {
   // Tracked client-side in state (not a ref) so a re-render fires
   // when a new stage joins the visited set : otherwise the freshly-
   // mounted workstation wouldn't paint until the next render trigger.
-  const [visited, setVisited] = useState<Set<typeof stage>>(
-    () => new Set([stage]),
-  );
+  const [visited, setVisited] = useState<Set<typeof stage>>(() => new Set([stage]));
   useEffect(() => {
     setVisited((prev) => (prev.has(stage) ? prev : new Set(prev).add(stage)));
   }, [stage]);

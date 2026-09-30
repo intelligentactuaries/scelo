@@ -345,7 +345,7 @@ describe("GBM / SHAP · fitted, holdout-scored, exactly attributed", () => {
     expect(gbm.detail?.target).toBe("survival_to_80");
     expect(gbm.headline.label).toContain("R² (holdout)");
     expect(gbm.headline.value).toBeGreaterThan(0.9);
-    const shap = runModel("shap", demo);
+    const shap = runModel("shap", demo, new Map([["gbm", gbm]]));
     expect(shap.status).toBe("done");
     const ranked = (shap.detail?.importances as Array<{ feature: string }>).map((i) => i.feature);
     expect(ranked.slice(0, 2).sort()).toEqual(["mortality_trend", "smoking_index"]);
@@ -365,7 +365,8 @@ describe("GBM / SHAP · fitted, holdout-scored, exactly attributed", () => {
       columns: ["a", "b"],
       rows: Array.from({ length: 30 }, (_, i) => ({ a: i, b: i * 2 })),
     };
-    const r = runModel("shap", numericOnly);
+    const gbm = runModel("gbm", numericOnly);
+    const r = runModel("shap", numericOnly, new Map([["gbm", gbm]]));
     expect(r.status).toBe("error");
     expect(r.error).toContain("need at least 50");
   });
@@ -513,27 +514,35 @@ describe("wired pipeline · upstream results change downstream runs", () => {
     ] as Row[],
   };
 
-  test("BF a-priori comes from the wired chain-ladder ultimates", () => {
+  test("BF keeps an independent prior — a chain-ladder prior would just BE chain ladder", () => {
     const cl = runModel("chain-ladder", triangle);
     expect(cl.status).toBe("done");
-    const standalone = runModel("bornhuetter-ferguson", triangle);
-    const wired = runModel("bornhuetter-ferguson", triangle, new Map([["chain-ladder", cl]]));
-    expect(wired.status).toBe("done");
-    expect(wired.wiredFrom?.[0]?.id).toBe("chain-ladder");
-    expect(wired.detail?.aprioriSource).toBe("chain-ladder");
-    expect(standalone.detail?.aprioriSource).toBe("book-average");
-    // The seeded prior must actually move the reserve.
-    expect(wired.headline.value).not.toBe(standalone.headline.value);
+    const bf = runModel("bornhuetter-ferguson", triangle);
+    expect(bf.detail?.aprioriSource).toBe("book-average");
+    expect(bf.headline.value).not.toBeCloseTo(cl.headline.value, 0);
+    // Why the canvas has no chain ladder → BF wire: BF with the CL ultimate
+    // as its prior reproduces the CL reserve exactly, origin by origin —
+    // Ĉ·F × (1 − 1/F) = Ĉ·(F − 1).
+    const cdf = cl.detail?.cdf as number[];
+    const ult = cl.detail?.ultByOrigin as number[];
+    const lastK = [2, 1, 0]; // each origin's latest development index
+    const clSeeded = ult.reduce((s, u, i) => s + u * (1 - 1 / cdf[lastK[i]]), 0);
+    expect(clSeeded).toBeCloseTo(cl.headline.value, 9);
+    // A stray upstream result changes nothing: reserving methods take no
+    // model inputs.
+    const fed = runModel("bornhuetter-ferguson", triangle, new Map([["chain-ladder", cl]]));
+    expect(fed.headline.value).toBe(bf.headline.value);
+    expect(fed.wiredFrom).toBeUndefined();
   });
 
-  test("Mack and bootstrap centre on the wired chain-ladder estimate", () => {
+  test("Mack and bootstrap refit chain ladder themselves — no wire needed", () => {
     const cl = runModel("chain-ladder", triangle);
-    const mack = runModel("mack", triangle, new Map([["chain-ladder", cl]]));
-    expect(mack.wiredFrom?.[0]?.id).toBe("chain-ladder");
+    const mack = runModel("mack", triangle);
     expect(mack.headline.value).toBe(cl.headline.value);
+    expect(mack.wiredFrom).toBeUndefined();
     const boot = runModel("bootstrap-ibnr", triangle, new Map([["chain-ladder", cl]]));
-    expect(boot.wiredFrom?.[0]?.id).toBe("chain-ladder");
     expect(boot.headline.value).toBe(cl.headline.value);
+    expect(boot.wiredFrom).toBeUndefined();
   });
 
   test("Mack SE is a sane fraction of the reserve, not a blow-up", () => {
@@ -575,11 +584,21 @@ describe("wired pipeline · upstream results change downstream runs", () => {
     expect(shap.wiredFrom?.[0]?.id).toBe("gbm");
     expect(shap.detail?.source).toBe("wired-gbm");
     expect(shap.secondary[0]?.label.startsWith(importances[0]?.feature ?? "?")).toBe(true);
-    // Standalone SHAP refits the same deterministic model: same attribution,
-    // only the provenance differs.
+  });
+
+  test("SHAP with no GBM wired in has nothing to explain — and says where to plug one", () => {
     const alone = runModel("shap", motor);
-    expect(alone.wiredFrom).toBeUndefined();
-    expect(alone.detail?.importances).toEqual(shap.detail?.importances);
+    expect(alone.status).toBe("error");
+    expect(alone.notApplicable).toBe(true);
+    expect(alone.error).toContain("no GBM feeds it");
+    expect(alone.error).toContain("model to explain");
+    // A wired GBM that could not fit passes its reason through.
+    const tiny: Dataset = { name: "t.csv", columns: ["a", "b"], rows: [{ a: 1, b: 2 }] };
+    const failed = runModel("gbm", tiny);
+    expect(failed.status).toBe("error");
+    const shap = runModel("shap", tiny, new Map([["gbm", failed]]));
+    expect(shap.notApplicable).toBe(true);
+    expect(shap.error).toContain("the wired GBM did not fit");
   });
 
   test("the reported case: no mortality table → no Lee–Carter / CBD / annuity numbers", () => {
@@ -641,11 +660,38 @@ describe("wired pipeline · upstream results change downstream runs", () => {
   });
 
   test("failed upstream results are ignored (no wiredFrom)", () => {
-    const bad = runModel("chain-ladder", motor); // motor has no triangle
-    expect(bad.status).toBe("error");
-    const bf = runModel("bornhuetter-ferguson", triangle, new Map([["chain-ladder", bad]]));
-    expect(bf.wiredFrom).toBeUndefined();
-    expect(bf.detail?.aprioriSource).toBe("book-average");
+    const bad = runModel("esg", motor);
+    const failed = { ...bad, status: "error" as const, error: "boom" };
+    const scr = runModel("scr-standard", triangle, new Map([["esg", failed]]));
+    expect(scr.wiredFrom).toBeUndefined();
+    expect(scr.detail?.intStress).toBe(0);
+  });
+
+  test("a wired CBD prices the annuity on its projected cohort", () => {
+    const rows: Row[] = [];
+    for (let year = 1995; year <= 2019; year++) {
+      for (let age = 50; age <= 100; age++) {
+        rows.push({
+          year,
+          age,
+          qx: Math.min(0.9, 0.00005 * Math.exp(0.1 * age) * 0.985 ** (year - 1995)),
+        });
+      }
+    }
+    const table: Dataset = { name: "hmd.csv", columns: ["year", "age", "qx"], rows };
+    const cbd = runModel("cbd", table);
+    expect(cbd.status).toBe("done");
+    const standalone = runModel("lifecontingencies", table);
+    const wired = runModel("lifecontingencies", table, new Map([["cbd", cbd]]));
+    expect(wired.detail?.mortalitySource).toBe("cbd");
+    expect(wired.wiredFrom?.[0]?.id).toBe("cbd");
+    // Improving cohort → longer-lived annuitant → dearer annuity.
+    expect(wired.headline.value).toBeGreaterThan(standalone.headline.value);
+    const q = wired.detail?.q as number[];
+    expect(q.length).toBe(10);
+    // Same projection the CBD card plots: the cohort's first year IS the
+    // card's first projected q at the headline age.
+    expect(q[0]).toBeCloseTo((cbd.detail?.qx as number[])[0], 12);
   });
 });
 

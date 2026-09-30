@@ -18,6 +18,7 @@ import {
 import type { Dataset, Filter } from "./SoftDataWorkstation";
 import { type ActivityEvent, isDuplicateOfLast, trimEventsPreservingAnchors } from "./activityLog";
 import type { ModelFamily } from "./modelCatalog";
+import { autoWire, sanitizeWires } from "./modelPorts";
 import type { RunResult } from "./modelRunner";
 import type { ModelWire } from "./pipeline";
 
@@ -101,6 +102,9 @@ export interface StoredSessionSnapshot {
   picksDatasetName: string | null;
   /** Model-to-model wires drawn on the Tools canvas — the execution DAG. */
   modelWires: ModelWire[];
+  /** Wiring contract the wires were saved under (see WIRES_VERSION).
+   *  Absent on snapshots from the decorative-arrow canvas. */
+  wiresVersion?: number;
   runs: Record<string, RunResult>;
   derivedColumns: Record<string, string>;
   /** Serialised as array since JSON doesn't carry Set. */
@@ -109,6 +113,27 @@ export interface StoredSessionSnapshot {
   /** Generated actuarial tables (see WorkspaceTable). Optional so older
    *  snapshots without the field still restore. */
   tables?: WorkspaceTable[];
+}
+
+// 2 = typed pins (modelPorts.ts): every wire joins a real output to a real
+// input. Snapshots saved before carry the old canvas's arrows — some fed
+// nothing (mack → bootstrap), some degenerated (chain ladder → BF), and the
+// real defaults were only ever laid down while the Tools canvas was open.
+export const WIRES_VERSION = 2;
+
+/** Bring a snapshot's wires up to the typed contract: drop wires that carry
+ *  nothing, and — once, for a pre-typed snapshot — lay down the default
+ *  wiring its models would get today (GBM → SHAP, Lee–Carter → annuity …). */
+export function migrateWires(snap: {
+  selectedModels: SelectedModel[];
+  modelWires: ModelWire[];
+  wiresVersion?: number;
+}): ModelWire[] {
+  const ids = snap.selectedModels.map((m) => m.id);
+  const clean = sanitizeWires(snap.modelWires, ids);
+  return snap.wiresVersion === WIRES_VERSION
+    ? clean
+    : autoWire(snap.selectedModels, clean, new Set(ids));
 }
 
 const EMPTY_SESSION: StoredSessionSnapshot = {
@@ -156,17 +181,23 @@ function loadStoredSession(): StoredSessionSnapshot {
     const raw = localStorage.getItem(SESSION_STORAGE_KEY);
     if (!raw) return EMPTY_SESSION;
     const parsed = JSON.parse(raw) as Partial<StoredSessionSnapshot>;
+    const selectedModels = Array.isArray(parsed.selectedModels)
+      ? (parsed.selectedModels as SelectedModel[])
+      : [];
     return {
       dataset: (parsed.dataset as Dataset | null) ?? null,
       filters: Array.isArray(parsed.filters) ? (parsed.filters as Filter[]) : [],
-      selectedModels: Array.isArray(parsed.selectedModels)
-        ? (parsed.selectedModels as SelectedModel[])
-        : [],
+      selectedModels,
       domain: (parsed.domain as ModelFamily | null) ?? null,
       pickSummary: typeof parsed.pickSummary === "string" ? parsed.pickSummary : null,
       picksDatasetName:
         typeof parsed.picksDatasetName === "string" ? parsed.picksDatasetName : null,
-      modelWires: Array.isArray(parsed.modelWires) ? (parsed.modelWires as ModelWire[]) : [],
+      modelWires: migrateWires({
+        selectedModels,
+        modelWires: Array.isArray(parsed.modelWires) ? (parsed.modelWires as ModelWire[]) : [],
+        wiresVersion: parsed.wiresVersion,
+      }),
+      wiresVersion: WIRES_VERSION,
       runs:
         parsed.runs && typeof parsed.runs === "object"
           ? (parsed.runs as Record<string, RunResult>)
@@ -462,6 +493,32 @@ export function SceloProvider({ children }: { children: ReactNode }) {
     storedSession.picksDatasetName,
   );
   const [modelWires, setModelWires] = useState<ModelWire[]>(storedSession.modelWires);
+  // Wiring follows the stack wherever it changes — the Tools canvas, the
+  // macro autopick, a chat directive: models that join are plugged into
+  // what they can consume / feed (autoWire), wires of models that leave go.
+  // Keyed on arrivals only, so a wire the actuary unplugged stays unplugged.
+  const wiredIdsRef = useRef<Set<string>>(new Set(storedSession.selectedModels.map((m) => m.id)));
+  // The model list a restore just installed — its wiring came with it.
+  const restoredModelsRef = useRef<SelectedModel[] | null>(null);
+  useEffect(() => {
+    const ids = selectedModels.map((m) => m.id);
+    const before = wiredIdsRef.current;
+    wiredIdsRef.current = new Set(ids);
+    if (restoredModelsRef.current === selectedModels) {
+      restoredModelsRef.current = null;
+      return;
+    }
+    const added = new Set(ids.filter((id) => !before.has(id)));
+    const left = [...before].some((id) => !wiredIdsRef.current.has(id));
+    if (added.size === 0 && !left) return;
+    setModelWires((prev) => {
+      const next = autoWire(selectedModels, sanitizeWires(prev, ids), added);
+      return next.length === prev.length &&
+        next.every((w, i) => w.source === prev[i]?.source && w.target === prev[i]?.target)
+        ? prev
+        : next;
+    });
+  }, [selectedModels]);
   const [stagedDatasets, setStagedDatasets] = useState<Dataset[]>([]);
   const [runs, setRuns] = useState<Record<string, RunResult>>(storedSession.runs);
   const [derivedColumns, setDerivedColumns] = useState<Record<string, string>>(
@@ -574,6 +631,7 @@ export function SceloProvider({ children }: { children: ReactNode }) {
         pickSummary,
         picksDatasetName,
         modelWires,
+        wiresVersion: WIRES_VERSION,
         runs,
         derivedColumns,
         transformLog: Array.from(transformLog),
@@ -644,6 +702,7 @@ export function SceloProvider({ children }: { children: ReactNode }) {
       pickSummary,
       picksDatasetName,
       modelWires,
+      wiresVersion: WIRES_VERSION,
       runs,
       derivedColumns,
       transformLog: Array.from(transformLog),
@@ -667,13 +726,23 @@ export function SceloProvider({ children }: { children: ReactNode }) {
   );
 
   const restoreSession = useCallback((snap: StoredSessionSnapshot, proj?: SceloProject | null) => {
+    const models = snap.selectedModels ?? [];
     setDataset(snap.dataset ?? null);
     setFilters(snap.filters ?? []);
-    setSelectedModels(snap.selectedModels ?? []);
+    setSelectedModels(models);
     setDomain(snap.domain ?? null);
     setPickSummary(snap.pickSummary ?? null);
     setPicksDatasetName(snap.picksDatasetName ?? null);
-    setModelWires(snap.modelWires ?? []);
+    // The snapshot's wiring is the saved canvas: migrate it, and don't let
+    // the auto-wirer treat the restored models as fresh arrivals.
+    restoredModelsRef.current = models;
+    setModelWires(
+      migrateWires({
+        selectedModels: models,
+        modelWires: snap.modelWires ?? [],
+        wiresVersion: snap.wiresVersion,
+      }),
+    );
     setStagedDatasets([]);
     setRuns(snap.runs ?? {});
     setDerivedColumns(snap.derivedColumns ?? {});

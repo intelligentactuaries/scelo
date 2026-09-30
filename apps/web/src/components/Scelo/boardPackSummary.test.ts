@@ -96,8 +96,9 @@ describe("executiveSummary · other boards", () => {
       "lifecontingencies",
       "descriptive",
       "gbm",
-      "shap",
     ].map((id) => runModel(id, demo));
+    // SHAP explains the GBM wired into it (the canvas's default wiring).
+    runs.push(runModel("shap", demo, new Map([["gbm", runs[4]]])));
     const text = executiveSummary({ dataset: demo, runs });
     expect(text).toContain(
       "explains 98% of the variation in survival_to_80 on data it had not seen",

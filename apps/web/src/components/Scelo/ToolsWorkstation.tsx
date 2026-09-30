@@ -3,59 +3,73 @@
 //   ┌─────────────────────────────────────────────────────────────────────┐
 //   │ ← macro · tools · workstation                  [identify] [regen]   │
 //   ├─────────────────────────────────────────────────────────────────────┤
-//   │ working with: claims_sample · 64 rows · 10 cols    domain: reserving│
+//   │ working with: claims_sample · 64 rows · 10 cols  pipeline  domain   │
 //   ├──────────────────────────────────────────────────┬──────────────────┤
 //   │                                                  │ model details   │
-//   │   React Flow canvas — hub-and-spoke              │                 │
-//   │                                                  │ rationale       │
-//   │       [Mack]                                     │ description     │
-//   │          \                                       │ toggle / remove │
-//   │   [CL] ──[DATASET HUB]── [BF]                    │ + add from cat. │
-//   │          /                                       │                 │
-//   │       [Bootstrap]                                │                 │
+//   │   React Flow canvas — a Blueprint graph          │                 │
+//   │                                                  │ inputs / outputs│
+//   │  [DATASET HUB]            [Lee–Carter]           │ rationale       │
+//   │   mortality table ●──┬──● mortality  proj. ◆──┐  │ toggle / remove │
+//   │                      │                        │  │ catalog, ranked │
+//   │                      └──● mortality     [Life Contingencies]      │
+//   │                           [CBD]         ◆ mortality                │
 //   │                                                  │                 │
 //   ├──────────────────────────────────────────────────┴──────────────────┤
 //   │ Scelo · tools chatbar (dataset + picks in context)                  │
 //   └─────────────────────────────────────────────────────────────────────┘
 //
-// The hub displays the dataset shape and identified domain. Model nodes are
-// arranged in a circle around the hub. Each model node is toggleable; the
-// edge to the hub is animated when the model is selected.
+// The canvas reads like an Unreal Blueprint (the typed contract lives in
+// modelPorts.ts): the dataset hub's output pins are the data roles it can
+// actually feed (claims triangle, mortality table, …); every model shows
+// only the pins it really has — inputs on the left, outputs on the right,
+// round for data, diamond for another model's result — and a wire can only
+// join pins whose types agree. Models flow left to right by pipeline depth.
+// Drop a wire on empty canvas (or right-click) for the models that fit.
 
 import ReactECharts from "echarts-for-react";
 import { BoxplotChart, ScatterChart } from "echarts/charts";
 import { GridComponent, TooltipComponent } from "echarts/components";
 import * as echarts from "echarts/core";
 import { CanvasRenderer } from "echarts/renderers";
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import ReactFlow, {
   Background,
   type Connection,
   type Edge,
-  Handle,
-  MarkerType,
   type Node,
+  type NodeChange,
   type NodeProps,
-  Position,
+  type OnConnectStartParams,
   type ReactFlowInstance,
-  useEdges,
   useEdgesState,
   useNodesState,
 } from "reactflow";
 import "reactflow/dist/style.css";
 import { useTheme } from "@/lib/theme";
+import {
+  AddModelMenu,
+  BlueprintConnectionLine,
+  BlueprintContext,
+  type MenuEntry,
+  type MenuSection,
+  PIN_ROW_H,
+  PinHandle,
+  type Theme,
+  WireEdge,
+  type WireEdgeData,
+  portColorOf,
+} from "./BlueprintCanvas";
 import { ChatInputPill } from "./ChatInputPill";
 import { ExportButton } from "./ExportScreen";
 import { FlowControls } from "./FlowControls";
-import { RemovableEdge } from "./RemovableEdge";
 import { ResizablePanel } from "./ResizablePanel";
 import { SciText } from "./SciText";
 import { type ColumnMeta, type Dataset, formatNumber } from "./SoftDataWorkstation";
 import { StageChatPanel } from "./StageChatPanel";
-import { useActuarialTableChat } from "./useActuarialTableChat";
 import { UploadIndicator } from "./UploadIndicator";
 import { getColumnMetas } from "./columnMetaCache";
+import { type DataRole, dataTypesOf, detectDataRoles } from "./dataRoles";
 import {
   type CatalogModel,
   FAMILY_COLOR_DARK,
@@ -68,13 +82,44 @@ import {
   type DataSignature,
   dataSignature,
   fetchModelPicks,
+  finalizePick,
   heuristicPick,
-  switchOffInapplicable,
 } from "./modelPicker";
+import {
+  type DataPortType,
+  HUB_NODE_ID,
+  type InputPort,
+  type OutputPort,
+  PORT_TYPES,
+  type PortType,
+  checkConnection,
+  connectWire,
+  consumersOf,
+  dataHandleId,
+  describeAccepts,
+  disconnectWire,
+  inHandleId,
+  inputFeeds,
+  isDataType,
+  modelIdOfNode,
+  modelNodeId,
+  outHandleId,
+  parseHandleId,
+  pipelineDepths,
+  portsOf,
+  producersOf,
+  requiredProducers,
+  resolveWire,
+  unmetInputs,
+  wireInto,
+} from "./modelPorts";
 import { modelApplicability } from "./modelRunner";
 import {
+  type ModelDirective,
   applyModelDirective,
+  applyWireDirective,
   describeDirectiveReport,
+  describeWireReport,
   modelDirectiveProtocol,
   parseModelDirective,
   parseStackCommand,
@@ -82,6 +127,7 @@ import {
 } from "./modelStackDirectives";
 import type { ModelWire } from "./pipeline";
 import { type SelectedModel, useScelo } from "./sceloContext";
+import { useActuarialTableChat } from "./useActuarialTableChat";
 import { useNodeChat } from "./useNodeChat";
 
 // ECharts is tree-shakable — only register the pieces this workstation needs.
@@ -188,15 +234,30 @@ function NodeChatbotPanel({
   );
 }
 
+/** How a model sits against the loaded data — drives the catalog marks, the
+ *  swap and add menus, and whether a newly added node arrives switched on. */
+type ModelFit =
+  | { state: "ready" }
+  | { state: "illustrative"; reason: string }
+  | { state: "blocked"; reason: string };
+
+const FIT_RANK: Record<ModelFit["state"], number> = { ready: 0, illustrative: 1, blocked: 2 };
+
+type HubRoleRow = { role: DataRole; used: boolean };
+
 type HubNodeData = {
   dataset: Dataset;
   domain: ModelFamily | null;
   selectedCount: number;
-  // Number of handle slots to render on each side. Should equal the total
-  // node count in the canvas (hub + selected models) so as soon as a new
-  // model joins, every existing node grows a new port pair to receive or
-  // send an edge from/to it.
-  slotCount: number;
+  /** Data roles drawn as output pins: every role an attached model reads,
+   *  plus the rest while expanded (or while nothing is attached yet). */
+  rows: HubRoleRow[];
+  /** Roles the data offers that nothing attached reads — behind "▸ more". */
+  hiddenCount: number;
+  expanded: boolean;
+  onToggleExpanded: () => void;
+  /** "Which models read this?" — opens the role's add menu. */
+  onRoleMenu: (type: DataPortType, clientX: number, clientY: number) => void;
   chatContext: string;
   chatPlaceholder: string;
   /** Applies scelo-models directives from this chat's replies. */
@@ -205,137 +266,131 @@ type HubNodeData = {
   onLocalStackCommand?: (text: string, assistantHistory?: string[]) => string | null;
 };
 
-// Front-and-back handle pack with one slot pair per node in the canvas.
-// `count` is the total number of nodes currently in play (hub + selected
-// models). Each node renders `count` slot pairs distributed evenly down
-// the LEFT side (back / incoming) and the RIGHT side (front / outgoing),
-// so as soon as a second model joins the canvas every existing node
-// grows a second port on each side — ready to be wired by the actuary
-// without crowding the first port.
-//
-// Each "slot" is actually a target + source handle co-located at the
-// same y-offset; React Flow distinguishes them by stable id, the user
-// sees one dot per slot.
-//
-// Naming: `s-<side>-<i>` for source, `t-<side>-<i>` for target.
-function MultiHandles({
-  nodeId,
-  color,
-  count,
-}: {
-  nodeId: string;
-  color: string;
-  count: number;
-}) {
-  // Subscribe to the live edge list so each handle can fill itself when
-  // an edge is attached to it (and hollow out when the edge is removed).
-  // The visual treatment is per-side, per-slot: a single dot is shown
-  // on each side for each slot index, and that dot turns solid if any
-  // edge — source or target, drawn or default — uses either of the
-  // co-located handles at that slot.
-  const edges = useEdges();
-  const n = Math.max(1, count);
-  const slots = Array.from({ length: n }, (_, i) => i);
-  return (
-    <>
-      {slots.map((i) => {
-        // Centre each slot in its share of the side. For n=1 the slot
-        // lives at 50% (midline); for n=2 they're at 25% and 75%; etc.
-        const top = `${((i + 0.5) / n) * 100}%`;
-        const leftConnected = edges.some(
-          (e) =>
-            (e.target === nodeId && e.targetHandle === `t-left-${i}`) ||
-            (e.source === nodeId && e.sourceHandle === `s-left-${i}`),
-        );
-        const rightConnected = edges.some(
-          (e) =>
-            (e.target === nodeId && e.targetHandle === `t-right-${i}`) ||
-            (e.source === nodeId && e.sourceHandle === `s-right-${i}`),
-        );
-        // Hollow when nothing is plugged in (canvas bg fills the disc,
-        // family-coloured ring around it); solid family colour once a
-        // wire lands. The ring stays the same colour either way so the
-        // family identity reads at a glance.
-        const sideStyle = (connected: boolean) => ({
-          top,
-          width: 8,
-          height: 8,
-          opacity: 0.7,
-          background: connected ? color : "rgb(var(--rgb-bg))",
-          border: `1.5px solid ${color}`,
-        });
-        const leftStyle = sideStyle(leftConnected);
-        const rightStyle = sideStyle(rightConnected);
-        return (
-          <Fragment key={i}>
-            <Handle id={`t-left-${i}`} type="target" position={Position.Left} style={leftStyle} />
-            <Handle id={`s-left-${i}`} type="source" position={Position.Left} style={leftStyle} />
-            <Handle
-              id={`t-right-${i}`}
-              type="target"
-              position={Position.Right}
-              style={rightStyle}
-            />
-            <Handle
-              id={`s-right-${i}`}
-              type="source"
-              position={Position.Right}
-              style={rightStyle}
-            />
-          </Fragment>
-        );
-      })}
-    </>
-  );
-}
-
-function HubNode({ id, data }: NodeProps<HubNodeData>) {
+// The dataset as a Blueprint source node: no inputs, one output pin per
+// data role the loaded file can actually feed, each with its evidence.
+function HubNode({ data }: NodeProps<HubNodeData>) {
   const [chatOpen, setChatOpen] = useState(false);
+  const { theme } = useContext(BlueprintContext);
   return (
     <div
-      className="glass-card w-[260px] rounded-lg p-3"
+      className="glass-card w-[270px] rounded-lg"
       style={{
-        // Primary tint on the hub so the family-coloured spokes read as
-        // converging on it. Inline border wins over the .glass-card hairline.
+        // Primary tint on the hub so the typed wires read as leaving it.
+        // Inline border wins over the .glass-card hairline.
         borderColor: "rgb(var(--rgb-primary))",
         borderWidth: 2,
       }}
     >
-      <MultiHandles nodeId={id} color="rgb(var(--rgb-primary))" count={data.slotCount} />
-      <div className="font-mono text-[10px] uppercase tracking-wider text-primary">dataset hub</div>
-      <div className="mt-0.5 truncate text-sm text-fg">{data.dataset.name}</div>
-      <div className="mt-1 font-mono text-[11px] text-fg-mute">
-        {data.dataset.rows.length} rows · {data.dataset.columns.length} cols
-      </div>
-      {data.domain && (
-        <div className="mt-2 inline-block rounded border border-primary/40 bg-primary/10 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wider text-primary">
-          {data.domain}
+      <div className="px-3 pt-2.5">
+        <div className="font-mono text-[10px] uppercase tracking-wider text-primary">
+          dataset hub
         </div>
-      )}
-      <div className="mt-2 text-[11px] text-fg-dim">
-        {data.selectedCount} model{data.selectedCount === 1 ? "" : "s"} attached
+        <div className="mt-0.5 truncate text-sm text-fg" title={data.dataset.name}>
+          {data.dataset.name}
+        </div>
+        <div className="mt-1 flex items-center gap-2">
+          <span className="font-mono text-[11px] text-fg-mute">
+            {data.dataset.rows.length} rows · {data.dataset.columns.length} cols
+          </span>
+          {data.domain && (
+            <span className="rounded border border-primary/40 bg-primary/10 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider text-primary">
+              {data.domain}
+            </span>
+          )}
+        </div>
       </div>
 
-      <button
-        type="button"
-        onClick={(e) => {
-          e.stopPropagation();
-          setChatOpen((o) => !o);
-        }}
-        className="nodrag mt-2 inline-flex w-full items-center justify-between rounded border border-border bg-bg-2 px-1.5 py-1 font-mono text-[9px] uppercase tracking-wider text-fg-mute hover:border-primary hover:text-primary"
-      >
-        <span>{chatOpen ? "hide" : "ask"} scelo · hub</span>
-        <span>{chatOpen ? "▾" : "▸"}</span>
-      </button>
-      {chatOpen && (
-        <NodeChatbotPanel
-          stageContext={data.chatContext}
-          placeholder={data.chatPlaceholder}
-          chatId="tools-hub"
-          onAssistantFinal={data.onStackDirective}
-          onLocalCommand={data.onLocalStackCommand}
-        />
-      )}
+      <div className="mt-2 border-t border-border/70 pb-1 pt-1">
+        <div className="px-3 pb-0.5 font-mono text-[9px] uppercase tracking-wider text-fg-dim">
+          feeds
+        </div>
+        {data.rows.length === 0 && data.hiddenCount === 0 && (
+          <p className="px-3 pb-1 text-[10px] leading-snug text-fg-dim">
+            Nothing here that a catalog model reads.
+          </p>
+        )}
+        {data.rows.map(({ role, used }) => {
+          const color = portColorOf(role.type, theme);
+          const tip = [
+            PORT_TYPES[role.type].description,
+            `Columns: ${role.columns.join(", ")}`,
+            ...(role.caveat ? [`⚠ ${role.caveat}`] : []),
+            "Click for the models that read it, or drag a wire from the pin.",
+          ].join("\n");
+          return (
+            <div
+              key={role.type}
+              className="relative flex items-center px-3"
+              style={{ height: PIN_ROW_H }}
+            >
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  data.onRoleMenu(role.type, e.clientX, e.clientY);
+                }}
+                title={tip}
+                className="nodrag flex min-w-0 flex-1 items-baseline gap-1.5 rounded pr-2 text-left hover:bg-bg-2/60"
+              >
+                <span className="shrink-0 text-[10.5px]" style={{ color }}>
+                  {PORT_TYPES[role.type].label}
+                </span>
+                <span className="min-w-0 truncate font-mono text-[9px] text-fg-dim">
+                  {role.evidence}
+                </span>
+                {role.caveat && <span className="shrink-0 text-[10px] text-warn">⚠</span>}
+              </button>
+              <PinHandle
+                side="out"
+                handleId={dataHandleId(role.type)}
+                type={role.type}
+                filled={used}
+                title={tip}
+              />
+            </div>
+          );
+        })}
+        {(data.hiddenCount > 0 || data.expanded) && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              data.onToggleExpanded();
+            }}
+            className="nodrag mt-0.5 px-3 font-mono text-[9.5px] text-fg-dim hover:text-primary"
+          >
+            {data.expanded
+              ? "▾ only what's in use"
+              : `▸ ${data.hiddenCount} more this data can feed`}
+          </button>
+        )}
+      </div>
+
+      <div className="px-3 pb-2.5">
+        <div className="text-[11px] text-fg-dim">
+          {data.selectedCount} model{data.selectedCount === 1 ? "" : "s"} attached
+        </div>
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            setChatOpen((o) => !o);
+          }}
+          className="nodrag mt-2 inline-flex w-full items-center justify-between rounded border border-border bg-bg-2 px-1.5 py-1 font-mono text-[9px] uppercase tracking-wider text-fg-mute hover:border-primary hover:text-primary"
+        >
+          <span>{chatOpen ? "hide" : "ask"} scelo · hub</span>
+          <span>{chatOpen ? "▾" : "▸"}</span>
+        </button>
+        {chatOpen && (
+          <NodeChatbotPanel
+            stageContext={data.chatContext}
+            placeholder={data.chatPlaceholder}
+            chatId="tools-hub"
+            onAssistantFinal={data.onStackDirective}
+            onLocalCommand={data.onLocalStackCommand}
+          />
+        )}
+      </div>
     </div>
   );
 }
@@ -347,12 +402,34 @@ function shortCause(reason: string): string {
   return head.charAt(0).toLowerCase() + head.slice(1);
 }
 
+type ToolInputPin = {
+  port: InputPort;
+  /** Pin colour: the type plugged in, else the pin's primary type. */
+  type: PortType;
+  filled: boolean;
+  tone: "ok" | "default" | "fallback" | "missing";
+  /** Beside the label, Blueprint-style: an unplugged pin's default, a
+   *  fallback, or what is missing. */
+  note?: string;
+  /** One-click fix for a missing model input (add / plug in / switch on). */
+  fix?: { label: string; run: () => void };
+  /** A drag can START here: pins that take another model's result. */
+  draggable: boolean;
+  /** Full sentence — the pin's tooltip and the details panel's line. */
+  detail: string;
+};
+
+type ToolOutputPin = { port: OutputPort; filled: boolean; detail: string };
+
 type ToolNodeData = {
   model: CatalogModel;
   selected: boolean;
   rationale?: string;
-  /** Why this model cannot run on the loaded dataset, if it cannot. */
+  /** Why this model cannot run here — the data, or an input nothing feeds. */
   blocked?: string;
+  inputs: ToolInputPin[];
+  outputs: ToolOutputPin[];
+  fitOf: (id: string) => ModelFit;
   onToggle: (id: string) => void;
   onRemove: (id: string) => void;
   // Swap from the current model id to a new model id — implementation
@@ -360,10 +437,6 @@ type ToolNodeData = {
   // user's canvas position survives the substitution.
   onReplace: (currentId: string, nextId: string) => void;
   isFocused: boolean;
-  // Same as HubNodeData.slotCount — total node count in the canvas. Every
-  // model node mirrors the hub's slot count so any pair of nodes has
-  // matching back/front ports for hand-drawing edges.
-  slotCount: number;
   chatContext: string;
   chatPlaceholder: string;
   /** Applies scelo-models directives from this chat's replies. */
@@ -372,33 +445,44 @@ type ToolNodeData = {
   onLocalStackCommand?: (text: string, assistantHistory?: string[]) => string | null;
 };
 
-function ToolNode({ id, data }: NodeProps<ToolNodeData>) {
-  const { resolved } = useTheme();
-  const palette = resolved === "light" ? FAMILY_COLOR_LIGHT : FAMILY_COLOR_DARK;
+const FIT_MARK: Record<ModelFit["state"], string> = { ready: "✓", illustrative: "~", blocked: "✗" };
+
+function ToolNode({ data }: NodeProps<ToolNodeData>) {
+  const { theme } = useContext(BlueprintContext);
+  const palette = theme === "light" ? FAMILY_COLOR_LIGHT : FAMILY_COLOR_DARK;
   const color = palette[data.model.family];
   const dim = !data.selected;
   const [chatOpen, setChatOpen] = useState(false);
   const [swapOpen, setSwapOpen] = useState(false);
 
-  // Catalog grouped by family for the swap-picker. The current model is
-  // skipped from its own family list — swapping to yourself is a no-op
-  // and would just clutter the menu.
-  const swapCandidates = useMemo(() => {
-    const groups = new Map<ModelFamily, CatalogModel[]>();
+  // Replacements: drop-ins that read the same inputs first, then the rest
+  // by family — each ranked and marked by how it sits with this data.
+  const { fitOf } = data;
+  const swapSections = useMemo(() => {
+    if (!swapOpen) return [];
+    const mine = new Set(portsOf(data.model.id).inputs.flatMap((p) => p.accepts));
+    const same: CatalogModel[] = [];
+    const byFamily = new Map<ModelFamily, CatalogModel[]>();
     for (const m of MODEL_CATALOG) {
       if (m.id === data.model.id) continue;
-      const arr = groups.get(m.family) ?? [];
-      arr.push(m);
-      groups.set(m.family, arr);
+      if (portsOf(m.id).inputs.some((p) => p.accepts.some((t) => mine.has(t)))) same.push(m);
+      else byFamily.set(m.family, [...(byFamily.get(m.family) ?? []), m]);
     }
-    return Array.from(groups.entries());
-  }, [data.model.id]);
+    const rank = (list: CatalogModel[]) =>
+      list
+        .map((m) => ({ m, fit: fitOf(m.id) }))
+        .sort((a, b) => FIT_RANK[a.fit.state] - FIT_RANK[b.fit.state]);
+    return [
+      ...(same.length ? [{ title: "reads the same inputs", items: rank(same) }] : []),
+      ...[...byFamily].map(([family, list]) => ({ title: family, items: rank(list) })),
+    ];
+  }, [swapOpen, data.model.id, fitOf]);
+
+  const rows = Math.max(data.inputs.length, data.outputs.length);
 
   return (
     <div
-      className={`glass-card w-[220px] rounded-md p-2 transition ${
-        data.isFocused ? "ring-2 ring-primary" : ""
-      }`}
+      className={`glass-card w-[240px] rounded-md transition ${data.isFocused ? "ring-2 ring-primary" : ""}`}
       style={{
         // Family colour is data-bearing — inline `borderColor` wins over
         // the `.glass-card` 1px hairline so the model family stays legible.
@@ -407,196 +491,432 @@ function ToolNode({ id, data }: NodeProps<ToolNodeData>) {
         opacity: dim ? 0.55 : 1,
       }}
     >
-      <MultiHandles nodeId={id} color={color} count={data.slotCount} />
-      <div className="flex items-start justify-between gap-1">
-        <div className="font-mono text-[9px] uppercase tracking-wider" style={{ color }}>
-          {data.model.family}
-        </div>
-        <div className="flex items-center gap-1">
-          {/* swap — opens an inline menu of other catalog models */}
-          <button
-            type="button"
-            aria-label="Replace this model"
-            title="replace with another model"
-            onClick={(e) => {
-              e.stopPropagation();
-              setSwapOpen((o) => !o);
-            }}
-            className={`nodrag flex h-4 w-4 items-center justify-center rounded border font-mono text-[10px] leading-none ${
-              swapOpen
-                ? "border-primary text-primary"
-                : "border-border text-fg-dim hover:border-fg-dim hover:text-fg-mute"
-            }`}
-          >
-            ↻
-          </button>
-          {/* enable/disable toggle — tinted with the node's family colour
-              when selected so the switch reads as part of the node, not as
-              a generic primary-green control. */}
-          <button
-            type="button"
-            aria-label={data.selected ? "Disable model" : "Enable model"}
-            title={data.selected ? "click to disable" : "click to enable"}
-            onClick={(e) => {
-              e.stopPropagation();
-              data.onToggle(data.model.id);
-            }}
-            className={`nodrag h-3.5 w-7 rounded-full border ${
-              data.selected ? "" : "border-border bg-bg-2"
-            }`}
-            style={
-              data.selected
-                ? { borderColor: color, background: `${color}4d` /* ~30% alpha */ }
-                : undefined
-            }
-          >
-            <span
-              className={`block h-3 w-3 rounded-full transition-transform ${
-                data.selected ? "translate-x-3" : "translate-x-0 bg-fg-dim"
-              }`}
-              style={data.selected ? { background: color } : undefined}
-            />
-          </button>
-          {/* remove — drops the node off the canvas */}
-          <button
-            type="button"
-            aria-label="Remove this model from the canvas"
-            title="remove (or press Backspace with this node selected)"
-            onClick={(e) => {
-              e.stopPropagation();
-              data.onRemove(data.model.id);
-            }}
-            className="nodrag flex h-4 w-4 items-center justify-center rounded-full border border-border bg-bg text-fg-dim hover:border-error hover:text-error"
-          >
-            ×
-          </button>
-        </div>
-      </div>
-      <div className="mt-0.5 text-xs text-fg">{data.model.name}</div>
-      <p className="mt-1 line-clamp-2 text-[10px] text-fg-mute">
-        <SciText>{data.rationale ?? data.model.description}</SciText>
-      </p>
-      {/* Say it HERE, before Hard: a model whose inputs are not in the data
-          can only come back as "not applicable". One line — the canvas
-          spaces nodes for a fixed height — with the full reason on hover. */}
-      {data.blocked && (
-        <p className="mt-1 truncate text-[10px] text-warn" title={data.blocked}>
-          ⚠ can't run: {shortCause(data.blocked)}
-        </p>
-      )}
-
-      {swapOpen && (
-        <div
-          className="nodrag nowheel mt-1.5 max-h-44 overflow-auto rounded-xl border border-border bg-bg-1 p-1.5"
-          onClick={(e) => e.stopPropagation()}
-          onKeyDown={(e) => e.stopPropagation()}
-          role="presentation"
-        >
-          <div className="mb-1 font-mono text-[9px] uppercase tracking-[0.15em] text-fg-dim">
-            replace with…
-          </div>
-          {swapCandidates.map(([family, models]) => (
-            <div key={family} className="mb-1.5 last:mb-0">
-              <div className="font-mono text-[8px] uppercase tracking-wider text-fg-dim">
-                {family}
-              </div>
-              <ul className="mt-0.5 space-y-0.5">
-                {models.map((m) => (
-                  <li key={m.id}>
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setSwapOpen(false);
-                        data.onReplace(data.model.id, m.id);
-                      }}
-                      className="block w-full truncate rounded px-1 py-0.5 text-left font-mono text-[10px] text-fg-mute hover:bg-bg-2 hover:text-fg"
-                    >
-                      {m.name}
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ))}
-        </div>
-      )}
-
-      <button
-        type="button"
-        onClick={(e) => {
-          e.stopPropagation();
-          setChatOpen((o) => !o);
-        }}
-        className="nodrag mt-1.5 inline-flex w-full items-center justify-between rounded border border-border bg-bg-2 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider text-fg-mute hover:text-fg"
-        style={{
-          borderColor: chatOpen ? color : undefined,
-          color: chatOpen ? color : undefined,
-        }}
+      {/* header band — Blueprint nodes carry their kind in a tinted title bar */}
+      <div
+        className="rounded-t-md px-2 pb-1 pt-1.5"
+        style={{ background: `linear-gradient(90deg, ${color}26, ${color}08 70%, transparent)` }}
       >
-        <span>{chatOpen ? "hide" : "ask"} scelo</span>
-        <span>{chatOpen ? "▾" : "▸"}</span>
-      </button>
-      {chatOpen && (
-        <NodeChatbotPanel
-          stageContext={data.chatContext}
-          placeholder={data.chatPlaceholder}
-          accentColor={color}
-          chatId={`tools-model:${data.model.id}`}
-          onAssistantFinal={data.onStackDirective}
-          onLocalCommand={data.onLocalStackCommand}
-        />
+        <div className="flex items-start justify-between gap-1">
+          <div className="flex min-w-0 items-center gap-1.5">
+            <span className="font-mono text-[9px] uppercase tracking-wider" style={{ color }}>
+              {data.model.family}
+            </span>
+            {data.model.illustrative && (
+              <span
+                className="rounded border border-border px-1 font-mono text-[8px] uppercase tracking-wider text-fg-dim"
+                title={`Illustrative: ${data.model.illustrative}.`}
+              >
+                illustrative
+              </span>
+            )}
+          </div>
+          <div className="flex items-center gap-1">
+            {/* swap — opens an inline menu of other catalog models */}
+            <button
+              type="button"
+              aria-label="Replace this model"
+              title="replace with another model"
+              onClick={(e) => {
+                e.stopPropagation();
+                setSwapOpen((o) => !o);
+              }}
+              className={`nodrag flex h-4 w-4 items-center justify-center rounded border font-mono text-[10px] leading-none ${
+                swapOpen
+                  ? "border-primary text-primary"
+                  : "border-border text-fg-dim hover:border-fg-dim hover:text-fg-mute"
+              }`}
+            >
+              ↻
+            </button>
+            {/* enable/disable toggle — tinted with the node's family colour
+                when selected so the switch reads as part of the node, not as
+                a generic primary-green control. */}
+            <button
+              type="button"
+              aria-label={data.selected ? "Disable model" : "Enable model"}
+              title={data.selected ? "click to disable" : "click to enable"}
+              onClick={(e) => {
+                e.stopPropagation();
+                data.onToggle(data.model.id);
+              }}
+              className={`nodrag h-3.5 w-7 rounded-full border ${
+                data.selected ? "" : "border-border bg-bg-2"
+              }`}
+              style={
+                data.selected
+                  ? { borderColor: color, background: `${color}4d` /* ~30% alpha */ }
+                  : undefined
+              }
+            >
+              <span
+                className={`block h-3 w-3 rounded-full transition-transform ${
+                  data.selected ? "translate-x-3" : "translate-x-0 bg-fg-dim"
+                }`}
+                style={data.selected ? { background: color } : undefined}
+              />
+            </button>
+            {/* remove — drops the node off the canvas */}
+            <button
+              type="button"
+              aria-label="Remove this model from the canvas"
+              title="remove (or press Backspace with this node selected)"
+              onClick={(e) => {
+                e.stopPropagation();
+                data.onRemove(data.model.id);
+              }}
+              className="nodrag flex h-4 w-4 items-center justify-center rounded-full border border-border bg-bg text-fg-dim hover:border-error hover:text-error"
+            >
+              ×
+            </button>
+          </div>
+        </div>
+        <div className="mt-0.5 text-xs text-fg">{data.model.name}</div>
+      </div>
+
+      {/* pins — inputs left, outputs right, one row each; only the pins
+          this model really has (see modelPorts.ts) */}
+      {rows > 0 && (
+        <div className="border-t py-1" style={{ borderColor: `${color}33` }}>
+          {Array.from({ length: rows }, (_, i) => {
+            const input = data.inputs[i];
+            const output = data.outputs[i];
+            return (
+              <div
+                // biome-ignore lint/suspicious/noArrayIndexKey: rows are positional — row i pairs input i with output i.
+                key={i}
+                className="relative flex items-center justify-between gap-2 px-2.5"
+                style={{ height: PIN_ROW_H }}
+              >
+                {input ? (
+                  <span
+                    className="flex min-w-0 items-baseline gap-1 text-[10.5px]"
+                    title={input.detail}
+                  >
+                    <span
+                      className="shrink-0"
+                      style={{
+                        color:
+                          input.tone === "missing"
+                            ? "rgb(var(--rgb-error))"
+                            : portColorOf(input.type, theme),
+                      }}
+                    >
+                      {input.port.label}
+                    </span>
+                    {/* The fix button says it all when there is one. */}
+                    {input.note && !input.fix && (
+                      <span
+                        className={`min-w-0 truncate font-mono text-[9px] ${
+                          input.tone === "missing"
+                            ? "text-error"
+                            : input.tone === "fallback"
+                              ? "text-warn"
+                              : "italic text-fg-dim"
+                        }`}
+                      >
+                        · {input.note}
+                      </span>
+                    )}
+                    {input.fix && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          input.fix?.run();
+                        }}
+                        className="nodrag shrink-0 rounded border border-primary/50 px-1 font-mono text-[9px] leading-[13px] text-primary hover:bg-primary/10"
+                      >
+                        {input.fix.label}
+                      </button>
+                    )}
+                  </span>
+                ) : (
+                  <span />
+                )}
+                {output && (
+                  <span
+                    className="shrink-0 text-right text-[10.5px]"
+                    style={{ color: portColorOf(output.port.type, theme) }}
+                    title={output.detail}
+                  >
+                    {output.port.label}
+                  </span>
+                )}
+                {input && (
+                  <PinHandle
+                    side="in"
+                    handleId={inHandleId(input.port.id)}
+                    type={input.type}
+                    filled={input.filled}
+                    missing={input.tone === "missing"}
+                    connectableStart={input.draggable}
+                    title={input.detail}
+                  />
+                )}
+                {output && (
+                  <PinHandle
+                    side="out"
+                    handleId={outHandleId(output.port.id)}
+                    type={output.port.type}
+                    filled={output.filled}
+                    title={output.detail}
+                  />
+                )}
+              </div>
+            );
+          })}
+        </div>
       )}
+
+      <div className="px-2 pb-2">
+        <p className="mt-1 line-clamp-2 text-[10px] text-fg-mute">
+          <SciText>{data.rationale ?? data.model.description}</SciText>
+        </p>
+        {/* Say it HERE, before Hard: a model whose inputs are not in the data
+            can only come back as "not applicable". One line, full reason on
+            hover. */}
+        {data.blocked && (
+          <p className="mt-1 truncate text-[10px] text-warn" title={data.blocked}>
+            ⚠ can't run: {shortCause(data.blocked)}
+          </p>
+        )}
+
+        {swapOpen && (
+          <div
+            className="nodrag nowheel mt-1.5 max-h-52 overflow-auto rounded-xl border border-border bg-bg-1 p-1.5"
+            onClick={(e) => e.stopPropagation()}
+            onKeyDown={(e) => e.stopPropagation()}
+            role="presentation"
+          >
+            <div className="mb-1 font-mono text-[9px] uppercase tracking-[0.15em] text-fg-dim">
+              replace with…{" "}
+              <span className="normal-case tracking-normal">✓ fits · ✗ can't run</span>
+            </div>
+            {swapSections.map((section) => (
+              <div key={section.title} className="mb-1.5 last:mb-0">
+                <div className="font-mono text-[8px] uppercase tracking-wider text-fg-dim">
+                  {section.title}
+                </div>
+                <ul className="mt-0.5 space-y-0.5">
+                  {section.items.map(({ m, fit }) => (
+                    <li key={m.id}>
+                      <button
+                        type="button"
+                        disabled={fit.state === "blocked"}
+                        title={fit.state === "ready" ? m.description : fit.reason}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setSwapOpen(false);
+                          data.onReplace(data.model.id, m.id);
+                        }}
+                        className="flex w-full items-center gap-1.5 truncate rounded px-1 py-0.5 text-left font-mono text-[10px] text-fg-mute hover:bg-bg-2 hover:text-fg disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
+                      >
+                        <span
+                          className={`w-2 shrink-0 text-center ${
+                            fit.state === "ready"
+                              ? "text-primary"
+                              : fit.state === "blocked"
+                                ? "text-fg-dim"
+                                : "text-fg-mute"
+                          }`}
+                        >
+                          {FIT_MARK[fit.state]}
+                        </span>
+                        <span className="truncate">{m.name}</span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            setChatOpen((o) => !o);
+          }}
+          className="nodrag mt-1.5 inline-flex w-full items-center justify-between rounded border border-border bg-bg-2 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider text-fg-mute hover:text-fg"
+          style={{
+            borderColor: chatOpen ? color : undefined,
+            color: chatOpen ? color : undefined,
+          }}
+        >
+          <span>{chatOpen ? "hide" : "ask"} scelo</span>
+          <span>{chatOpen ? "▾" : "▸"}</span>
+        </button>
+        {chatOpen && (
+          <NodeChatbotPanel
+            stageContext={data.chatContext}
+            placeholder={data.chatPlaceholder}
+            accentColor={color}
+            chatId={`tools-model:${data.model.id}`}
+            onAssistantFinal={data.onStackDirective}
+            onLocalCommand={data.onLocalStackCommand}
+          />
+        )}
+      </div>
     </div>
   );
 }
 
 const NODE_TYPES = { hub: HubNode, tool: ToolNode };
-// All edges in this workstation use the removable type — gives every
-// connection a click-to-disconnect × at its midpoint.
-const EDGE_TYPES = { removable: RemovableEdge };
+// Every wire in this workstation is a typed Blueprint wire; model → model
+// wires carry a click-to-unplug × at their midpoint.
+const EDGE_TYPES = { wire: WireEdge };
 
-// Hub + tool node dimensions (px). Kept here so the layout math centres each
-// node exactly on its slot — half-width / half-height offsets turn a "place
-// node centre at (x, y)" instruction into the top-left position React Flow
-// actually expects.
-const HUB_W = 260;
-const HUB_H = 150;
-const TOOL_W = 220;
-const TOOL_H = 100;
+// Node widths (px) and the gaps of the left-to-right layout.
+const HUB_W = 270;
+const TOOL_W = 240;
+const COL_GAP = 76;
+const ROW_GAP = 26;
 
-// Lay model nodes out in a vertical column to the right of the hub. The
-// column is centred on the hub's vertical midline so the spread feels
-// balanced regardless of how many models are attached.
-//
-//    [ HUB ]   [ model 1 ]
-//              [ model 2 ]
-//              [ model 3 ]
-//
-// Returns the *centre* of each tool node — callers offset by -W/2 / -H/2 to
-// get the top-left position.
-function columnLayout(n: number): Array<{ x: number; y: number }> {
-  if (n === 0) return [];
-  const horizontalGap = 160;
-  const verticalGap = TOOL_H + 40;
-  const colX = HUB_W / 2 + horizontalGap + TOOL_W / 2;
-  const totalHeight = (n - 1) * verticalGap;
-  const startY = -totalHeight / 2;
-  return Array.from({ length: n }, (_, i) => ({
-    x: colX,
-    y: startY + i * verticalGap,
-  }));
+/** Height guesses for the first layout pass — React Flow's measurements
+ *  replace them as soon as the nodes render. */
+function estimateHubHeight(rows: number): number {
+  return 160 + rows * PIN_ROW_H;
+}
+function estimateToolHeight(modelId: string, blocked: boolean): number {
+  const p = portsOf(modelId);
+  const rows = Math.max(p.inputs.length, p.outputs.length);
+  return 56 + (rows > 0 ? rows * PIN_ROW_H + 9 : 0) + 30 + (blocked ? 16 : 0) + 30;
+}
+
+type XY = { x: number; y: number };
+
+/** The nearest spot at or below `at` where a w × h node overlaps nothing. */
+function freeSpot(
+  at: XY,
+  w: number,
+  h: number,
+  taken: Array<{ x: number; y: number; w: number; h: number }>,
+): XY {
+  const pad = 18;
+  let y = at.y;
+  for (let guard = 0; guard < 64; guard++) {
+    const hit = taken.find(
+      (r) =>
+        at.x < r.x + r.w + pad && at.x + w + pad > r.x && y < r.y + r.h + pad && y + h + pad > r.y,
+    );
+    if (!hit) break;
+    y = hit.y + hit.h + pad;
+  }
+  return { x: at.x, y };
+}
+
+/**
+ * Left-to-right Blueprint layout. The hub is column 0; each model sits one
+ * column past its deepest wired source (pipelineDepths). The first model
+ * column lines up in the order of the hub pins its models read, so the
+ * hub's wires fan out without crossing, centred on the hub's midline;
+ * further right, each model sits level with the average of its sources,
+ * pushed down only as far as it takes not to overlap.
+ */
+function blueprintLayout(args: {
+  ids: string[];
+  wires: ModelWire[];
+  heights: Map<string, number>;
+  hubHeight: number;
+  roleOrder: DataPortType[];
+}): { hub: XY; models: Map<string, XY> } {
+  const { ids, wires, heights, hubHeight, roleOrder } = args;
+  const depth = pipelineDepths(ids, wires);
+  const columns = new Map<number, string[]>();
+  for (const id of ids) {
+    const d = depth.get(id) ?? 0;
+    columns.set(d, [...(columns.get(d) ?? []), id]);
+  }
+  const h = (id: string) => heights.get(id) ?? 160;
+  const roleRank = (id: string) => {
+    let best = roleOrder.length;
+    for (const p of portsOf(id).inputs) {
+      for (const t of p.accepts) {
+        const i = roleOrder.indexOf(t as DataPortType);
+        if (i >= 0 && i < best) best = i;
+      }
+    }
+    return best;
+  };
+  const centre = new Map<string, number>();
+  const models = new Map<string, XY>();
+  for (const col of [...columns.keys()].sort((a, b) => a - b)) {
+    const colIds = columns.get(col) ?? [];
+    const x = HUB_W + COL_GAP + col * (TOOL_W + COL_GAP);
+    if (col === 0) {
+      colIds.sort((a, b) => roleRank(a) - roleRank(b) || ids.indexOf(a) - ids.indexOf(b));
+      const total =
+        colIds.reduce((s, id) => s + h(id), 0) + ROW_GAP * Math.max(0, colIds.length - 1);
+      let y = -total / 2;
+      for (const id of colIds) {
+        models.set(id, { x, y });
+        centre.set(id, y + h(id) / 2);
+        y += h(id) + ROW_GAP;
+      }
+      continue;
+    }
+    const want = (id: string) => {
+      const ys = wires
+        .filter((w) => w.target === id && centre.has(w.source))
+        .map((w) => centre.get(w.source) as number);
+      return ys.length ? ys.reduce((s, y) => s + y, 0) / ys.length : 0;
+    };
+    colIds.sort((a, b) => want(a) - want(b) || ids.indexOf(a) - ids.indexOf(b));
+    let floor = Number.NEGATIVE_INFINITY;
+    for (const id of colIds) {
+      const y = Math.max(want(id) - h(id) / 2, floor);
+      models.set(id, { x, y });
+      centre.set(id, y + h(id) / 2);
+      floor = y + h(id) + ROW_GAP;
+    }
+  }
+  return { hub: { x: 0, y: -hubHeight / 2 }, models };
 }
 
 // ── chatbar ──────────────────────────────────────────────────────────────────
+
+/** What the dataset hub's pins offer, for the chat contexts. */
+function dataProvidesLines(roles: DataRole[]): string[] {
+  if (roles.length === 0) return ["DATA PROVIDES: nothing any catalog model reads."];
+  return [
+    "DATA PROVIDES (the dataset hub's output pins — found by the same checks the models run):",
+    ...roles.map(
+      (r) =>
+        `  • ${PORT_TYPES[r.type].label}: ${r.columns.slice(0, 6).join(", ")}${
+          r.columns.length > 6 ? " …" : ""
+        } (${r.evidence})${r.caveat ? ` — ${r.caveat}` : ""}`,
+    ),
+  ];
+}
+
+/** The canvas's model → model wires — the flows Hard executes. */
+function wiresLines(wires: ModelWire[]): string[] {
+  if (wires.length === 0) {
+    return ["WIRES (model → model): none — every attached model reads the dataset directly."];
+  }
+  return [
+    "WIRES (model → model; Hard runs sources first and hands their results on):",
+    ...wires.map((w) => {
+      const pair = resolveWire(w.source, w.target);
+      return `  • ${w.source} → ${w.target}${pair ? ` (${pair.output.label} → ${pair.input.label})` : ""}`;
+    }),
+  ];
+}
+
+const CANVAS_RULES = [
+  "CANVAS: a Blueprint-style graph. Each model shows only its real pins — inputs left, outputs right — and a wire joins an output to a compatible input (the user drags it, or you emit wire / unwire in the stack directive). The only model → model flows that exist: lee-carter or cbd → lifecontingencies (projected mortality priced as a cohort), glm-frequency → glm-severity (pure premium), gbm → shap (shap explains the wired GBM; without one it cannot run), esg → scr-standard (rate stress). Reserving methods take no model inputs: Mack and the bootstrap refit chain ladder themselves, and a chain-ladder prior would collapse Bornhuetter–Ferguson onto chain ladder.",
+];
 
 function buildToolsStageContext(args: {
   dataset: Dataset | null;
   domain: ModelFamily | null;
   selected: SelectedModel[];
   summary: string | null;
+  roles: DataRole[];
+  wires: ModelWire[];
 }): string {
-  const { dataset, domain, selected, summary } = args;
+  const { dataset, domain, selected, summary, roles, wires } = args;
   const lines = [
     "You are Scelo at the TOOLS stage of the pipeline.",
     "The user is inside the tools workstation, picking statistical / actuarial models for their dataset.",
@@ -622,6 +942,7 @@ function buildToolsStageContext(args: {
   );
   lines.push(`COLUMNS: ${dataset.columns.join(", ")}.`);
   lines.push(`IDENTIFIED DOMAIN: ${domain ?? "unknown"}.`);
+  lines.push(...dataProvidesLines(roles));
   if (selected.length === 0) {
     lines.push("SELECTED MODELS: none yet.");
   } else {
@@ -635,6 +956,7 @@ function buildToolsStageContext(args: {
       );
     }
   }
+  lines.push(...wiresLines(wires), ...CANVAS_RULES);
   if (summary) lines.push(`PICK SUMMARY: ${summary}`);
   lines.push(modelDirectiveProtocol());
   return lines.join("\n");
@@ -648,20 +970,23 @@ function buildHubChatContext(args: {
   domain: ModelFamily | null;
   selected: SelectedModel[];
   summary: string | null;
+  roles: DataRole[];
+  wires: ModelWire[];
 }): string {
-  const { dataset, domain, selected, summary } = args;
+  const { dataset, domain, selected, summary, roles, wires } = args;
   const lines = [
     "You are Scelo speaking FROM THE DATASET HUB node of the Tools workstation.",
     "Your scope is the dataset as a whole and the overall model mix attached to this hub.",
     "Recommend additions, removals, or rebalancing; sanity-check the identified domain; flag gaps.",
-    "Stay at the hub level — defer model-internals questions to the individual model spokes.",
+    "Stay at the hub level — defer model-internals questions to the individual model nodes.",
     "",
     `DATASET: \`${dataset.name}\` — ${dataset.rows.length} rows, ${dataset.columns.length} columns.`,
     `COLUMNS: ${dataset.columns.join(", ")}.`,
     `IDENTIFIED DOMAIN: ${domain ?? "unknown"}.`,
+    ...dataProvidesLines(roles),
   ];
   if (selected.length === 0) {
-    lines.push("ATTACHED MODELS: none yet — suggest a starter mix grounded in the columns above.");
+    lines.push("ATTACHED MODELS: none yet — suggest a starter mix grounded in DATA PROVIDES.");
   } else {
     lines.push("ATTACHED MODELS (id · family · source · enabled · rationale):");
     for (const m of selected) {
@@ -672,6 +997,7 @@ function buildHubChatContext(args: {
       );
     }
   }
+  lines.push(...wiresLines(wires), ...CANVAS_RULES);
   if (summary) lines.push(`PICK SUMMARY: ${summary}`);
   lines.push(modelDirectiveProtocol());
   return lines.join("\n");
@@ -687,8 +1013,9 @@ function buildModelChatContext(args: {
   selected: SelectedModel[];
   focus: SelectedModel;
   focusModel: CatalogModel;
+  pins: { inputs: ToolInputPin[]; outputs: ToolOutputPin[] };
 }): string {
-  const { dataset, domain, selected, focus, focusModel } = args;
+  const { dataset, domain, selected, focus, focusModel, pins } = args;
   const peers = selected.filter((s) => s.id !== focus.id);
   const lines = [
     `You are Scelo speaking FROM THE \`${focusModel.name}\` MODEL NODE of the Tools workstation.`,
@@ -699,8 +1026,22 @@ function buildModelChatContext(args: {
     `MODEL: ${focusModel.id} · ${focusModel.family}`,
     `MODEL DESCRIPTION: ${focusModel.description}`,
     `APPLICABLE TO: ${focusModel.applicableTo.join(", ")}`,
+    ...(focusModel.illustrative
+      ? [`ILLUSTRATIVE: its figures are ${focusModel.illustrative}.`]
+      : []),
     `SOURCE: ${focus.source}${focus.enabled ? "" : " (currently disabled)"}`,
     `RATIONALE FOR THIS PICK: ${focus.rationale ?? focusModel.description}`,
+    ...(pins.inputs.length > 0
+      ? [
+          "INPUT PINS (as wired on the canvas):",
+          ...pins.inputs.map(
+            (p) => `  • ${p.port.label}${p.port.required ? "" : " (optional)"}: ${p.detail}`,
+          ),
+        ]
+      : ["INPUT PINS: none — it reads no columns."]),
+    ...(pins.outputs.length > 0
+      ? ["OUTPUT PINS:", ...pins.outputs.map((p) => `  • ${p.port.label}: ${p.detail}`)]
+      : []),
     "",
     `DATASET: \`${dataset.name}\` — ${dataset.rows.length} rows, ${dataset.columns.length} columns.`,
     `COLUMNS: ${dataset.columns.join(", ")}.`,
@@ -1130,6 +1471,9 @@ function LeftStatsPanel({
 function ModelDetailsPanel({
   focused,
   selected,
+  pins,
+  blocked,
+  fitOf,
   onToggle,
   onRemove,
   onAdd,
@@ -1137,15 +1481,22 @@ function ModelDetailsPanel({
 }: {
   focused: CatalogModel | null;
   selected: SelectedModel[];
+  /** The focused model's pins as the canvas has them wired. */
+  pins: { inputs: ToolInputPin[]; outputs: ToolOutputPin[] } | null;
+  /** Why the focused model can't run, if it can't. */
+  blocked?: string;
+  fitOf: (id: string) => ModelFit;
   onToggle: (id: string) => void;
   onRemove: (id: string) => void;
   onAdd: (id: string) => void;
   catalogModelsByFamily: Map<ModelFamily, CatalogModel[]>;
 }) {
   const { resolved } = useTheme();
-  const palette = resolved === "light" ? FAMILY_COLOR_LIGHT : FAMILY_COLOR_DARK;
+  const theme: Theme = resolved === "light" ? "light" : "dark";
+  const palette = theme === "light" ? FAMILY_COLOR_LIGHT : FAMILY_COLOR_DARK;
 
   const focusedSelection = focused ? selected.find((m) => m.id === focused.id) : null;
+  const focusedFit = focused ? fitOf(focused.id) : null;
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -1167,6 +1518,84 @@ function ModelDetailsPanel({
                 <SciText>{focused.description}</SciText>
               </p>
             </div>
+
+            {/* Can it run? — the data check plus the canvas's wiring. */}
+            {focusedSelection ? (
+              blocked ? (
+                <div className="rounded border border-warn/50 bg-warn/5 p-2 text-[11px] leading-snug text-warn">
+                  ⚠ can't run here: {blocked}
+                </div>
+              ) : (
+                <div className="rounded border border-primary/40 bg-primary/5 p-2 text-[11px] leading-snug text-primary">
+                  ✓ ready — every input is fed
+                  {focusedSelection.enabled ? "" : " (switched off: Hard will skip it)"}
+                </div>
+              )
+            ) : (
+              focusedFit?.state === "blocked" && (
+                <div className="rounded border border-border bg-bg p-2 text-[11px] leading-snug text-fg-dim">
+                  ✗ can't run on this data: {focusedFit.reason}
+                </div>
+              )
+            )}
+            {focused.illustrative && (
+              <div className="rounded border border-border bg-bg p-2 text-[11px] leading-snug text-fg-mute">
+                <span className="font-mono text-[9px] uppercase tracking-wider text-fg-dim">
+                  illustrative ·{" "}
+                </span>
+                its figures are {focused.illustrative}.
+              </div>
+            )}
+
+            {pins && pins.inputs.length + pins.outputs.length > 0 && (
+              <div className="rounded border border-border bg-bg p-2">
+                <div className="mb-1 font-mono text-[9px] uppercase tracking-wider text-fg-dim">
+                  pins
+                </div>
+                <ul className="space-y-1">
+                  {pins.inputs.map((p) => (
+                    <li key={`in:${p.port.id}`} className="flex gap-1.5 text-[11px] leading-snug">
+                      <span
+                        aria-hidden
+                        className="mt-[5px] inline-block h-2 w-2 shrink-0"
+                        style={{
+                          background: portColorOf(p.type, theme),
+                          borderRadius: PORT_TYPES[p.type].provenance === "result" ? 1 : 999,
+                          transform:
+                            PORT_TYPES[p.type].provenance === "result"
+                              ? "rotate(45deg)"
+                              : undefined,
+                        }}
+                      />
+                      <span>
+                        <span className="text-fg">in · {p.port.label}</span>
+                        <span className="text-fg-dim">
+                          {p.port.required ? " (required)" : " (optional)"} — {p.detail}
+                        </span>
+                      </span>
+                    </li>
+                  ))}
+                  {pins.outputs.map((p) => (
+                    <li key={`out:${p.port.id}`} className="flex gap-1.5 text-[11px] leading-snug">
+                      <span
+                        aria-hidden
+                        className="mt-[5px] inline-block h-2 w-2 shrink-0 rotate-45 rounded-[1px]"
+                        style={{ background: portColorOf(p.port.type, theme) }}
+                      />
+                      <span>
+                        <span className="text-fg">out · {p.port.label}</span>
+                        <span className="text-fg-dim"> — {p.detail}</span>
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {pins && pins.inputs.length + pins.outputs.length === 0 && (
+              <p className="text-[11px] leading-snug text-fg-dim">
+                No pins: it reads no columns and feeds no other model.
+              </p>
+            )}
 
             {focusedSelection?.rationale && (
               <div className="rounded border border-border bg-bg p-2">
@@ -1221,15 +1650,20 @@ function ModelDetailsPanel({
           </div>
         ) : (
           <p className="text-[11px] text-fg-dim">
-            Click a model node on the canvas, or pick one from the catalog below to attach it to the
-            hub.
+            Click a model node on the canvas, or pick one from the catalog below. Drop a wire on
+            empty canvas — or right-click it — for the models that fit.
           </p>
         )}
 
         <div className="mt-6">
-          <div className="mb-2 font-mono text-[10px] uppercase tracking-wider text-fg-dim">
+          <div className="mb-1 font-mono text-[10px] uppercase tracking-wider text-fg-dim">
             catalog
           </div>
+          <p className="mb-2 text-[10px] leading-snug text-fg-dim">
+            <span className="text-primary">✓</span> runs on this data ·{" "}
+            <span className="text-fg-mute">~</span> illustrative ·{" "}
+            <span className="text-fg-dim">✗</span> its inputs aren't here
+          </p>
           <div className="flex flex-col gap-3">
             {Array.from(catalogModelsByFamily.entries()).map(([family, models]) => (
               <div key={family}>
@@ -1242,18 +1676,39 @@ function ModelDetailsPanel({
                 <ul className="space-y-0.5">
                   {models.map((m) => {
                     const isSelected = selected.some((s) => s.id === m.id);
+                    const fit = fitOf(m.id);
                     return (
                       <li key={m.id}>
                         <button
                           type="button"
                           onClick={() => (isSelected ? onRemove(m.id) : onAdd(m.id))}
+                          title={
+                            fit.state === "ready"
+                              ? m.description
+                              : `${fit.reason}${isSelected ? "" : fit.state === "blocked" ? " Attaches switched off." : ""}`
+                          }
                           className={`flex w-full items-center justify-between gap-2 rounded border px-2 py-1 text-left font-mono text-[10px] transition ${
                             isSelected
                               ? "border-primary bg-primary/10 text-primary"
-                              : "border-transparent text-fg-mute hover:border-border hover:bg-bg-2"
+                              : fit.state === "blocked"
+                                ? "border-transparent text-fg-dim opacity-60 hover:border-border hover:bg-bg-2"
+                                : "border-transparent text-fg-mute hover:border-border hover:bg-bg-2"
                           }`}
                         >
-                          <span className="truncate">{m.name}</span>
+                          <span className="flex min-w-0 items-center gap-1.5">
+                            <span
+                              className={`w-2 shrink-0 text-center ${
+                                fit.state === "ready"
+                                  ? "text-primary"
+                                  : fit.state === "blocked"
+                                    ? "text-fg-dim"
+                                    : "text-fg-mute"
+                              }`}
+                            >
+                              {FIT_MARK[fit.state]}
+                            </span>
+                            <span className="truncate">{m.name}</span>
+                          </span>
                           <span className="shrink-0 text-[9px] text-fg-dim">
                             {isSelected ? "−" : "+"}
                           </span>
@@ -1273,9 +1728,21 @@ function ModelDetailsPanel({
 
 // ── main workstation ─────────────────────────────────────────────────────────
 
+/** The add menu, open at a canvas point. `flow` is where a picked model lands. */
+type MenuState = {
+  x: number;
+  y: number;
+  flow: XY | null;
+  title: string;
+  subtitle?: string;
+  sections: MenuSection[];
+  onPick: (key: string) => void;
+};
+
 export function ToolsWorkstation() {
   const navigate = useNavigate();
   const { resolved } = useTheme();
+  const theme: Theme = resolved === "light" ? "light" : "dark";
   const {
     dataset,
     selectedModels,
@@ -1327,6 +1794,27 @@ export function ToolsWorkstation() {
     [dataset, columnMetas],
   );
 
+  // What the data can feed — the hub's output pins — found by the same
+  // detectors the runners use, so a pin is a promise Hard keeps.
+  const roles = useMemo(() => (dataset ? detectDataRoles(dataset) : []), [dataset]);
+  const dataTypes = useMemo(() => dataTypesOf(roles), [roles]);
+
+  // How each catalog model sits against this data (cached per dataset in
+  // modelApplicability, so the catalog and menus can ask freely).
+  const fitOf = useCallback(
+    (id: string): ModelFit => {
+      const model = MODEL_BY_ID.get(id);
+      if (!model || !dataset) return { state: "blocked", reason: "Load a dataset first." };
+      const ok = modelApplicability(id, dataset);
+      if (!ok.ok) return { state: "blocked", reason: ok.reason };
+      if (model.illustrative) {
+        return { state: "illustrative", reason: `Illustrative: ${model.illustrative}.` };
+      }
+      return { state: "ready" };
+    },
+    [dataset],
+  );
+
   const identify = useCallback(
     (variant: number) => {
       if (!dataset) return;
@@ -1375,7 +1863,7 @@ export function ToolsWorkstation() {
           // Pass the regenerate counter through so pressing regenerate
           // while offline rotates deterministic same-family alternates
           // instead of silently returning the identical list.
-          const fallback = switchOffInapplicable(heuristicPick(signature, variant), dataset);
+          const fallback = finalizePick(heuristicPick(signature, variant), dataset);
           setDomain(fallback.domain);
           setPickSummary(fallback.summary);
           // Picks the data cannot feed arrive switched off (visible in
@@ -1464,6 +1952,52 @@ export function ToolsWorkstation() {
     return () => ac?.abort();
   }, [regenSeed]);
 
+  // Live stack + wires for callbacks that must not go stale (chat replies,
+  // React Flow handlers created once).
+  const selectedModelsRef = useRef(selectedModels);
+  useEffect(() => {
+    selectedModelsRef.current = selectedModels;
+  }, [selectedModels]);
+  const modelWiresRef = useRef<ModelWire[]>(modelWires);
+  useEffect(() => {
+    modelWiresRef.current = modelWires;
+  }, [modelWires]);
+
+  // Wires ─────────────────────────────────────────────────────────────────────
+  // The session's modelWires ARE the canvas's model → model wires (Hard
+  // executes exactly these). New models arrive wired by the session
+  // provider (autoWire); here the actuary plugs, unplugs and re-plugs.
+  const connect = useCallback(
+    (source: string, target: string) => {
+      setModelWires((prev) => connectWire(prev, source, target));
+      logEvent({
+        stage: "tools",
+        kind: "model.wire",
+        payload: { source, target, connected: true },
+      });
+    },
+    [setModelWires, logEvent],
+  );
+  const unplug = useCallback(
+    (source: string, target: string) => {
+      setModelWires((prev) => disconnectWire(prev, source, target));
+      logEvent({
+        stage: "tools",
+        kind: "model.wire",
+        payload: { source, target, connected: false },
+      });
+    },
+    [setModelWires, logEvent],
+  );
+
+  // Canvas arrangement: laid out automatically until the actuary drags a
+  // node (or drops one where they want it); "re-layout" hands it back.
+  const arrangedRef = useRef(false);
+  const pendingPositionsRef = useRef(new Map<string, XY>());
+  // Where the nodes are now (for placing a dropped node clear of them).
+  const nodesRef = useRef<Node[]>([]);
+  const [layoutEpoch, setLayoutEpoch] = useState(0);
+
   // Toggle / add / remove ────────────────────────────────────────────────────
   const onToggle = useCallback(
     (id: string) => {
@@ -1487,26 +2021,67 @@ export function ToolsWorkstation() {
     },
     [setSelectedModels, logEvent],
   );
-  const onAdd = useCallback(
-    (id: string) => {
+  /**
+   * Attach a model — with whatever it cannot run without (SHAP arrives with
+   * the GBM it explains), switched on only if the data can feed it — and
+   * optionally drop it at a canvas point and plug it to a given model.
+   */
+  const addModel = useCallback(
+    (id: string, opts: { at?: XY; wireFrom?: string; wireInto?: string } = {}) => {
       const model = MODEL_BY_ID.get(id);
-      if (!model) return;
-      setSelectedModels((prev) => {
-        if (prev.some((m) => m.id === id)) return prev;
-        return [...prev, { id, enabled: true, source: "user", rationale: model.description }];
-      });
-      logEvent({ stage: "tools", kind: "model.add", payload: { id } });
+      if (!model || !dataset) return;
+      const present = new Set(selectedModelsRef.current.map((m) => m.id));
+      if (!present.has(id)) {
+        const pulls = requiredProducers(id).filter((p) => !present.has(p));
+        const arrivals: SelectedModel[] = [...pulls, id].map((mid) => ({
+          id: mid,
+          enabled: modelApplicability(mid, dataset).ok,
+          source: "user",
+          rationale:
+            mid === id ? model.description : `Supplies the fitted model ${model.name} explains.`,
+        }));
+        setSelectedModels((prev) => [
+          ...prev,
+          ...arrivals.filter((m) => !prev.some((p) => p.id === m.id)),
+        ]);
+        for (const m of arrivals)
+          logEvent({ stage: "tools", kind: "model.add", payload: { id: m.id } });
+        // While the canvas lays itself out, a new node takes its slot in the
+        // left-to-right flow. Once the actuary has arranged it by hand, the
+        // node lands where it was dropped — nudged clear of the others — and
+        // anything it brings along sits just to its left.
+        if (opts.at && arrangedRef.current) {
+          const taken = nodesRef.current.map((n) => ({
+            x: n.position.x,
+            y: n.position.y,
+            w: n.width ?? TOOL_W,
+            h: n.height ?? 160,
+          }));
+          const place = (mid: string, at: XY) => {
+            const h = estimateToolHeight(mid, false);
+            const spot = freeSpot(at, TOOL_W, h, taken);
+            taken.push({ ...spot, w: TOOL_W, h });
+            pendingPositionsRef.current.set(modelNodeId(mid), spot);
+            return spot;
+          };
+          const spot = place(id, opts.at);
+          for (const p of pulls) place(p, { x: spot.x - TOOL_W - COL_GAP, y: spot.y });
+        }
+      }
+      if (opts.wireFrom) connect(opts.wireFrom, id);
+      if (opts.wireInto) connect(id, opts.wireInto);
     },
-    [setSelectedModels, logEvent],
+    [dataset, setSelectedModels, logEvent, connect],
   );
+  const onAdd = useCallback((id: string) => addModel(id), [addModel]);
   // Swap one model for another in-place. Replaces the entry at the same
-  // index so React Flow recycles the canvas position and downstream
-  // ordering (default-edge slot indices, etc.) stays stable.
+  // index so the node takes the old one's slot and the stack's order is
+  // stable; the replacement is switched on only if the data can feed it.
   const onReplace = useCallback(
     (currentId: string, nextId: string) => {
       if (currentId === nextId) return;
       const next = MODEL_BY_ID.get(nextId);
-      if (!next) return;
+      if (!next || !dataset) return;
       setSelectedModels((prev) => {
         const idx = prev.findIndex((m) => m.id === currentId);
         if (idx < 0) return prev;
@@ -1516,7 +2091,7 @@ export function ToolsWorkstation() {
         const copy = [...prev];
         copy[idx] = {
           id: nextId,
-          enabled: true,
+          enabled: modelApplicability(nextId, dataset).ok,
           source: "user",
           rationale: next.description,
         };
@@ -1526,10 +2101,11 @@ export function ToolsWorkstation() {
       logEvent({ stage: "tools", kind: "model.remove", payload: { id: currentId } });
       logEvent({ stage: "tools", kind: "model.add", payload: { id: nextId } });
     },
-    [setSelectedModels, logEvent],
+    [dataset, setSelectedModels, logEvent],
   );
 
-  // Catalog grouped by family for the right panel.
+  // Catalog grouped by family for the right panel; within a family, what
+  // runs on this data first, the illustrative next, what can't run last.
   const catalogByFamily = useMemo(() => {
     const m = new Map<ModelFamily, CatalogModel[]>();
     for (const model of MODEL_CATALOG) {
@@ -1537,44 +2113,29 @@ export function ToolsWorkstation() {
       arr.push(model);
       m.set(model.family, arr);
     }
+    for (const [family, list] of m) {
+      m.set(
+        family,
+        [...list].sort((x, y) => FIT_RANK[fitOf(x.id).state] - FIT_RANK[fitOf(y.id).state]),
+      );
+    }
     return m;
-  }, []);
-
-  // React Flow nodes + edges ─────────────────────────────────────────────────
-  const palette = resolved === "light" ? FAMILY_COLOR_LIGHT : FAMILY_COLOR_DARK;
-  const edgeColor = resolved === "light" ? "#bdbdb8" : "#3a3a3a";
-  // Reads the model-family colour for a given model id. Used to colour
-  // edges by what the edge is *carrying* — hub spokes are tinted by the
-  // destination model's family (each spoke "feeds" that family) and
-  // cross-model workflow edges by the source's family (data leaves that
-  // pipeline). Falls back to the dim disabled colour for an unknown id.
-  const colorFor = useCallback(
-    (modelId: string): string => {
-      const fam = MODEL_BY_ID.get(modelId)?.family;
-      return fam ? palette[fam] : edgeColor;
-    },
-    [palette, edgeColor],
-  );
+  }, [fitOf]);
 
   const enabledCount = selectedModels.filter((m) => m.enabled).length;
 
-  // Derived "desired" nodes/edges from the current model picks. The real
-  // React Flow state is held in `nodes`/`edges` below — we sync the desired
-  // shape in but preserve any positions the user has dragged to.
   // Chat-driven stack mutations. Every completed assistant reply from any
   // Tools chat passes through here: if it carries a scelo-models directive,
   // apply it against the LIVE stack (ref, not closure — the memo'd context
   // the chat was created with may be stale by the time the reply lands),
   // log the same events the manual add/remove buttons do, and swap the
   // machine block for a plain confirmation of what actually happened.
-  const selectedModelsRef = useRef(selectedModels);
-  useEffect(() => {
-    selectedModelsRef.current = selectedModels;
-  }, [selectedModels]);
-  const onChatStackDirective = useCallback(
-    (text: string): string | undefined => {
-      const directive = parseModelDirective(text);
-      if (!directive) return undefined;
+  // Apply a stack directive — a chat reply's fenced block or a
+  // deterministic command — to the LIVE stack and wiring (refs, not
+  // closures: the memo'd chat context may be stale by the time a reply
+  // lands), log the same events the canvas does, and say what happened.
+  const applyStackDirective = useCallback(
+    (directive: ModelDirective): string => {
       const { next, report } = applyModelDirective(selectedModelsRef.current, directive);
       const changed =
         report.added.length > 0 ||
@@ -1597,9 +2158,42 @@ export function ToolsWorkstation() {
           });
         }
       }
-      return replaceDirectiveBlock(text, describeDirectiveReport(report));
+      // Wires land against the stack AFTER the adds / removes, so "add CBD
+      // and price the annuity on it" works in one block.
+      const wiring = applyWireDirective(
+        modelWiresRef.current,
+        directive,
+        next.map((m) => m.id),
+      );
+      if (wiring.next !== modelWiresRef.current) {
+        setModelWires(wiring.next);
+        const log = (op: { from: string; to: string }, connected: boolean) =>
+          logEvent({
+            stage: "tools",
+            kind: "model.wire",
+            payload: { source: op.from, target: op.to, connected },
+          });
+        for (const op of wiring.report.replaced) log(op, false);
+        for (const op of wiring.report.unwired) log(op, false);
+        for (const op of wiring.report.wired) log(op, true);
+      }
+      const wireText = describeWireReport(wiring.report);
+      const modelText = changed || !wireText ? describeDirectiveReport(report) : "";
+      return [modelText, wireText].filter(Boolean).join(" · ");
     },
-    [setSelectedModels, logEvent],
+    [setSelectedModels, setModelWires, logEvent],
+  );
+
+  // Every completed assistant reply from any Tools chat passes through
+  // here: a scelo-models block is applied and swapped for a plain
+  // confirmation of what actually happened.
+  const onChatStackDirective = useCallback(
+    (text: string): string | undefined => {
+      const directive = parseModelDirective(text);
+      if (!directive) return undefined;
+      return replaceDirectiveBlock(text, applyStackDirective(directive));
+    },
+    [applyStackDirective],
   );
 
   // Deterministic stack commands — tried before the provider. "add all the
@@ -1607,35 +2201,12 @@ export function ToolsWorkstation() {
   // replies (newest first, skipping confirmations that only re-list the
   // attached stack), so acceptance never depends on the LLM remembering
   // what it proposed. Explicit "add glm-frequency / remove mack / swap X
-  // for Y" resolve straight from the catalog. Returns null → normal chat.
+  // for Y / wire cbd into lifecontingencies" resolve straight from the
+  // catalog. Returns null → normal chat.
   const applyDirectiveAndDescribe = useCallback(
-    (directive: ReturnType<typeof parseStackCommand>): string | null => {
-      if (!directive) return null;
-      const { next, report } = applyModelDirective(selectedModelsRef.current, directive);
-      const changed =
-        report.added.length > 0 ||
-        report.removed.length > 0 ||
-        report.enabled.length > 0 ||
-        report.disabled.length > 0;
-      if (changed) {
-        setSelectedModels(next);
-        for (const id of report.added) {
-          logEvent({ stage: "tools", kind: "model.add", payload: { id } });
-        }
-        for (const id of report.removed) {
-          logEvent({ stage: "tools", kind: "model.remove", payload: { id } });
-        }
-        for (const id of [...report.enabled, ...report.disabled]) {
-          logEvent({
-            stage: "tools",
-            kind: "model.toggle",
-            payload: { id, enabled: report.enabled.includes(id) },
-          });
-        }
-      }
-      return `**stack update:** ${describeDirectiveReport(report)}`;
-    },
-    [setSelectedModels, logEvent],
+    (directive: ReturnType<typeof parseStackCommand>): string | null =>
+      directive ? `**stack update:** ${applyStackDirective(directive)}` : null,
+    [applyStackDirective],
   );
   const onChatStackCommand = useCallback(
     (text: string, assistantHistory?: string[]): string | null => {
@@ -1650,27 +2221,432 @@ export function ToolsWorkstation() {
     [applyDirectiveAndDescribe, tableChat.onLocalCommand],
   );
 
+  // Pins ──────────────────────────────────────────────────────────────────────
+  // Each model's pins as the canvas has them wired: what feeds every input
+  // (the dataset, another model, the pin's default, or nothing), and where
+  // every output goes.
+  const pinsFor = useCallback(
+    (sm: SelectedModel): { inputs: ToolInputPin[]; outputs: ToolOutputPin[] } => {
+      const nameOf = (id: string) => MODEL_BY_ID.get(id)?.name ?? id;
+      const roleOf = (t: DataPortType) => roles.find((r) => r.type === t);
+      const fromData = (t: DataPortType) => {
+        const r = roleOf(t);
+        return `from the dataset — ${r ? `${r.columns.slice(0, 4).join(", ")}${r.columns.length > 4 ? " …" : ""} (${r.evidence})` : PORT_TYPES[t].label}`;
+      };
+      const inputs = inputFeeds(sm.id, selectedModels, modelWires, dataTypes).map(
+        ({ port, feed }): ToolInputPin => {
+          const draggable = port.accepts.some((t) => !isDataType(t));
+          const base = { port, draggable };
+          switch (feed.kind) {
+            case "data":
+              return {
+                ...base,
+                type: feed.type,
+                filled: true,
+                tone: "ok",
+                detail: fromData(feed.type),
+              };
+            case "wire": {
+              const outType = resolveWire(feed.from, sm.id)?.output.type ?? port.accepts[0];
+              if (feed.live) {
+                return {
+                  ...base,
+                  type: outType,
+                  filled: true,
+                  tone: "ok",
+                  detail: `from ${nameOf(feed.from)}'s ${PORT_TYPES[outType].label}`,
+                };
+              }
+              const fb = feed.fallback;
+              const using =
+                fb?.kind === "data"
+                  ? `the dataset's ${PORT_TYPES[fb.type].label}`
+                  : fb?.kind === "default"
+                    ? fb.text
+                    : "nothing";
+              return {
+                ...base,
+                type: outType,
+                filled: false,
+                tone: fb?.kind === "missing" ? "missing" : "fallback",
+                note: `${nameOf(feed.from)} off`,
+                detail: `wired from ${nameOf(feed.from)}, which is switched off — so it uses ${using}`,
+              };
+            }
+            case "default":
+              return {
+                ...base,
+                type: port.accepts[0],
+                filled: false,
+                tone: "default",
+                note: feed.text,
+                detail: `nothing plugged in — ${feed.text}. ${port.note}`,
+              };
+            case "missing": {
+              const resultTypes = port.accepts.filter((t) => !isDataType(t));
+              const producer = resultTypes.flatMap((t) => producersOf(t))[0];
+              let fix: ToolInputPin["fix"];
+              if (producer) {
+                const onCanvas = selectedModels.find((m) => m.id === producer.modelId);
+                const pname = nameOf(producer.modelId);
+                fix = !onCanvas
+                  ? {
+                      label: `+ ${pname}`,
+                      run: () => addModel(producer.modelId, { wireInto: sm.id }),
+                    }
+                  : !onCanvas.enabled
+                    ? {
+                        label: `switch on ${pname}`,
+                        run: () => {
+                          onToggle(producer.modelId);
+                          connect(producer.modelId, sm.id);
+                        },
+                      }
+                    : { label: `plug in ${pname}`, run: () => connect(producer.modelId, sm.id) };
+              }
+              const what = describeAccepts(port.accepts);
+              return {
+                ...base,
+                type: port.accepts[0],
+                filled: false,
+                tone: "missing",
+                note: resultTypes.length > 0 ? "nothing plugged in" : "not in this data",
+                fix,
+                detail:
+                  resultTypes.length > 0
+                    ? `needs ${what} plugged in — nothing is. ${port.note}`
+                    : `needs ${what}, and this dataset has none. ${port.note}`,
+              };
+            }
+          }
+        },
+      );
+      const present = new Set(selectedModels.map((m) => m.id));
+      const outputs = portsOf(sm.id).outputs.map((port): ToolOutputPin => {
+        const to = modelWires
+          .filter(
+            (w) =>
+              w.source === sm.id &&
+              present.has(w.target) &&
+              resolveWire(w.source, w.target)?.output.id === port.id,
+          )
+          .map((w) => nameOf(w.target));
+        return {
+          port,
+          filled: to.length > 0,
+          detail:
+            to.length > 0
+              ? `feeds ${to.join(", ")}. ${port.note}`
+              : `plugged into nothing yet — drag it onto a model, or onto empty canvas for the ones that take it. ${port.note}`,
+        };
+      });
+      return { inputs, outputs };
+    },
+    [selectedModels, modelWires, dataTypes, roles, addModel, onToggle, connect],
+  );
+
+  // Why a model can't run: the data first (applicability), then any
+  // required input nothing on the canvas feeds (SHAP without a GBM).
+  const blockedReasonFor = useCallback(
+    (sm: SelectedModel): string | undefined => {
+      const fit = fitOf(sm.id);
+      if (fit.state === "blocked") return fit.reason;
+      const unmet = unmetInputs(sm.id, selectedModels, modelWires, dataTypes)[0];
+      if (!unmet) return undefined;
+      const what = describeAccepts(unmet.accepts);
+      return `Needs ${what} plugged into “${unmet.label}” — nothing on the canvas feeds it.`;
+    },
+    [fitOf, selectedModels, modelWires, dataTypes],
+  );
+
+  // Pipeline status for the banner — the Blueprint "compile" readout.
+  const pipeline = useMemo(() => {
+    let ready = 0;
+    let blocked = 0;
+    let off = 0;
+    for (const m of selectedModels) {
+      if (!m.enabled) off++;
+      else if (blockedReasonFor(m)) blocked++;
+      else ready++;
+    }
+    return { ready, blocked, off };
+  }, [selectedModels, blockedReasonFor]);
+
+  // Hub pins: the roles an attached model reads (its wires land there),
+  // plus — expanded, or on an empty canvas — everything else the data can
+  // feed, as the place to drag new models from.
+  const [hubExpanded, setHubExpanded] = useState(false);
+  const usedTypes = useMemo(() => {
+    const used = new Set<DataPortType>();
+    for (const sm of selectedModels) {
+      for (const { feed } of inputFeeds(sm.id, selectedModels, modelWires, dataTypes)) {
+        if (feed.kind === "data") used.add(feed.type);
+        if (feed.kind === "wire" && feed.fallback?.kind === "data") used.add(feed.fallback.type);
+      }
+    }
+    return used;
+  }, [selectedModels, modelWires, dataTypes]);
+  const showAllRoles = hubExpanded || selectedModels.length === 0;
+  const hubRows = useMemo(
+    () =>
+      roles
+        .filter((r) => showAllRoles || usedTypes.has(r.type))
+        .map((role) => ({ role, used: usedTypes.has(role.type) })),
+    [roles, usedTypes, showAllRoles],
+  );
+
+  // Add menu ──────────────────────────────────────────────────────────────────
+  const mainRef = useRef<HTMLElement | null>(null);
+  const flowInstanceRef = useRef<ReactFlowInstance | null>(null);
+  const [menu, setMenu] = useState<MenuState | null>(null);
+  const closeMenu = useCallback(() => setMenu(null), []);
+
+  /** Place the menu at a client point, clamped inside the canvas. */
+  const menuAt = useCallback(
+    (clientX: number, clientY: number): { x: number; y: number; flow: XY | null } => {
+      const rect = mainRef.current?.getBoundingClientRect();
+      const x = rect ? Math.max(8, Math.min(clientX - rect.left, rect.width - 310)) : clientX;
+      const y = rect ? Math.max(8, Math.min(clientY - rect.top, rect.height - 400)) : clientY;
+      const flow =
+        flowInstanceRef.current?.screenToFlowPosition({ x: clientX, y: clientY }) ?? null;
+      return { x, y, flow };
+    },
+    [],
+  );
+
+  /** One menu entry per model, grouped: fits this data / on the canvas /
+   *  can't run here. */
+  const entrySections = useCallback(
+    (
+      ids: string[],
+      describe: (id: string) => { hint: string; enabled: boolean; attached: boolean },
+    ): MenuSection[] => {
+      const ready: MenuEntry[] = [];
+      const illustrative: MenuEntry[] = [];
+      const attached: MenuEntry[] = [];
+      const blocked: MenuEntry[] = [];
+      const present = new Set(selectedModelsRef.current.map((m) => m.id));
+      for (const id of ids) {
+        const m = MODEL_BY_ID.get(id);
+        if (!m) continue;
+        const d = describe(id);
+        const fit = fitOf(id);
+        // A model that can't run without another arrives with it — say so.
+        const brings = d.attached
+          ? []
+          : requiredProducers(id)
+              .filter((p) => !present.has(p))
+              .map((p) => MODEL_BY_ID.get(p)?.name ?? p);
+        const entry: MenuEntry = {
+          key: id,
+          name: m.name,
+          family: m.family,
+          hint: brings.length
+            ? `Arrives with ${brings.join(", ")}, which it needs. ${d.hint}`
+            : d.hint,
+          enabled: d.enabled,
+          attached: d.attached,
+        };
+        if (d.attached) attached.push(entry);
+        else if (fit.state === "blocked")
+          blocked.push({ ...entry, enabled: false, hint: fit.reason });
+        else if (fit.state === "illustrative") illustrative.push(entry);
+        else ready.push(entry);
+      }
+      return [
+        { title: "fits this data", entries: ready },
+        { title: "illustrative — built-in assumptions, not your data", entries: illustrative },
+        { title: "on the canvas", entries: attached },
+        { title: "can't run on this data", entries: blocked },
+      ].filter((s) => s.entries.length > 0);
+    },
+    [fitOf],
+  );
+
+  /** Models that take `type` — dropped from an output pin (model or hub). */
+  const openConsumersMenu = useCallback(
+    (
+      type: PortType,
+      from: { model: string } | { hub: true },
+      clientX: number,
+      clientY: number,
+      dropped: boolean,
+    ) => {
+      const at = menuAt(clientX, clientY);
+      const fromModel = "model" in from ? from.model : null;
+      const present = new Map(selectedModelsRef.current.map((m) => [m.id, m] as const));
+      const consumers = consumersOf(type).filter((c) => c.modelId !== fromModel);
+      const sections = entrySections(
+        consumers.map((c) => c.modelId),
+        (id) => {
+          const port = consumers.find((c) => c.modelId === id)?.port;
+          const onCanvas = present.has(id);
+          if (!onCanvas) {
+            return {
+              hint: `${MODEL_BY_ID.get(id)?.description ?? ""} Reads it through “${port?.label}”.`,
+              enabled: true,
+              attached: false,
+            };
+          }
+          if (!fromModel)
+            return { hint: "already reads it from the dataset", enabled: false, attached: true };
+          const plugged = modelWiresRef.current.some(
+            (w) => w.source === fromModel && w.target === id,
+          );
+          return {
+            hint: plugged ? "already plugged in" : `plug into its “${port?.label}”`,
+            enabled: !plugged,
+            attached: true,
+          };
+        },
+      );
+      setMenu({
+        ...at,
+        flow: dropped && at.flow ? { x: at.flow.x, y: at.flow.y - 40 } : null,
+        title: `models that take ${PORT_TYPES[type].phrase}`,
+        subtitle: fromModel
+          ? `from ${MODEL_BY_ID.get(fromModel)?.name ?? fromModel} — picking one plugs it in`
+          : "from the dataset",
+        sections,
+        onPick: (id) => {
+          setMenu(null);
+          addModel(id, {
+            at: dropped && at.flow ? { x: at.flow.x, y: at.flow.y - 40 } : undefined,
+            wireFrom: fromModel ?? undefined,
+          });
+        },
+      });
+    },
+    [menuAt, entrySections, addModel],
+  );
+
+  /** Models that make what an input takes — dropped from an input pin. */
+  const openProducersMenu = useCallback(
+    (targetId: string, portId: string, clientX: number, clientY: number) => {
+      const port = portsOf(targetId).inputs.find((p) => p.id === portId);
+      if (!port) return;
+      const at = menuAt(clientX, clientY);
+      const producers = port.accepts
+        .filter((t) => !isDataType(t))
+        .flatMap((t) => producersOf(t))
+        .filter((p) => p.modelId !== targetId);
+      const current = wireInto(modelWiresRef.current, targetId, portId);
+      const present = new Set(selectedModelsRef.current.map((m) => m.id));
+      const sections = entrySections(
+        producers.map((p) => p.modelId),
+        (id) =>
+          present.has(id)
+            ? current?.source === id
+              ? { hint: "already plugged in", enabled: false, attached: true }
+              : {
+                  hint: `plug its “${producers.find((p) => p.modelId === id)?.port.label}” in`,
+                  enabled: true,
+                  attached: true,
+                }
+            : { hint: MODEL_BY_ID.get(id)?.description ?? "", enabled: true, attached: false },
+      );
+      // A pin that also takes a dataset role can be handed back to the data.
+      const dataType = port.accepts.find(
+        (t): t is DataPortType => isDataType(t) && dataTypes.has(t),
+      );
+      if (dataType && current) {
+        sections.unshift({
+          title: "the dataset",
+          entries: [
+            {
+              key: "dataset",
+              name: `dataset · ${PORT_TYPES[dataType].label}`,
+              family: null,
+              hint: `unplug ${MODEL_BY_ID.get(current.source)?.name ?? current.source} and feed it the table itself`,
+              enabled: true,
+            },
+          ],
+        });
+      }
+      const flow = at.flow ? { x: at.flow.x - TOOL_W, y: at.flow.y - 40 } : undefined;
+      setMenu({
+        ...at,
+        flow: flow ?? null,
+        title: `what can feed “${port.label}”`,
+        subtitle: `${MODEL_BY_ID.get(targetId)?.name ?? targetId} takes ${describeAccepts(port.accepts)}`,
+        sections,
+        onPick: (key) => {
+          setMenu(null);
+          if (key === "dataset") {
+            if (current) unplug(current.source, current.target);
+            return;
+          }
+          addModel(key, { at: flow, wireInto: targetId });
+        },
+      });
+    },
+    [menuAt, entrySections, dataTypes, addModel, unplug],
+  );
+
+  /** Right-click on empty canvas: every model, what fits this data first. */
+  const openAllMenu = useCallback(
+    (clientX: number, clientY: number) => {
+      const at = menuAt(clientX, clientY);
+      const present = new Set(selectedModelsRef.current.map((m) => m.id));
+      const sections = entrySections(
+        MODEL_CATALOG.map((m) => m.id),
+        (id) => {
+          const m = MODEL_BY_ID.get(id);
+          const reads = portsOf(id)
+            .inputs.filter((p) => p.required)
+            .map((p) => p.label);
+          return present.has(id)
+            ? { hint: "already on the canvas", enabled: false, attached: true }
+            : {
+                hint: `${reads.length ? `Reads ${reads.join(" + ")}. ` : "Reads no columns. "}${m?.description ?? ""}`,
+                enabled: true,
+                attached: false,
+              };
+        },
+      );
+      setMenu({
+        ...at,
+        title: "add a model",
+        subtitle: "ranked by what this data can feed",
+        sections,
+        onPick: (id) => {
+          setMenu(null);
+          addModel(id, { at: at.flow ?? undefined });
+        },
+      });
+    },
+    [menuAt, entrySections, addModel],
+  );
+
+  const onRoleMenu = useCallback(
+    (type: DataPortType, clientX: number, clientY: number) =>
+      openConsumersMenu(type, { hub: true }, clientX, clientY, false),
+    [openConsumersMenu],
+  );
+
+  // React Flow nodes + edges ─────────────────────────────────────────────────
   const desiredNodes: Node[] = useMemo(() => {
     if (!dataset) return [];
-    const layout = columnLayout(selectedModels.length);
-    // slotCount = hub + every selected model. Every node carries the same
-    // count so each one has matching front/back ports for any pair the
-    // actuary might want to wire.
-    const slotCount = selectedModels.length + 1;
     const hub: Node<HubNodeData> = {
-      id: "hub",
+      id: HUB_NODE_ID,
       type: "hub",
-      position: { x: -HUB_W / 2, y: -HUB_H / 2 },
+      position: { x: 0, y: 0 },
       data: {
         dataset,
         domain,
         selectedCount: enabledCount,
-        slotCount,
+        rows: hubRows,
+        hiddenCount: hubExpanded || selectedModels.length === 0 ? 0 : roles.length - hubRows.length,
+        expanded: hubExpanded && selectedModels.length > 0,
+        onToggleExpanded: () => setHubExpanded((e) => !e),
+        onRoleMenu,
         chatContext: buildHubChatContext({
           dataset,
           domain: domain as ModelFamily | null,
           selected: selectedModels,
           summary: pickSummary,
+          roles,
+          wires: modelWires,
         }),
         chatPlaceholder:
           selectedModels.length === 0
@@ -1682,335 +2658,270 @@ export function ToolsWorkstation() {
       draggable: true,
       selectable: false,
     };
-    const blockedReason = (id: string): string | undefined => {
-      if (!dataset) return undefined;
-      const a = modelApplicability(id, dataset);
-      return a.ok ? undefined : a.reason;
-    };
-    const tools: Node<ToolNodeData>[] = selectedModels.map((sm, i) => {
+    const tools: Node<ToolNodeData>[] = [];
+    for (const sm of selectedModels) {
       const model = MODEL_BY_ID.get(sm.id);
-      if (!model) {
-        return null as unknown as Node<ToolNodeData>;
-      }
-      return {
-        id: `model-${sm.id}`,
+      if (!model) continue;
+      const pins = pinsFor(sm);
+      tools.push({
+        id: modelNodeId(sm.id),
         type: "tool",
-        position: { x: layout[i].x - TOOL_W / 2, y: layout[i].y - TOOL_H / 2 },
+        position: { x: 0, y: 0 },
         data: {
           model,
           selected: sm.enabled,
           rationale: sm.rationale,
-          blocked: blockedReason(sm.id),
+          blocked: blockedReasonFor(sm),
+          inputs: pins.inputs,
+          outputs: pins.outputs,
+          fitOf,
           onToggle,
           onRemove,
           onReplace,
           isFocused: focusedId === sm.id,
-          slotCount,
           chatContext: buildModelChatContext({
             dataset,
             domain: domain as ModelFamily | null,
             selected: selectedModels,
             focus: sm,
             focusModel: model,
+            pins,
           }),
           chatPlaceholder: `ask about ${model.name}…`,
           onStackDirective: onChatStackDirective,
           onLocalStackCommand: onChatStackCommand,
         },
         draggable: true,
-      };
-    });
-    return [hub, ...tools.filter(Boolean)];
+      });
+    }
+    return [hub, ...tools];
   }, [
     dataset,
     selectedModels,
     domain,
     enabledCount,
+    hubRows,
+    hubExpanded,
+    roles,
+    modelWires,
+    onRoleMenu,
+    pinsFor,
+    blockedReasonFor,
+    fitOf,
     onToggle,
     onRemove,
     onReplace,
     focusedId,
     pickSummary,
+    onChatStackDirective,
+    onChatStackCommand,
   ]);
 
-  // Default edge graph. Two layers:
-  //   1. Hub → model data-feed edges (one per selected model).
-  //   2. Model → model "actuarial workflow" edges that wire common
-  //      sequencing patterns within each domain so the canvas reads as a
-  //      plausible starting pipeline rather than a star of independent
-  //      models. The user can re-wire freely afterwards — both the hub
-  //      and the model nodes expose source + target handles on all four
-  //      sides, so any permutation of connections is possible.
-  //
-  // Workflow pairs are listed `(from, to)` with a label that captures the
-  // actuarial relationship. If neither end of a pair is selected, the
-  // edge is skipped silently.
-  const desiredEdges: Edge[] = useMemo(() => {
-    const enabledIds = new Set(selectedModels.filter((m) => m.enabled).map((m) => m.id));
-    const out: Edge[] = [];
-
-    // ── 1. Hub → model spokes ─────────────────────────────────────────
-    // Each spoke gets its own slot on the hub's right side (so the edges
-    // fan out cleanly down the side of the hub) and lands on the target
-    // model's left slot 0 — by convention every model dedicates left
-    // slot 0 to the hub data feed. Spoke is tinted by the destination
-    // model's family — a reserving spoke is green, a climate spoke is
-    // amber, a pricing spoke is violet, etc. Disabled spokes fall back
-    // to the dim border colour.
-    for (const [i, sm] of selectedModels.entries()) {
-      const model = MODEL_BY_ID.get(sm.id);
-      if (!model) continue;
-      const color = sm.enabled ? colorFor(sm.id) : edgeColor;
-      out.push({
-        id: `e-hub-${sm.id}`,
-        type: "removable",
-        source: "hub",
-        sourceHandle: `s-right-${i}`,
-        target: `model-${sm.id}`,
-        targetHandle: "t-left-0",
-        animated: sm.enabled,
-        style: {
-          stroke: color,
-          strokeWidth: sm.enabled ? 1.5 : 1,
-          opacity: sm.enabled ? 1 : 0.5,
-        },
-        markerEnd: { type: MarkerType.ArrowClosed, color, width: 14, height: 14 },
-      });
+  // Wires: dataset feeds (hub pin → input, not removable — the data always
+  // feeds what reads it) and model → model wires (removable). A wire whose
+  // source is switched off is drawn dashed, beside the feed its pin falls
+  // back to.
+  const desiredEdges: Edge<WireEdgeData>[] = useMemo(() => {
+    const out: Edge<WireEdgeData>[] = [];
+    const nameOf = (id: string) => MODEL_BY_ID.get(id)?.name ?? id;
+    for (const sm of selectedModels) {
+      const target = modelNodeId(sm.id);
+      for (const { port, feed } of inputFeeds(sm.id, selectedModels, modelWires, dataTypes)) {
+        const targetHandle = inHandleId(port.id);
+        const dataEdge = (type: DataPortType) =>
+          out.push({
+            id: `data:${type}->${sm.id}:${port.id}`,
+            type: "wire",
+            source: HUB_NODE_ID,
+            sourceHandle: dataHandleId(type),
+            target,
+            targetHandle,
+            // The data always feeds what reads it: nothing to unplug.
+            deletable: false,
+            focusable: false,
+            data: { color: portColorOf(type, theme), live: sm.enabled },
+          });
+        if (feed.kind === "data") dataEdge(feed.type);
+        if (feed.kind !== "wire") continue;
+        const pair = resolveWire(feed.from, sm.id);
+        if (!pair) continue;
+        out.push({
+          id: `wire:${feed.from}->${sm.id}`,
+          type: "wire",
+          source: modelNodeId(feed.from),
+          sourceHandle: outHandleId(pair.output.id),
+          target,
+          targetHandle,
+          data: {
+            color: portColorOf(pair.output.type, theme),
+            live: feed.live && sm.enabled,
+            onRemove: () => unplug(feed.from, sm.id),
+            title: `unplug ${nameOf(feed.from)} → ${nameOf(sm.id)} (${pair.output.label} → ${pair.input.label})`,
+          },
+        });
+        if (feed.fallback?.kind === "data") dataEdge(feed.fallback.type);
+      }
     }
-
-    // ── 2. Actuarial-workflow defaults ────────────────────────────────
-    // (from, to, label). Each pair is only laid down if both endpoints
-    // are in the user's current selection. Domains are mutually
-    // exclusive in practice (the picker leans into one family), so this
-    // table can list all families in one block without conflicting.
-    const WORKFLOWS: Array<[string, string, string]> = [
-      // reserving — point → variance → BF prior → bootstrap distribution
-      ["chain-ladder", "mack", "+ variance"],
-      ["chain-ladder", "bornhuetter-ferguson", "+ a-priori"],
-      ["mack", "bootstrap-ibnr", "+ simulation"],
-      // mortality — fit & compare, then price
-      ["lee-carter", "cbd", "compare"],
-      ["lee-carter", "lifecontingencies", "price annuities"],
-      ["cbd", "lifecontingencies", "price annuities"],
-      // pricing — frequency × severity, then a nonlinear baseline + explainer
-      ["glm-frequency", "glm-severity", "× combine"],
-      ["glm-severity", "gbm", "vs nonlinear"],
-      ["gbm", "shap", "explain"],
-      // climate — hazard footprints feed parametric trigger design
-      ["climada", "parametric-design", "footprints → trigger"],
-      // capital — SCR uses ESG scenarios
-      ["esg", "scr-standard", "scenarios → SCR"],
-    ];
-
-    // Counter so each cross-model edge departing the same node lands on a
-    // different slot, fanning the workflow arrows out down the source's
-    // right side and across the target's left side instead of stacking
-    // them all on slot 0.
-    const sourceSlotUsed = new Map<string, number>();
-    const targetSlotUsed = new Map<string, number>();
-    for (const [from, to, label] of WORKFLOWS) {
-      const bothSelected =
-        selectedModels.some((m) => m.id === from) && selectedModels.some((m) => m.id === to);
-      if (!bothSelected) continue;
-      const live = enabledIds.has(from) && enabledIds.has(to);
-      // Workflow edges are tinted by the SOURCE family — the data is
-      // leaving that pipeline (e.g. chain-ladder → mack is a reserving
-      // arrow, climada → parametric-design is a climate arrow). When the
-      // edge crosses families (rare but possible in mixed selections),
-      // the source colour wins; the destination's own colour shows on
-      // any hub spoke arriving at the same node.
-      const color = live ? colorFor(from) : edgeColor;
-      // Skip slot 0 on each side — that's reserved for the hub feed on
-      // every model node. Cross-model edges start at slot 1 and grow.
-      const sSlot = (sourceSlotUsed.get(from) ?? 0) + 1;
-      sourceSlotUsed.set(from, sSlot);
-      const tSlot = (targetSlotUsed.get(to) ?? 0) + 1;
-      targetSlotUsed.set(to, tSlot);
-      out.push({
-        id: `e-${from}->${to}`,
-        type: "removable",
-        source: `model-${from}`,
-        sourceHandle: `s-right-${sSlot}`,
-        target: `model-${to}`,
-        targetHandle: `t-left-${tSlot}`,
-        label,
-        // `labelStyle.fill` is consumed by RemovableEdge and mapped to CSS
-        // `color` for the HTML label span. The label's solid `bg-bg` backing
-        // (added in RemovableEdge itself) handles the dashed-stroke masking,
-        // so no `labelBgStyle` is needed here.
-        labelStyle: { fill: color, fontFamily: "'SN Pro', 'Inter', sans-serif", fontSize: 9 },
-        animated: live,
-        style: {
-          stroke: color,
-          strokeDasharray: live ? undefined : "4 4",
-          strokeWidth: live ? 1.4 : 1,
-          opacity: live ? 0.9 : 0.45,
-        },
-        markerEnd: { type: MarkerType.ArrowClosed, color, width: 12, height: 12 },
-      });
-    }
-
     return out;
-  }, [selectedModels, colorFor, edgeColor]);
+  }, [selectedModels, modelWires, dataTypes, theme, unplug]);
 
   // Controlled React Flow state. `onNodesChange` is what makes nodes actually
   // draggable — without it React Flow has no callback for drag updates and
   // the node snaps back to its prop position on each render.
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
+  nodesRef.current = nodes;
 
-  // User-drawn edge handler. Mirrors the default-edge palette so a
-  // hand-drawn arrow reads identically to the ones the auto-layout
-  // generated: hub-sourced edges take the destination's family colour
-  // (same rule as auto hub spokes); model→model edges take the source's
-  // family colour (same rule as auto workflow arrows). Edges with no
-  // resolvable family fall back to the dim border colour.
-  const onConnect = useCallback(
-    (params: Connection) => {
-      if (!params.source || !params.target) return;
-      const sourceModelId = params.source.replace(/^model-/, "");
-      const targetModelId = params.target.replace(/^model-/, "");
-      const color =
-        params.source === "hub"
-          ? colorFor(targetModelId) // tint by destination, like hub spokes
-          : colorFor(sourceModelId); // tint by source, like workflow arrows
-      setEdges((eds) => {
-        const newEdge: Edge = {
-          id: `user-${params.source}-${params.sourceHandle ?? "?"}-${params.target}-${params.targetHandle ?? "?"}-${Date.now()}`,
-          type: "removable",
-          source: params.source ?? "",
-          sourceHandle: params.sourceHandle ?? null,
-          target: params.target ?? "",
-          targetHandle: params.targetHandle ?? null,
-          animated: true,
-          style: { stroke: color, strokeWidth: 1.5, opacity: 0.95 },
-          markerEnd: { type: MarkerType.ArrowClosed, color, width: 12, height: 12 },
-        };
-        return [...eds, newEdge];
+  // Measured node heights feed the layout (estimates until then), so a node
+  // that grows — its chat opened, a warning appeared — pushes its column
+  // down instead of overlapping it.
+  const [measured, setMeasured] = useState<Map<string, number>>(() => new Map());
+  const handleNodesChange = useCallback(
+    (changes: NodeChange[]) => {
+      onNodesChange(changes);
+      const dims = changes.filter(
+        (c): c is Extract<NodeChange, { type: "dimensions" }> =>
+          c.type === "dimensions" && !!c.dimensions,
+      );
+      if (dims.length === 0) return;
+      setMeasured((prev) => {
+        let next: Map<string, number> | null = null;
+        for (const c of dims) {
+          const h = Math.round(c.dimensions?.height ?? 0);
+          if (Math.abs((prev.get(c.id) ?? -1) - h) > 1) {
+            next ??= new Map(prev);
+            next.set(c.id, h);
+          }
+        }
+        return next ?? prev;
       });
     },
-    [colorFor, setEdges],
+    [onNodesChange],
   );
 
-  // Sync the desired shape into state without clobbering user-dragged
-  // positions: if a node already exists by id, keep its position; otherwise
-  // accept the position from the layout.
+  // Lay the graph out (or keep the actuary's arrangement) whenever its
+  // shape, wiring or measured sizes change.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: layoutEpoch forces a fresh layout on "re-layout".
   useEffect(() => {
+    const ids = selectedModels.map((m) => m.id);
+    const heights = new Map(
+      selectedModels.map((sm) => [
+        sm.id,
+        measured.get(modelNodeId(sm.id)) ?? estimateToolHeight(sm.id, !!blockedReasonFor(sm)),
+      ]),
+    );
+    const layout = blueprintLayout({
+      ids,
+      wires: modelWires,
+      heights,
+      hubHeight: measured.get(HUB_NODE_ID) ?? estimateHubHeight(hubRows.length),
+      roleOrder: roles.map((r) => r.type),
+    });
+    const auto = (id: string): XY | undefined =>
+      id === HUB_NODE_ID ? layout.hub : layout.models.get(modelIdOfNode(id) ?? "");
     setNodes((prev) => {
       const prevById = new Map(prev.map((n) => [n.id, n] as const));
       return desiredNodes.map((n) => {
         const existing = prevById.get(n.id);
-        return existing ? { ...n, position: existing.position } : n;
+        const keep = {
+          width: existing?.width,
+          height: existing?.height,
+          selected: existing?.selected,
+        };
+        if (arrangedRef.current) {
+          if (existing) return { ...n, ...keep, position: existing.position };
+          const pending = pendingPositionsRef.current.get(n.id);
+          if (pending) {
+            pendingPositionsRef.current.delete(n.id);
+            return { ...n, position: pending };
+          }
+        }
+        return { ...n, ...keep, position: auto(n.id) ?? n.position };
       });
     });
-  }, [desiredNodes, setNodes]);
-
-  // Latest context wires, readable inside the merge effect without joining
-  // its dependency list (edges→context sync writes modelWires on every edge
-  // change; depending on it here would resurrect deleted wires in a loop).
-  const modelWiresRef = useRef<ModelWire[]>(modelWires);
-  useEffect(() => {
-    modelWiresRef.current = modelWires;
-  }, [modelWires]);
+  }, [desiredNodes, measured, layoutEpoch, setNodes]);
 
   useEffect(() => {
     setEdges((prev) => {
-      const nodeIds = new Set(["hub", ...selectedModels.map((m) => `model-${m.id}`)]);
-      const autoPairs = new Set(desiredEdges.map((e) => `${e.source}→${e.target}`));
-      // 1. Hand-drawn wires survive a mix change as long as both ends still
-      //    exist and the pair didn't just become an auto workflow arrow.
-      const keptUser = prev.filter(
-        (e) =>
-          e.id.startsWith("user-") &&
-          nodeIds.has(e.source) &&
-          nodeIds.has(e.target) &&
-          !autoPairs.has(`${e.source}→${e.target}`),
-      );
-      const present = new Set([...autoPairs, ...keptUser.map((e) => `${e.source}→${e.target}`)]);
-      // 2. Wires persisted in the session (context) but not on the canvas —
-      //    a remount lost the hand-drawn edge objects — re-materialise them
-      //    so what executes is always what the canvas shows.
-      const restored: Edge[] = [];
-      for (const w of modelWiresRef.current) {
-        const source = `model-${w.source}`;
-        const target = `model-${w.target}`;
-        if (!nodeIds.has(source) || !nodeIds.has(target)) continue;
-        if (present.has(`${source}→${target}`)) continue;
-        present.add(`${source}→${target}`);
-        const color = colorFor(w.source);
-        restored.push({
-          id: `user-restored-${w.source}-${w.target}`,
-          type: "removable",
-          source,
-          sourceHandle: "s-right-1",
-          target,
-          targetHandle: "t-left-1",
-          animated: true,
-          style: { stroke: color, strokeWidth: 1.5, opacity: 0.95 },
-          markerEnd: { type: MarkerType.ArrowClosed, color, width: 12, height: 12 },
-        });
-      }
-      return [...desiredEdges, ...keptUser, ...restored];
+      const selected = new Set(prev.filter((e) => e.selected).map((e) => e.id));
+      return desiredEdges.map((e) => (selected.has(e.id) ? { ...e, selected: true } : e));
     });
-  }, [desiredEdges, setEdges, selectedModels, colorFor]);
+  }, [desiredEdges, setEdges]);
 
-  // Publish the canvas's model→model wires to the shared session so Hard
-  // Data can order execution topologically and feed upstream results into
-  // downstream runners. Auto workflow arrows count — the default pipeline
-  // (chain-ladder → mack, gbm → shap, …) is live out of the box.
+  // Keep the whole graph in view while it is laid out automatically: once
+  // every node has been measured, and again whenever models join or leave.
+  const allMeasured = nodes.length > 0 && nodes.every((n) => measured.has(n.id));
+  const fitKey = `${selectedModels.map((m) => m.id).join(",")}|${allMeasured}|${layoutEpoch}`;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: fitKey is the trigger.
   useEffect(() => {
-    const wires: ModelWire[] = [];
-    const seen = new Set<string>();
-    for (const e of edges) {
-      if (!e.source.startsWith("model-") || !e.target.startsWith("model-")) continue;
-      const source = e.source.slice("model-".length);
-      const target = e.target.slice("model-".length);
-      const key = `${source}→${target}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      wires.push({ source, target });
-    }
-    setModelWires((prev) => {
-      if (
-        prev.length === wires.length &&
-        prev.every((w, i) => w.source === wires[i]?.source && w.target === wires[i]?.target)
-      ) {
-        return prev;
-      }
-      return wires;
-    });
-  }, [edges, setModelWires]);
+    if (!allMeasured || arrangedRef.current) return;
+    const t = window.setTimeout(() => {
+      flowInstanceRef.current?.fitView({ padding: 0.1, duration: 250, maxZoom: 1.1 });
+    }, 120);
+    return () => window.clearTimeout(t);
+  }, [fitKey]);
 
-  // React Flow's `fitView` prop only fires on the initial mount. Our nodes
-  // arrive via the sync effect *after* mount, so without this the freshly
-  // laid-out circle can fall partly off-screen, looking "scattered". We
-  // capture the instance and explicitly fit once the spokes first appear.
-  const flowInstanceRef = useRef<ReactFlowInstance | null>(null);
-  const hasFitRef = useRef(false);
-  useEffect(() => {
-    if (hasFitRef.current) return;
-    // Wait until hub + at least one spoke are mounted so fitView has a real
-    // bounding box to work with.
-    if (nodes.length < 2) return;
-    const inst = flowInstanceRef.current;
-    if (!inst) return;
-    hasFitRef.current = true;
-    // Defer one frame so React Flow has measured node dimensions.
-    requestAnimationFrame(() => {
-      inst.fitView({ padding: 0.2, duration: 300 });
-    });
-  }, [nodes.length]);
-
-  // Manual "re-layout" — snap all nodes back to the clean default circle and
-  // refit the viewport. Useful after the user has dragged things around or
-  // after regenerate gives a new model mix.
+  // Manual "re-layout" — back to the automatic left-to-right arrangement.
   const relayout = useCallback(() => {
-    hasFitRef.current = false;
-    setNodes(desiredNodes);
-    requestAnimationFrame(() => {
-      flowInstanceRef.current?.fitView({ padding: 0.2, duration: 300 });
-    });
-  }, [desiredNodes, setNodes]);
+    arrangedRef.current = false;
+    pendingPositionsRef.current.clear();
+    setLayoutEpoch((e) => e + 1);
+  }, []);
+
+  // Connecting ────────────────────────────────────────────────────────────────
+  // Blueprint rules: output → input, types must agree, no loops, a pin takes
+  // one wire (plugging a new one replaces the old).
+  const isValidConnection = useCallback(
+    (c: Connection) => checkConnection(c, modelWiresRef.current).ok,
+    [],
+  );
+  const connectingRef = useRef<{ start: OnConnectStartParams | null; made: boolean }>({
+    start: null,
+    made: false,
+  });
+  const onConnect = useCallback(
+    (c: Connection) => {
+      connectingRef.current.made = true;
+      const check = checkConnection(c, modelWiresRef.current);
+      if (!check.ok) return;
+      if (check.action.kind === "wire") connect(check.action.source, check.action.target);
+      else if (check.action.kind === "data") {
+        const w = wireInto(modelWiresRef.current, check.action.target, check.action.portId);
+        if (w) unplug(w.source, w.target);
+      }
+    },
+    [connect, unplug],
+  );
+  const onConnectStart = useCallback((_: unknown, params: OnConnectStartParams) => {
+    connectingRef.current = { start: params, made: false };
+  }, []);
+  // A wire dropped on empty canvas opens the menu of models that fit it.
+  const onConnectEnd = useCallback(
+    (event: MouseEvent | TouchEvent) => {
+      const { start, made } = connectingRef.current;
+      connectingRef.current = { start: null, made: false };
+      if (made || !start?.nodeId) return;
+      const target = event.target as Element | null;
+      if (!target?.classList?.contains("react-flow__pane")) return;
+      const point = "changedTouches" in event ? event.changedTouches[0] : event;
+      const h = parseHandleId(start.handleId);
+      if (!h) return;
+      if (h.kind === "data") {
+        openConsumersMenu(h.type, { hub: true }, point.clientX, point.clientY, true);
+        return;
+      }
+      const modelId = modelIdOfNode(start.nodeId);
+      if (!modelId) return;
+      if (h.kind === "out") {
+        const port = portsOf(modelId).outputs.find((p) => p.id === h.port);
+        if (port)
+          openConsumersMenu(port.type, { model: modelId }, point.clientX, point.clientY, true);
+        return;
+      }
+      openProducersMenu(modelId, h.port, point.clientX, point.clientY);
+    },
+    [openConsumersMenu, openProducersMenu],
+  );
 
   // Chatbar context — refreshes whenever picks / dataset / domain change.
   const chatStageContext = useMemo(
@@ -2020,8 +2931,10 @@ export function ToolsWorkstation() {
         domain: domain as ModelFamily | null,
         selected: selectedModels,
         summary: pickSummary,
+        roles,
+        wires: modelWires,
       })}\n\n${tableChat.contextAddendum}`,
-    [dataset, domain, selectedModels, pickSummary, tableChat.contextAddendum],
+    [dataset, domain, selectedModels, pickSummary, roles, modelWires, tableChat.contextAddendum],
   );
   const chatPlaceholder = useMemo(() => {
     if (!dataset) return "load a dataset in Soft Data first…";
@@ -2030,6 +2943,10 @@ export function ToolsWorkstation() {
   }, [dataset, selectedModels.length, enabledCount]);
 
   const focused = focusedId ? (MODEL_BY_ID.get(focusedId) ?? null) : null;
+  const focusedSelection = focusedId ? selectedModels.find((m) => m.id === focusedId) : undefined;
+  const focusedPins = focusedSelection ? pinsFor(focusedSelection) : null;
+  const palette = theme === "light" ? FAMILY_COLOR_LIGHT : FAMILY_COLOR_DARK;
+  const blueprint = useMemo(() => ({ theme, wires: modelWires }), [theme, modelWires]);
 
   return (
     <div className="flex h-full flex-col">
@@ -2083,7 +3000,7 @@ export function ToolsWorkstation() {
             type="button"
             onClick={relayout}
             disabled={!dataset || selectedModels.length === 0}
-            title="Snap nodes back to the default circle and refit the view."
+            title="Lay the graph back out left to right and refit the view."
             className="rounded border border-border bg-bg-2 px-2 py-1 font-mono text-[11px] text-fg-mute hover:border-primary hover:text-primary disabled:cursor-not-allowed disabled:opacity-50"
           >
             re-layout
@@ -2099,7 +3016,9 @@ export function ToolsWorkstation() {
                 ? "Load a dataset first."
                 : enabledCount === 0
                   ? "No enabled models — Hard Data will be empty, but you can still go."
-                  : "Run the picks in Hard Data."
+                  : pipeline.blocked > 0
+                    ? `${pipeline.blocked} switched-on model${pipeline.blocked === 1 ? "" : "s"} can't run — Hard will say why.`
+                    : "Run the picks in Hard Data."
             }
             className="rounded border border-primary/60 bg-primary/10 px-2 py-1 font-mono text-[11px] text-primary hover:border-primary hover:bg-primary/20 disabled:cursor-not-allowed disabled:border-border disabled:bg-bg-2 disabled:text-fg-dim"
           >
@@ -2118,18 +3037,38 @@ export function ToolsWorkstation() {
           <span className="font-mono text-[10px] text-fg-dim">
             {dataset.rows.length} rows · {dataset.columns.length} cols
           </span>
+          <div className="flex-1" />
           {/* Fallback picks must be visibly labelled — the user needs to
               know the mix came from the deterministic local heuristic,
               not the AI picker (and that regenerate rotates alternates
               locally rather than re-asking the model). */}
           {status === "fallback" && (
-            <span className="ml-auto rounded border border-warn/40 bg-warn/10 px-1.5 py-0.5 font-mono text-[10px] text-warn">
+            <span className="rounded border border-warn/40 bg-warn/10 px-1.5 py-0.5 font-mono text-[10px] text-warn">
               AI picker unreachable — deterministic local pick shown
+            </span>
+          )}
+          {/* The Blueprint "compile" readout: what Hard will actually run. */}
+          {selectedModels.length > 0 && (
+            <span
+              className={`rounded border px-1.5 py-0.5 font-mono text-[10px] ${
+                pipeline.blocked > 0
+                  ? "border-warn/40 bg-warn/10 text-warn"
+                  : "border-primary/40 bg-primary/10 text-primary"
+              }`}
+              title="Switched-on models whose inputs are all fed will run in Hard; the rest will report why not."
+            >
+              {pipeline.blocked === 0 ? "✓ " : "⚠ "}
+              {pipeline.ready} ready
+              {pipeline.blocked > 0 ? ` · ${pipeline.blocked} can't run` : ""}
+              {pipeline.off > 0 ? ` · ${pipeline.off} off` : ""}
+              {modelWires.length > 0
+                ? ` · ${modelWires.length} wire${modelWires.length === 1 ? "" : "s"}`
+                : ""}
             </span>
           )}
           {domain && (
             <span
-              className={`${status === "fallback" ? "" : "ml-auto"} rounded border bg-bg-2 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wider`}
+              className="rounded border bg-bg-2 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wider"
               style={{
                 color: palette[domain as ModelFamily],
                 borderColor: palette[domain as ModelFamily],
@@ -2167,7 +3106,7 @@ export function ToolsWorkstation() {
             selectedCount={enabledCount}
           />
         </ResizablePanel>
-        <main className="relative min-w-0 flex-1">
+        <main ref={mainRef} className="relative min-w-0 flex-1">
           {/* Model identification in flight with nothing picked yet — the
               canvas would sit empty for the whole LLM round-trip. Same
               loading vocabulary as Soft; indeterminate scan because an LLM
@@ -2194,7 +3133,8 @@ export function ToolsWorkstation() {
                   why these models
                   {domain && <span className="text-fg-mute">· {domain}</span>}
                   <span className="text-fg-mute">
-                    · {selectedModels.length} selected{status === "fallback" ? " · offline pick" : ""}
+                    · {selectedModels.length} selected
+                    {status === "fallback" ? " · offline pick" : ""}
                   </span>
                 </div>
                 <p className="text-[12.5px] leading-snug text-fg">{pickSummary}</p>
@@ -2225,51 +3165,91 @@ export function ToolsWorkstation() {
             </div>
           )}
           {dataset ? (
-            <ReactFlow
-              nodes={nodes}
-              edges={edges}
-              onNodesChange={onNodesChange}
-              onEdgesChange={onEdgesChange}
-              onConnect={onConnect}
-              onNodesDelete={(deleted) => {
-                // Keyboard-deleted model nodes (Backspace / Delete) need
-                // to drop out of `selectedModels` too; the hub is not
-                // deletable so we filter it out.
-                for (const n of deleted) {
-                  if (n.type !== "tool") continue;
-                  const id = n.id.replace(/^model-/, "");
-                  onRemove(id);
-                }
-              }}
-              onInit={(inst) => {
-                flowInstanceRef.current = inst;
-              }}
-              nodeTypes={NODE_TYPES}
-              edgeTypes={EDGE_TYPES}
-              onNodeClick={(_, node) => {
-                if (node.type === "tool") {
-                  const id = node.id.replace(/^model-/, "");
-                  setFocusedId(id);
-                }
-              }}
-              fitView
-              fitViewOptions={{ padding: 0.2 }}
-              minZoom={0.4}
-              maxZoom={1.5}
-              // Connectable — users can drag from any source handle to any
-              // target handle to wire a custom edge. The eight-handle
-              // layout per node (target + source on each side) means any
-              // permutation of connections is reachable.
-              nodesConnectable={true}
-              // Backspace OR Delete removes a selected node / edge. React
-              // Flow's default is "Backspace" alone; both keys is closer
-              // to what most diagramming tools do.
-              deleteKeyCode={["Backspace", "Delete"]}
-              proOptions={{ hideAttribution: true }}
-            >
-              <Background color={resolved === "light" ? "#dcdad5" : "#1a1a1a"} gap={16} />
-              <FlowControls />
-            </ReactFlow>
+            <BlueprintContext.Provider value={blueprint}>
+              <ReactFlow
+                nodes={nodes}
+                edges={edges}
+                onNodesChange={handleNodesChange}
+                onEdgesChange={onEdgesChange}
+                onConnect={onConnect}
+                onConnectStart={onConnectStart}
+                onConnectEnd={onConnectEnd}
+                isValidConnection={isValidConnection}
+                connectionLineComponent={BlueprintConnectionLine}
+                onEdgesDelete={(deleted) => {
+                  // Delete / Backspace on a selected model → model wire.
+                  for (const e of deleted) {
+                    const s = modelIdOfNode(e.source);
+                    const t = modelIdOfNode(e.target);
+                    if (s && t) unplug(s, t);
+                  }
+                }}
+                onNodesDelete={(deleted) => {
+                  // Keyboard-deleted model nodes (Backspace / Delete) need
+                  // to drop out of `selectedModels` too; the hub is not
+                  // deletable so we filter it out.
+                  for (const n of deleted) {
+                    if (n.type !== "tool") continue;
+                    const id = modelIdOfNode(n.id);
+                    if (id) onRemove(id);
+                  }
+                }}
+                onNodeDragStop={() => {
+                  arrangedRef.current = true;
+                }}
+                onPaneContextMenu={(e) => {
+                  e.preventDefault();
+                  openAllMenu(e.clientX, e.clientY);
+                }}
+                // (No close-on-pane-click: dropping a wire on the pane ends in a
+                // pane click, which would shut the menu it just opened. The
+                // menu closes on any press outside it, and on pan / zoom.)
+                onMoveStart={closeMenu}
+                onInit={(inst) => {
+                  flowInstanceRef.current = inst;
+                }}
+                nodeTypes={NODE_TYPES}
+                edgeTypes={EDGE_TYPES}
+                onNodeClick={(_, node) => {
+                  const id = modelIdOfNode(node.id);
+                  if (node.type === "tool" && id) setFocusedId(id);
+                }}
+                fitView
+                fitViewOptions={{ padding: 0.15 }}
+                minZoom={0.3}
+                maxZoom={1.6}
+                nodeDragThreshold={3}
+                // Connectable pin-to-pin; isValidConnection enforces the
+                // types, and a wire dropped on empty canvas opens the menu
+                // of models that fit it.
+                nodesConnectable={true}
+                // Backspace OR Delete removes a selected node / wire. React
+                // Flow's default is "Backspace" alone; both keys is closer
+                // to what most diagramming tools do.
+                deleteKeyCode={["Backspace", "Delete"]}
+                proOptions={{ hideAttribution: true }}
+              >
+                <Background color={resolved === "light" ? "#dcdad5" : "#1a1a1a"} gap={16} />
+                <FlowControls />
+              </ReactFlow>
+              {menu && (
+                <AddModelMenu
+                  x={menu.x}
+                  y={menu.y}
+                  title={menu.title}
+                  subtitle={menu.subtitle}
+                  sections={menu.sections}
+                  onPick={menu.onPick}
+                  onClose={closeMenu}
+                />
+              )}
+              {selectedModels.length > 0 && !menu && (
+                <div className="pointer-events-none absolute left-3 top-2 z-10 font-mono text-[9.5px] text-fg-dim">
+                  drag a pin onto a matching pin · drop it on empty canvas, or right-click, to add a
+                  model
+                </div>
+              )}
+            </BlueprintContext.Provider>
           ) : (
             <div className="flex h-full items-center justify-center p-8 text-center">
               <div className="max-w-md">
@@ -2290,6 +3270,9 @@ export function ToolsWorkstation() {
           <ModelDetailsPanel
             focused={focused}
             selected={selectedModels}
+            pins={focusedPins}
+            blocked={focusedSelection ? blockedReasonFor(focusedSelection) : undefined}
+            fitOf={fitOf}
             onToggle={onToggle}
             onRemove={onRemove}
             onAdd={onAdd}
