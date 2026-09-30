@@ -335,7 +335,7 @@ function ResultNode({ data }: NodeProps<ResultNodeData>) {
   const failed = run.status === "error" && !run.notApplicable;
   return (
     <div
-      className={`glass-card w-[200px] rounded p-2 transition ${
+      className={`ia-node-in glass-card w-[200px] rounded p-2 transition ${
         data.isFocused ? "ring-2 ring-primary" : ""
       }`}
       style={{
@@ -523,7 +523,7 @@ type HubNodeData = {
 function HubNode({ data }: NodeProps<HubNodeData>) {
   return (
     <div
-      className="glass-card w-[260px] rounded-lg p-3"
+      className="ia-node-in glass-card w-[260px] rounded-lg p-3"
       style={{
         // Primary tint on the board-pack hub so the spokes read as
         // converging on it. Inline border wins over the .glass-card hairline.
@@ -794,13 +794,13 @@ function HardStatTile({
   inlineColor?: string;
 }) {
   const tone = accent ? HARD_TILE_ACCENTS[accent] : null;
-  const wrapCls = tone ? tone.wrap : "border-border";
+  // Neutral box; the colour lives in the bar and the label only.
+  const wrapCls = "border-border/70";
   const barCls = tone ? tone.bar : "bg-border";
   const labelCls = tone ? tone.label : "text-fg-dim";
   return (
     <div
       className={`relative overflow-hidden rounded border ${wrapCls} bg-bg px-2 py-1.5 pl-2.5`}
-      style={inlineColor ? { borderColor: inlineColor } : undefined}
     >
       <span
         className={`absolute inset-y-0 left-0 w-[3px] ${barCls}`}
@@ -1663,7 +1663,7 @@ function HardLeftStatsPanel({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="border-b border-border px-3 py-1.5 font-mono text-[10px] uppercase tracking-wider text-fg-dim">
+      <div className="border-b border-border px-3 py-1.5 pr-8 font-mono text-[10px] uppercase tracking-wider text-fg-dim">
         run stats
       </div>
       <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-auto p-2">
@@ -1809,7 +1809,7 @@ function ResultDetailsPanel({
   }, [doneRuns]);
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="border-b border-border px-3 py-1.5 font-mono text-[10px] uppercase tracking-wider text-fg-dim">
+      <div className="border-b border-border px-3 py-1.5 pl-8 font-mono text-[10px] uppercase tracking-wider text-fg-dim">
         {focused ? "result · detail" : "board pack · narrative"}
       </div>
       <div className="min-h-0 flex-1 overflow-auto p-3">
@@ -3636,7 +3636,7 @@ export function HardDataWorkstation() {
           <button
             type="button"
             onClick={() => navigate("/dashboards/scelo/tools")}
-            className="rounded border border-border bg-bg-2 px-2 py-1 font-mono text-[11px] text-fg-mute hover:border-primary hover:text-primary"
+            className="ia-tool-btn"
           >
             edit models
           </button>
@@ -3644,7 +3644,7 @@ export function HardDataWorkstation() {
             type="button"
             onClick={rerun}
             disabled={!dataset || enabled.length === 0}
-            className="rounded border border-border bg-bg-2 px-2 py-1 font-mono text-[11px] text-fg-mute hover:border-primary hover:text-primary disabled:cursor-not-allowed disabled:opacity-50"
+            className="ia-tool-btn"
           >
             rerun & regenerate
           </button>
@@ -3653,7 +3653,7 @@ export function HardDataWorkstation() {
             onClick={relayout}
             disabled={!dataset || enabled.length === 0}
             title="Snap nodes back to the default circle and refit the view."
-            className="rounded border border-border bg-bg-2 px-2 py-1 font-mono text-[11px] text-fg-mute hover:border-primary hover:text-primary disabled:cursor-not-allowed disabled:opacity-50"
+            className="ia-tool-btn"
           >
             re-layout
           </button>
@@ -3663,7 +3663,7 @@ export function HardDataWorkstation() {
             onClick={() => setReportOpen(true)}
             disabled={!dataset}
             title="Open a printable board-pack preview"
-            className="rounded border border-primary/60 bg-primary/10 px-2 py-1 font-mono text-[11px] text-primary hover:border-primary hover:bg-primary/20 disabled:cursor-not-allowed disabled:border-border disabled:bg-bg-2 disabled:text-fg-dim"
+            className="ia-tool-btn ia-tool-btn-cta"
           >
             report · pdf
           </button>
@@ -3919,8 +3919,8 @@ function ReportPreviewModal({
   }, [onClose]);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-bg/40 backdrop-blur-sm">
-      <div className="flex h-[90vh] w-[88vw] max-w-4xl flex-col overflow-hidden rounded-lg border border-border bg-bg-1 shadow-2xl">
+    <div className="ia-backdrop-in fixed inset-0 z-50 flex items-center justify-center bg-bg/40 backdrop-blur-sm">
+      <div className="ia-dialog-in flex h-[90vh] w-[88vw] max-w-4xl flex-col overflow-hidden rounded-lg border border-border bg-bg-1 shadow-2xl">
         <header
           data-print-skip
           className="flex shrink-0 items-center justify-between gap-3 border-b border-border bg-bg-1 px-4 py-2.5"
@@ -4317,8 +4317,8 @@ function ModelDetailModal({
   }, [onClose]);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-bg/40 backdrop-blur-sm">
-      <div className="flex h-[90vh] w-[92vw] max-w-6xl flex-col overflow-hidden rounded-lg border border-border bg-bg-1 shadow-2xl">
+    <div className="ia-backdrop-in fixed inset-0 z-50 flex items-center justify-center bg-bg/40 backdrop-blur-sm">
+      <div className="ia-dialog-in flex h-[90vh] w-[92vw] max-w-6xl flex-col overflow-hidden rounded-lg border border-border bg-bg-1 shadow-2xl">
         {/* header */}
         <header
           className="flex shrink-0 items-center justify-between gap-3 border-b border-border bg-bg-1 px-4 py-2.5"
@@ -5292,7 +5292,10 @@ function ModelDetailChat({ run, modelName }: { run: RunResult; modelName: string
               const isLast = idx === messages.length - 1;
               const streamingThis = !isUser && isLast && isStreaming;
               return (
-                <li key={m.id} className="flex flex-col gap-1">
+                <li
+                  key={m.id}
+                  className={`flex flex-col gap-1 ${idx >= messages.length - 2 ? "ia-rise-in" : ""}`}
+                >
                   <span
                     className={`font-mono text-[9px] uppercase tracking-wider ${
                       isUser ? "text-fg-dim" : "text-accent-2"

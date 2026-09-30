@@ -8,6 +8,7 @@ import { useRef } from 'react';
 import type { Run } from '../../shared/types';
 import { flyPetToRail } from '../lib/petFlight';
 import { summariesFor } from '../lib/tabSummaries';
+import { Pet } from './Pet';
 import { PETS, PET_BY_ID } from './PetRail';
 import type { TabId } from './ViewTabs';
 
@@ -78,7 +79,7 @@ function SummaryRow({
   text: string;
   onSelect: (id: TabId) => void;
 }) {
-  const iconRef = useRef<HTMLImageElement | null>(null);
+  const iconRef = useRef<HTMLSpanElement | null>(null);
   return (
     <button
       type="button"
@@ -91,7 +92,9 @@ function SummaryRow({
         onSelect(pet.id);
       }}
     >
-      <img ref={iconRef} className="summary-pet" src={pet.src} alt="" aria-hidden />
+      <span ref={iconRef} className="summary-pet">
+        <Pet kind={pet.kind} className="summary-pet-live" />
+      </span>
       <span className="summary-name">{pet.label}</span>
       <span className="summary-text">{text}</span>
     </button>

@@ -5790,6 +5790,24 @@ body.is-resizing * {
   align-self: center;
 }
 
+/* The pets are drawn live (components/Pet.tsx): the SVG fills whatever box
+   the icon class gives it, and may spill out of it — a hop lifts the body
+   above its seat, ears flop past its edges. */
+.pet-svg {
+  display: block;
+  overflow: visible;
+}
+
+.summary-pet-live {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.greeting-face {
+  cursor: pointer;
+}
+
 /* The in-flight clone. `position: fixed` and its geometry are set inline from
    the measured rects; only the motion belongs here. */
 .pet-flight {
@@ -5959,6 +5977,33 @@ body.is-resizing * {
 
 .decision-handle-btn:hover {
   background: color-mix(in srgb, var(--bg-2) 60%, transparent);
+}
+
+/* The collapsed decision sidebar reads as a control, not a caption: its panel
+   glyph heads the rail, the name runs beneath, and both brighten together. */
+.decision-handle,
+.decision-handle-btn {
+  flex-direction: column;
+  justify-content: flex-start;
+  gap: 12px;
+  padding: 12px 0;
+  transition: background-color 150ms ease;
+}
+
+.decision-handle-icon {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  color: var(--fg-2);
+  transition: color 150ms ease;
+}
+
+.decision-handle-label {
+  transition: color 150ms ease;
+}
+
+.decision-handle-btn:hover .decision-handle-icon {
+  color: var(--fg);
 }
 
 /* ── Chromeless buttons ─────────────────────────────────────────────────────
@@ -6574,4 +6619,43 @@ body.is-resizing * {
   margin-left: auto;
   padding: 0 6px;
   font-size: 10px;
+}
+
+/* ── Arrivals ─────────────────────────────────────────────────────────────────
+   Panels that mount on demand arrive the way Cursor's and the Grok desktop
+   app's do: fast, decelerating hard, from a few pixels away. Backwards fill,
+   so nothing lingers once they have landed. */
+.decision-panel {
+  animation: swarm-panel-in 240ms cubic-bezier(0.16, 1, 0.3, 1) backwards;
+}
+
+.rail-flyout {
+  animation: swarm-pop-in 180ms cubic-bezier(0.16, 1, 0.3, 1) backwards;
+  transform-origin: left top;
+}
+
+/* A fade, not a slide: the panel is the right-most column, and moving it
+   even 8 px would push the page wider than the window for a moment. */
+@keyframes swarm-panel-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes swarm-pop-in {
+  from {
+    opacity: 0.6;
+    transform: translateX(-6px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .decision-panel,
+  .rail-flyout {
+    animation: none;
+  }
 }

@@ -38,6 +38,7 @@ import { SankeySegmentInspector } from './components/SankeySegmentInspector';
 import { CenterHeading } from './components/CenterHeading';
 import {
   PanelLeftIcon,
+  PanelRightIcon,
   ToolsIcon,
   UsersIcon,
   SlidersIcon,
@@ -1670,7 +1671,7 @@ export function App() {
                   title="collapse decision sidebar"
                   aria-label="collapse decision sidebar"
                 >
-                  <PanelLeftIcon />
+                  <PanelRightIcon />
                 </button>
               </div>
               <div className="decision-panel-body">
@@ -1775,6 +1776,8 @@ export function App() {
             title="expand decision sidebar"
             onClick={() => setDecisionOpen(true)}
           >
+            {/* The panel glyph says "this opens"; the name says what. */}
+            <PanelRightIcon className="decision-handle-icon" />
             <span className="decision-handle-label">decision sidebar</span>
           </button>
         )}

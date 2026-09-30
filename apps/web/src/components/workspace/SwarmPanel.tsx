@@ -19,10 +19,11 @@
 // workspace's window size, and the swarm app already speaks SSE for
 // progress.
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { type SwarmStatus, isDesktopIDE } from "../../lib/sceloIDE";
 import { getLastSwarmRequest, subscribeOpenInSwarm, urlFor } from "../../lib/swarmBus";
 import { SWARM_START_COMMAND, swarmIsBundled, swarmUiUrl } from "../../lib/swarmConfig";
+import { useTheme } from "../../lib/theme";
 import { emitToast } from "../../lib/toastBus";
 import { SwarmLiveDot } from "../SwarmLiveDot";
 
@@ -60,6 +61,16 @@ export default function SwarmPanel() {
     return last ? urlFor(last) : swarmUrl;
   });
   useEffect(() => subscribeOpenInSwarm((r) => setIframeUrl(urlFor(r))), []);
+
+  // Hand the IDE's theme to the swarm, so a dark IDE frames a dark swarm (it
+  // otherwise follows the OS). Posted on load and on every theme change; the
+  // swarm applies it unless the user picked a theme inside the swarm itself.
+  const { resolved } = useTheme();
+  const frameRef = useRef<HTMLIFrameElement | null>(null);
+  const postTheme = useCallback(() => {
+    frameRef.current?.contentWindow?.postMessage({ type: "ia:theme", theme: resolved }, "*");
+  }, [resolved]);
+  useEffect(() => postTheme(), [postTheme]);
 
   useEffect(() => {
     let cancelled = false;
@@ -105,6 +116,8 @@ export default function SwarmPanel() {
       </div>
       {probe === "up" ? (
         <iframe
+          ref={frameRef}
+          onLoad={postTheme}
           src={iframeUrl}
           title="swarm council"
           className="flex-1 border-0 bg-bg"

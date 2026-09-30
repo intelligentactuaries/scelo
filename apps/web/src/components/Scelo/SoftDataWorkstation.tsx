@@ -899,7 +899,7 @@ function ColumnFormatMenu({
           />
           <div
             style={{ position: "fixed", left, top, width: MENU_W, zIndex: 60 }}
-            className="overflow-hidden rounded-lg border border-border bg-bg-1 shadow-2xl"
+            className="ia-pop-in overflow-hidden rounded-lg border border-border bg-bg-1 shadow-2xl"
           >
             <div className="truncate border-b border-border px-2 py-1 font-mono text-[9px] uppercase tracking-wider text-fg-dim">
               date format · {column}
@@ -1620,7 +1620,7 @@ function ChatModalBackdrop({
   return (
     // biome-ignore lint/a11y/useKeyWithClickEvents: keyboard dismissal is handled at the document level via Escape in StageChatbar.
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-bg/30 backdrop-blur-md"
+      className="ia-backdrop-in fixed inset-0 z-50 flex items-center justify-center bg-bg/30 backdrop-blur-md"
       onClick={onDismiss}
     >
       {children}
@@ -1632,7 +1632,7 @@ function ChatModalPanel({ children }: { children: ReactNode }) {
   return (
     // biome-ignore lint/a11y/useKeyWithClickEvents: stopPropagation only — no user-visible action.
     <div
-      className="flex h-[80vh] w-[80vw] max-w-5xl flex-col overflow-hidden rounded-lg border border-border bg-bg-1 shadow-2xl"
+      className="ia-dialog-in flex h-[80vh] w-[80vw] max-w-5xl flex-col overflow-hidden rounded-lg border border-border bg-bg-1 shadow-2xl"
       onClick={(e) => e.stopPropagation()}
     >
       {children}
@@ -3331,7 +3331,7 @@ export function SoftDataWorkstation() {
             onClick={() => setImportModalOpen(true)}
             disabled={uploadState.kind === "loading"}
             title="Import a CSV or Parquet file"
-            className="rounded border border-border bg-bg-2 px-2 py-1 font-mono text-[11px] text-fg-mute hover:border-primary hover:text-primary disabled:cursor-not-allowed disabled:opacity-50"
+            className="ia-tool-btn"
           >
             {uploadState.kind === "loading" ? "parsing…" : "import csv / parquet"}
           </button>
@@ -3341,7 +3341,7 @@ export function SoftDataWorkstation() {
               onClick={() => setCombineModalOpen(true)}
               disabled={uploadState.kind === "loading"}
               title="Stage another CSV / Parquet file to combine with the active dataset — as many as this machine's memory can hold"
-              className="rounded border border-border bg-bg-2 px-2 py-1 font-mono text-[11px] text-fg-mute hover:border-primary hover:text-primary disabled:cursor-not-allowed disabled:opacity-50"
+              className="ia-tool-btn"
             >
               + combine data
               {stagedDatasets.length > 0 ? ` (${stagedDatasets.length + 1} loaded)` : ""}
@@ -3350,7 +3350,7 @@ export function SoftDataWorkstation() {
           <button
             type="button"
             onClick={() => setSamplePickerOpen(true)}
-            className="rounded border border-border bg-bg-2 px-2 py-1 font-mono text-[11px] text-fg-mute hover:border-primary hover:text-primary"
+            className="ia-tool-btn"
           >
             load sample
           </button>
@@ -3362,7 +3362,7 @@ export function SoftDataWorkstation() {
                 ? "augment this dataset with simulated per-row outcomes under a scenario, OR generate a new synthetic dataset"
                 : "generate a synthetic dataset by simulating a population's response to a scenario (swarm @ :3010)"
             }
-            className="rounded border border-border bg-bg-2 px-2 py-1 font-mono text-[11px] text-fg-mute hover:border-primary hover:text-primary"
+            className="ia-tool-btn"
           >
             ▷ simulate
           </button>
@@ -3371,7 +3371,7 @@ export function SoftDataWorkstation() {
               type="button"
               onClick={() => setWorkspacePreviewOpen(true)}
               title="preview which columns are decision-relevant vs merely high-variance (the workspace idea, at the data stage)"
-              className="rounded border border-border bg-bg-2 px-2 py-1 font-mono text-[11px] text-fg-mute hover:border-primary hover:text-primary"
+              className="ia-tool-btn"
             >
               ◈ workspace
             </button>
@@ -3394,7 +3394,7 @@ export function SoftDataWorkstation() {
                 setSelected(null);
                 logEvent({ stage: "soft", kind: "dataset.clear", payload: {} });
               }}
-              className="rounded border border-border bg-bg-2 px-2 py-1 font-mono text-[11px] text-fg-mute hover:border-error hover:text-error"
+              className="ia-tool-btn ia-tool-btn-danger"
             >
               clear
             </button>
@@ -3416,7 +3416,7 @@ export function SoftDataWorkstation() {
                 ? "Skip the macro view — go straight to model selection."
                 : "Load a dataset first."
             }
-            className="rounded border border-primary/60 bg-primary/10 px-2 py-1 font-mono text-[11px] text-primary hover:border-primary hover:bg-primary/20 disabled:cursor-not-allowed disabled:border-border disabled:bg-bg-2 disabled:text-fg-dim"
+            className="ia-tool-btn ia-tool-btn-cta"
           >
             next: tools →
           </button>
@@ -3868,7 +3868,7 @@ function WorkspacePreviewModal({
     <ChatModalBackdrop onDismiss={onClose}>
       {/* biome-ignore lint/a11y/useKeyWithClickEvents: stopPropagation only; Escape is handled at the document level above. */}
       <div
-        className="flex max-h-[86vh] w-full max-w-2xl flex-col overflow-hidden rounded-lg border border-border bg-bg shadow-2xl"
+        className="ia-dialog-in flex max-h-[86vh] w-full max-w-2xl flex-col overflow-hidden rounded-lg border border-border bg-bg shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         <header className="flex shrink-0 items-center justify-between border-b border-border px-4 py-2.5">
@@ -4866,7 +4866,12 @@ function ColumnChatPopover({
               const isLast = idx === messages.length - 1;
               const streamingThis = !isUser && isLast && isStreaming;
               return (
-                <li key={m.id} className="flex min-w-0 flex-col gap-0.5">
+                <li
+                  key={m.id}
+                  className={`flex min-w-0 flex-col gap-0.5 ${
+                    idx >= messages.length - 2 ? "ia-rise-in" : ""
+                  }`}
+                >
                   <span
                     className={`font-mono text-[9px] uppercase tracking-wider ${
                       isUser ? "text-fg-dim" : "text-accent-2"
@@ -5003,11 +5008,8 @@ function DerivedColumnButton({
         type="button"
         onClick={() => setOpen((o) => !o)}
         title="Add a derived column from a formula"
-        className={`flex items-center gap-1.5 rounded border px-2 py-1 font-mono text-[11px] ${
-          open
-            ? "border-primary bg-primary/10 text-primary"
-            : "border-border bg-bg-2 text-fg-mute hover:border-primary hover:text-primary"
-        }`}
+        aria-expanded={open}
+        className="ia-tool-btn"
       >
         <span>+ ƒ derived</span>
         {derivedCount > 0 && (
@@ -5019,7 +5021,7 @@ function DerivedColumnButton({
       {open && (
         <div
           ref={popoverRef}
-          className="absolute right-0 top-full z-50 mt-1 w-72 rounded-lg border border-border bg-bg-1 p-2 shadow-2xl"
+          className="ia-pop-in absolute right-0 top-full z-50 mt-1 w-72 rounded-lg border border-border bg-bg-1 p-2 shadow-2xl"
         >
           <div className="mb-1.5 flex items-center justify-between gap-2">
             <span className="font-mono text-[9px] uppercase tracking-wider text-fg-dim">
@@ -5171,7 +5173,7 @@ function ExportMenu({ dataset }: { dataset: Dataset }) {
         type="button"
         onClick={() => setOpen((o) => !o)}
         title="Download the current dataset"
-        className="flex items-center gap-1 rounded border border-border bg-bg-2 px-2 py-1 font-mono text-[11px] text-fg-mute hover:border-primary hover:text-primary"
+        className="ia-tool-btn gap-1"
       >
         export
         <span aria-hidden className="text-[8px]">
@@ -5179,7 +5181,7 @@ function ExportMenu({ dataset }: { dataset: Dataset }) {
         </span>
       </button>
       {open && (
-        <div className="absolute right-0 top-full z-30 mt-1 w-44 overflow-hidden rounded border border-border bg-bg-1 shadow-lg">
+        <div className="ia-pop-in absolute right-0 top-full z-30 mt-1 w-44 overflow-hidden rounded border border-border bg-bg-1 shadow-lg">
           <button
             type="button"
             onClick={() => void doExport("csv")}

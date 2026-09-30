@@ -9,7 +9,7 @@
 // asking for: describe a community and the W(M,T,R) trajectory is the first
 // thing produced. Every other surface is a reaction to it.
 
-import bunnyUrl from '../assets/pets/bunny.svg';
+import { Pet } from './Pet';
 
 /** Time-of-day greeting. Nothing turns on it; it just stops the empty state
  *  reading identically at 3am and 3pm. */
@@ -23,7 +23,8 @@ function greetingFor(hour: number): string {
 export function Greeting({ hour = new Date().getHours() }: { hour?: number }) {
   return (
     <div className="greeting">
-      <img className="greeting-face" src={bunnyUrl} alt="" aria-hidden />
+      {/* Happy to see you, follows the cursor, and twirls if poked. */}
+      <Pet kind="bunny" className="greeting-face" mood="happy" playful reach={2.5} />
       <div className="greeting-line">{greetingFor(hour)}</div>
     </div>
   );

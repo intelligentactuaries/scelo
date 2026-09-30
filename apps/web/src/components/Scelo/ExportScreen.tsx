@@ -123,12 +123,12 @@ export function ExportScreen({
   return (
     // biome-ignore lint/a11y/useKeyWithClickEvents: Escape is handled at the document level above.
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-bg/30 backdrop-blur-md"
+      className="ia-backdrop-in fixed inset-0 z-50 flex items-center justify-center bg-bg/30 backdrop-blur-md"
       onClick={onDismiss}
     >
       {/* biome-ignore lint/a11y/useKeyWithClickEvents: stopPropagation only. */}
       <div
-        className="flex h-[80vh] w-[80vw] max-w-5xl flex-col overflow-hidden rounded-lg border border-border bg-bg-1 shadow-2xl"
+        className="ia-dialog-in flex h-[80vh] w-[80vw] max-w-5xl flex-col overflow-hidden rounded-lg border border-border bg-bg-1 shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         <header className="flex shrink-0 items-center justify-between gap-3 border-b border-border bg-bg-1 px-3 py-2">
@@ -236,8 +236,8 @@ export function ExportButton({
   const [open, setOpen] = useState(false);
   const chrome =
     variant === "primary"
-      ? "rounded border border-primary/60 bg-primary/10 px-2 py-1 font-mono text-[11px] uppercase tracking-wider text-primary hover:border-primary hover:bg-primary/20"
-      : "rounded border border-border bg-bg-2 px-2 py-1 font-mono text-[11px] text-fg-mute hover:border-primary hover:text-primary";
+      ? "ia-tool-btn ia-tool-btn-cta py-0.5 text-[10px] uppercase tracking-wider"
+      : "ia-tool-btn";
   const displayLabel = label ?? "export · code";
   return (
     <>
@@ -246,7 +246,7 @@ export function ExportButton({
         onClick={() => setOpen(true)}
         disabled={disabled}
         title="Export this workflow as Python / R / C++ code or a reproducible LLM prompt"
-        className={`${chrome} disabled:cursor-not-allowed disabled:opacity-50`}
+        className={chrome}
       >
         {displayLabel}
       </button>

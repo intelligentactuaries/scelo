@@ -218,7 +218,12 @@ export function StageChatPanel({
                 // feeling like a normal reading column.
                 <li
                   key={m.id}
+                  // The newest turns rise into place (only those: a stage
+                  // being shown again replays animations, and a long thread
+                  // should not cascade).
                   className={`-mx-2 flex flex-col gap-1 rounded-lg px-2 py-1.5 ${
+                    idx >= messages.length - 2 ? "ia-rise-in" : ""
+                  } ${
                     isUser
                       ? "border-l-2 border-accent-2/40 bg-accent-2/[0.05]"
                       : "border-l-2 border-transparent"

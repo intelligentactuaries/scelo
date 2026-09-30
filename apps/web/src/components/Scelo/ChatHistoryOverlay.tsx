@@ -105,7 +105,7 @@ export function ChatHistoryOverlay({ onClose }: { onClose: () => void }) {
   };
 
   return (
-    <div className="fixed inset-0 z-[90] flex flex-col bg-bg/95 backdrop-blur-md">
+    <div className="ia-backdrop-in fixed inset-0 z-[90] flex flex-col bg-bg/95 backdrop-blur-md">
       <header className="flex shrink-0 flex-wrap items-center gap-3 border-b border-border px-5 py-3">
         <div className="mr-auto">
           <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-accent-2">

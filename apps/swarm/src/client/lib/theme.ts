@@ -21,10 +21,32 @@ export function getThemeChoice(): ThemeChoice {
   return "system";
 }
 
+// Embedded in the Scelo IDE, "system" means the IDE's theme, not the OS's:
+// the host posts it in (see listenForHostTheme) so a dark IDE never frames a
+// cream swarm. An explicit light/dark choice made here still wins.
+let hostTheme: ResolvedTheme | null = null;
+
 export function resolveTheme(choice: ThemeChoice = getThemeChoice()): ResolvedTheme {
   if (choice !== "system") return choice;
+  if (hostTheme) return hostTheme;
   if (typeof window === "undefined") return "light";
   return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+}
+
+/** Accept `{ type: "ia:theme", theme }` from the embedding window only. */
+function listenForHostTheme(): void {
+  if (window.parent === window) return;
+  window.addEventListener("message", (e: MessageEvent) => {
+    if (e.source !== window.parent) return;
+    const d = e.data as { type?: unknown; theme?: unknown } | null;
+    if (!d || d.type !== "ia:theme" || (d.theme !== "light" && d.theme !== "dark")) return;
+    if (hostTheme === d.theme) return;
+    hostTheme = d.theme;
+    if (getThemeChoice() === "system") {
+      paint(resolveTheme());
+      window.dispatchEvent(new CustomEvent("ia:theme-change"));
+    }
+  });
 }
 
 function paint(resolved: ResolvedTheme): void {
@@ -47,6 +69,7 @@ export function setThemeChoice(choice: ThemeChoice): void {
 
 export function initTheme(): void {
   if (typeof window === "undefined") return;
+  listenForHostTheme();
   paint(resolveTheme());
   const mq = window.matchMedia("(prefers-color-scheme: dark)");
   const handler = () => {

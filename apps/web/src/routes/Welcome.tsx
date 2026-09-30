@@ -236,7 +236,7 @@ export default function Welcome() {
           </p>
           <div className="mt-3 grid gap-3">
             {SAMPLE_WORKSPACES.map((s) => (
-              <article key={s.id} className="rounded border border-border bg-bg-2 p-4">
+              <article key={s.id} className="rounded-lg border border-border/70 bg-bg-2 p-4">
                 <header className="flex items-baseline justify-between gap-2">
                   <h3 className="text-base text-fg">{s.title}</h3>
                   <button
@@ -292,7 +292,7 @@ function PrimaryAction({
       type="button"
       onClick={onClick}
       disabled={disabled}
-      className="flex flex-col items-start gap-1 rounded border border-border bg-transparent px-4 py-3 text-left transition hover:border-fg hover:bg-bg-2 disabled:cursor-not-allowed disabled:opacity-40"
+      className="flex flex-col items-start gap-1 rounded-lg border border-border/70 bg-transparent px-4 py-3 text-left transition duration-150 hover:border-fg-dim/50 hover:bg-bg-2/70 active:scale-[0.995] disabled:cursor-not-allowed disabled:opacity-40"
     >
       <span className="text-sm font-medium text-fg">{label}</span>
       <span className="text-xs text-fg-mute">{hint}</span>

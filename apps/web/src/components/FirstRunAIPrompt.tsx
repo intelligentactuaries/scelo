@@ -37,9 +37,9 @@ export default function FirstRunAIPrompt() {
       role="dialog"
       aria-modal="true"
       aria-labelledby="first-run-ai-title"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-bg/85 p-4"
+      className="ia-backdrop-in fixed inset-0 z-50 flex items-center justify-center bg-bg/85 p-4"
     >
-      <div className="w-full max-w-md rounded border border-border bg-bg-2 p-5 shadow-lg">
+      <div className="ia-dialog-in w-full max-w-md rounded border border-border bg-bg-2 p-5 shadow-lg">
         <h2 id="first-run-ai-title" className="font-display text-lg text-fg">
           Pick an AI brain
         </h2>

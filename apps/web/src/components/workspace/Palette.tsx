@@ -125,13 +125,13 @@ export default function Palette<T>({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-start justify-center bg-black/30 pt-24"
+      className="ia-backdrop-in fixed inset-0 z-50 flex items-start justify-center bg-black/30 pt-24"
       onClick={onClose}
       onKeyDown={onKey}
       role="presentation"
     >
       <div
-        className="w-[min(640px,90vw)] rounded-md border border-border bg-bg-2 shadow-xl"
+        className="ia-pop-in w-[min(640px,90vw)] rounded-md border border-border bg-bg-2 shadow-xl"
         onClick={(e) => e.stopPropagation()}
         role="dialog"
         aria-label={ariaLabel}

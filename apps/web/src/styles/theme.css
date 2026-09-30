@@ -42,6 +42,17 @@
     --rgb-accent-3: 118 73 199;   /* #7649C7 */
 
     --md-row-stripe: rgba(24, 23, 21, 0.03);
+
+    /* Motion — the vocabulary Cursor's design system (and the Grok desktop
+       app built on it) uses: short durations, one decisive ease-out for
+       things arriving, a strong in-out for things that travel. */
+    --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+    --ease-out-soft: cubic-bezier(0.215, 0.61, 0.355, 1);
+    --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+    --dur-fast: 100ms;
+    --dur: 150ms;
+    --dur-slow: 200ms;
+    --dur-slower: 300ms;
   }
 
   :root[data-theme="dark"] {
@@ -84,6 +95,40 @@
   ::selection {
     background: rgb(var(--rgb-primary));
     color: rgb(var(--rgb-bg));
+  }
+
+  /* Quiet scrollbars everywhere: a thin rounded thumb on a clear track, no
+     arrow buttons — the platform's default bar (a bright white slab on the
+     dark theme) was the loudest thing on most screens. Regions that opt in
+     to .scroll-soft or .scrollbar-none keep their own treatment. */
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track,
+  ::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background-color: rgb(var(--rgb-fg-dim) / 0.28);
+    border: 3px solid transparent;
+    border-radius: 9999px;
+    background-clip: padding-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background-color: rgb(var(--rgb-fg-dim) / 0.5);
+  }
+  ::-webkit-scrollbar-button {
+    display: none;
+    width: 0;
+    height: 0;
+  }
+
+  /* One focus ring for anything interactive that has not styled its own —
+     visible for keyboard users, invisible to the mouse. */
+  :where(button, a, [role="button"], summary, select):focus-visible {
+    outline: 2px solid rgb(var(--rgb-primary) / 0.45);
+    outline-offset: 2px;
   }
 }
 
@@ -269,7 +314,16 @@
      confirms — border + text go red on hover).
      ───────────────────────────────────────────────────────────────────── */
   .ia-btn {
-    @apply inline-flex items-center justify-center gap-1.5 rounded font-sans text-xs leading-none transition;
+    @apply inline-flex items-center justify-center gap-1.5 rounded font-sans text-xs leading-none;
+    transition:
+      color var(--dur) ease,
+      background-color var(--dur) ease,
+      border-color var(--dur) ease,
+      transform var(--dur-fast) ease;
+  }
+  /* Press — the whole control gives a little, as Cursor's do. */
+  .ia-btn:active:not(:disabled) {
+    transform: scale(0.98);
   }
   .ia-btn:focus-visible {
     outline: 2px solid rgb(var(--rgb-fg) / 0.3);
@@ -302,7 +356,8 @@
     @apply border border-border bg-transparent text-fg;
   }
   .ia-btn-secondary:hover:not(:disabled) {
-    @apply border-fg bg-bg-2;
+    @apply bg-bg-2;
+    border-color: rgb(var(--rgb-fg-dim) / 0.7);
   }
 
   .ia-btn-ghost {
@@ -320,6 +375,52 @@
     border-color: rgb(var(--rgb-error));
     color: rgb(var(--rgb-error));
     background: rgb(var(--rgb-error) / 0.08);
+  }
+
+  /* Toolbar button — the stage headers' import / sample / export / … row.
+     Ghost at rest, the way Cursor's chrome is: no box until you reach for
+     it, then a soft fill. Keeps the mono type the headers already use. */
+  .ia-tool-btn {
+    @apply inline-flex items-center gap-1.5 rounded px-2 py-1 font-mono text-[11px] text-fg-mute;
+    border: 1px solid transparent;
+    background: transparent;
+    transition:
+      color var(--dur) ease,
+      background-color var(--dur) ease,
+      border-color var(--dur) ease,
+      transform var(--dur-fast) ease;
+  }
+  .ia-tool-btn:hover:not(:disabled),
+  .ia-tool-btn[aria-expanded="true"] {
+    color: rgb(var(--rgb-fg));
+    background: rgb(var(--rgb-fg) / 0.07);
+  }
+  .ia-tool-btn:active:not(:disabled) {
+    transform: scale(0.98);
+  }
+  .ia-tool-btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+  .ia-tool-btn-danger:hover:not(:disabled) {
+    color: rgb(var(--rgb-error));
+    background: rgb(var(--rgb-error) / 0.08);
+  }
+  /* The one onward action on a header (next: tools →, report · pdf). */
+  .ia-tool-btn-cta {
+    color: rgb(var(--rgb-primary));
+    border-color: rgb(var(--rgb-primary) / 0.45);
+    background: rgb(var(--rgb-primary) / 0.08);
+  }
+  .ia-tool-btn-cta:hover:not(:disabled) {
+    color: rgb(var(--rgb-primary));
+    border-color: rgb(var(--rgb-primary) / 0.8);
+    background: rgb(var(--rgb-primary) / 0.16);
+  }
+  .ia-tool-btn-cta:disabled {
+    color: rgb(var(--rgb-fg-dim));
+    border-color: rgb(var(--rgb-border));
+    background: transparent;
   }
 
   /* Thin underline that grows on hover — minimal link affordance. */
@@ -473,6 +574,112 @@
 @keyframes blink {
   50% {
     opacity: 0;
+  }
+}
+
+/* ── Motion: arrivals ────────────────────────────────────────────────────────
+   Things enter the way they do in Cursor and the Grok desktop app: quickly,
+   decelerating hard (--ease-out), from very close by — 4 to 8 px, 96–97 %
+   scale — never sliding across the screen. Every one uses a BACKWARDS fill:
+   once it has played nothing lingers, in particular no transform that would
+   become the containing block of a fixed-position overlay inside it. */
+
+/* A view arriving — a route, a Scelo stage, a tab. On a kept-alive pane this
+   replays by itself each time the pane is shown again: going from
+   display:none to visible restarts CSS animations. A pure fade, like the
+   Grok app's view changes: any movement here would briefly push the view
+   past its scroll container (a flashing scrollbar) and would be in flight
+   while React Flow measures the canvases inside. */
+.ia-view-in,
+.ia-routes > * {
+  animation: iaViewIn 200ms ease-out backwards;
+}
+@keyframes iaViewIn {
+  from {
+    opacity: 0;
+  }
+}
+
+/* A menu or popover opening from its anchor. */
+.ia-pop-in {
+  animation: iaPopIn 160ms var(--ease-out) backwards;
+  transform-origin: top center;
+}
+@keyframes iaPopIn {
+  from {
+    opacity: 0.6;
+    transform: translateY(-6px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* A dialog settling into place, and the scrim behind it. */
+.ia-dialog-in {
+  animation: iaDialogIn 200ms var(--ease-out) backwards;
+}
+@keyframes iaDialogIn {
+  from {
+    opacity: 0;
+    transform: scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.ia-backdrop-in {
+  animation: iaFadeIn 200ms ease backwards;
+}
+
+/* A side panel's content arriving as its drawer opens (ResizablePanel). */
+.ia-drawer-in {
+  animation: iaFadeIn 240ms ease backwards;
+}
+
+/* A canvas node joining the graph (a model attached, a result landing).
+   Opacity only: React Flow measures a node's pins the moment it mounts, and
+   a transform in flight would bake the wrong pin positions into its wires.
+   No `to` frame, so it settles on the node's own opacity — a switched-off
+   node (drawn at 55 %) fades up to that rather than flashing full. */
+.ia-node-in {
+  animation: iaNodeIn 280ms ease-out backwards;
+}
+@keyframes iaNodeIn {
+  from {
+    opacity: 0;
+  }
+}
+
+/* A new chat message or toast: rises 4 px into place as it fades in (Grok's
+   transcript does the same). Small enough that the extra height never
+   drags a thread's scroll-to-bottom. */
+.ia-rise-in {
+  animation: iaRiseIn 240ms var(--ease-out) backwards;
+}
+@keyframes iaRiseIn {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ia-view-in,
+  .ia-routes > *,
+  .ia-pop-in,
+  .ia-dialog-in,
+  .ia-backdrop-in,
+  .ia-drawer-in,
+  .ia-node-in,
+  .ia-rise-in {
+    animation: none;
   }
 }
 

@@ -17,11 +17,16 @@ import dogUrl from '../assets/pets/dog.svg';
 import hamsterUrl from '../assets/pets/hamster.svg';
 import turtleUrl from '../assets/pets/turtle.svg';
 import type React from 'react';
+import type { PetKind } from '../lib/petShapes';
+import { Pet as LivePet } from './Pet';
 import type { TabId } from './ViewTabs';
 
 export interface Pet {
   id: TabId;
   label: string;
+  /** The animal, drawn live by <Pet> (lib/petShapes.ts). */
+  kind: PetKind;
+  /** The same animal as a still image file. */
   src: string;
   /** The icon's own colour, for the selected label and summary accents. */
   hue: string;
@@ -33,12 +38,12 @@ export interface Pet {
  * run, and it is the face the empty state greets you with.
  */
 export const PETS: Pet[] = [
-  { id: 'forecast', label: 'Forecast', src: bunnyUrl, hue: '#F3C6D1' },
-  { id: 'council', label: 'Council Reactions', src: dogUrl, hue: '#C89B6A' },
-  { id: 'society', label: 'Society Pulse', src: hamsterUrl, hue: '#EBD9A6' },
-  { id: 'synthesis', label: 'Readback', src: turtleUrl, hue: '#6CB04A' },
-  { id: 'simulation', label: 'Simulation', src: chickUrl, hue: '#F7C948' },
-  { id: 'canon', label: 'Canon', src: catUrl, hue: '#F4A03C' },
+  { id: 'forecast', label: 'Forecast', kind: 'bunny', src: bunnyUrl, hue: '#F3C6D1' },
+  { id: 'council', label: 'Council Reactions', kind: 'dog', src: dogUrl, hue: '#C89B6A' },
+  { id: 'society', label: 'Society Pulse', kind: 'hamster', src: hamsterUrl, hue: '#EBD9A6' },
+  { id: 'synthesis', label: 'Readback', kind: 'turtle', src: turtleUrl, hue: '#6CB04A' },
+  { id: 'simulation', label: 'Simulation', kind: 'chick', src: chickUrl, hue: '#F7C948' },
+  { id: 'canon', label: 'Canon', kind: 'cat', src: catUrl, hue: '#F4A03C' },
 ];
 
 export const PET_BY_ID: Record<TabId, Pet> = Object.fromEntries(
@@ -97,7 +102,15 @@ export function PetRail({
             // rail is focused).
             aria-label={active && !expanded ? `Open ${p.label}` : p.label}
           >
-            <img className="pet-icon" data-pet={p.id} src={p.src} alt="" aria-hidden />
+            {/* Alive: breathes, blinks, watches the cursor; the chosen one is
+                happy, a hovered one curious, and being chosen earns a hop. */}
+            <LivePet
+              kind={p.kind}
+              className="pet-icon"
+              dataPet={p.id}
+              mood={active ? 'happy' : 'idle'}
+              active={active}
+            />
             {/* The active label wears the surface's own colour — it is the
                 one piece of text on screen naming where you are. Passed as a
                 custom property rather than a literal `color` so the CSS can

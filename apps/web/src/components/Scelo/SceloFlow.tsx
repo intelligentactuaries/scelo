@@ -231,7 +231,7 @@ function ProjectFileActions() {
         onClick={() => fileRef.current?.click()}
         disabled={busy !== null}
         title="Open a saved .sce project file (replaces the current session)"
-        className="inline-flex items-center gap-1.5 rounded border border-border bg-bg-2 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider text-fg-mute hover:border-primary hover:text-primary disabled:cursor-wait disabled:opacity-60"
+        className="ia-tool-btn py-0.5 text-[10px] uppercase tracking-wider disabled:cursor-wait"
       >
         {busy === "open" && (
           <span
@@ -251,7 +251,7 @@ function ProjectFileActions() {
             ? "Save the whole session (data, filters, model picks, runs) to a .sce project file"
             : "Load a dataset first — there's nothing to save yet"
         }
-        className="inline-flex items-center gap-1.5 rounded border border-border bg-bg-2 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider text-fg-mute hover:border-primary hover:text-primary disabled:cursor-not-allowed disabled:opacity-40"
+        className="ia-tool-btn py-0.5 text-[10px] uppercase tracking-wider"
       >
         {busy === "save" && (
           <span
@@ -317,7 +317,7 @@ function ProjectBar() {
           type="button"
           onClick={endProject}
           title="end project · returns to quick exploration"
-          className="rounded border border-border bg-bg-2 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider text-fg-mute hover:border-error hover:text-error"
+          className="ia-tool-btn ia-tool-btn-danger py-0.5 text-[10px] uppercase tracking-wider"
         >
           end project
         </button>
@@ -349,7 +349,7 @@ function ProjectBar() {
             type="button"
             onClick={submitName}
             disabled={!draftName.trim()}
-            className="rounded border border-primary/60 bg-primary/10 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider text-primary hover:border-primary hover:bg-primary/20 disabled:cursor-not-allowed disabled:border-border disabled:bg-bg-2 disabled:text-fg-dim"
+            className="ia-tool-btn ia-tool-btn-cta py-0.5 text-[10px] uppercase tracking-wider"
           >
             create
           </button>
@@ -359,7 +359,7 @@ function ProjectBar() {
               setNamePromptOpen(false);
               setDraftName("");
             }}
-            className="rounded border border-border bg-bg-2 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider text-fg-mute hover:border-fg-dim"
+            className="ia-tool-btn py-0.5 text-[10px] uppercase tracking-wider"
           >
             cancel
           </button>
@@ -372,7 +372,7 @@ function ProjectBar() {
             type="button"
             onClick={() => setNamePromptOpen(true)}
             title="give this session a name to enable conversation memory"
-            className="rounded border border-primary/40 bg-primary/10 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider text-primary hover:border-primary hover:bg-primary/20"
+            className="ia-tool-btn ia-tool-btn-cta py-0.5 text-[10px] uppercase tracking-wider"
           >
             + start project
           </button>

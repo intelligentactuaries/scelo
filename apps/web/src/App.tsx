@@ -32,7 +32,8 @@ export default function App() {
   // and Settings. Browser preview gets the chat home at /.
   const desktop = isDesktopIDE();
   return (
-    <div className="flex h-full flex-col bg-bg text-fg">
+    // ia-routes: each route's root fades up as it mounts (styles/theme.css).
+    <div className="ia-routes flex h-full flex-col bg-bg text-fg">
       <FirstRunAIPrompt />
       <Routes>
         <Route

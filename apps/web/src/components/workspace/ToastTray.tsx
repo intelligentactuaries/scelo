@@ -39,7 +39,7 @@ export default function ToastTray() {
       {toasts.map((t) => (
         <div
           key={t.id}
-          className={`pointer-events-auto rounded-md border px-3 py-2 text-xs text-fg shadow-lg ${variantClass(t.kind)}`}
+          className={`ia-rise-in pointer-events-auto rounded-md border px-3 py-2 text-xs text-fg shadow-lg ${variantClass(t.kind)}`}
           role={t.kind === "error" ? "alert" : "status"}
         >
           <div className="flex items-baseline justify-between gap-3">

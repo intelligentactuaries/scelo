@@ -35,7 +35,7 @@ export function CommandPalette() {
   return (
     <div
       aria-label="Command palette"
-      className="fixed inset-0 z-50 flex items-start justify-center bg-black/60 pt-32"
+      className="ia-backdrop-in fixed inset-0 z-50 flex items-start justify-center bg-black/60 pt-32"
     >
       <button
         type="button"
@@ -43,7 +43,7 @@ export function CommandPalette() {
         className="absolute inset-0 cursor-default"
         onClick={() => setOpen(false)}
       />
-      <div className="relative w-[480px] panel">
+      <div className="ia-pop-in relative w-[480px] panel">
         <input
           ref={(el) => el?.focus()}
           value={query}

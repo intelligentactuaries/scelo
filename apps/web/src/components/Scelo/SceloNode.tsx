@@ -278,7 +278,10 @@ function NodeChat({ stage }: { stage: SceloStage }) {
             const isLast = idx === messages.length - 1;
             const streamingThis = !isUser && isLast && isStreaming;
             return (
-              <div key={m.id} className="mb-2 last:mb-0">
+              <div
+                key={m.id}
+                className={`mb-2 last:mb-0 ${idx >= messages.length - 2 ? "ia-rise-in" : ""}`}
+              >
                 <div className="font-mono text-[8px] uppercase tracking-[0.15em] text-fg-dim">
                   {isUser ? "you" : "scelo"}
                 </div>

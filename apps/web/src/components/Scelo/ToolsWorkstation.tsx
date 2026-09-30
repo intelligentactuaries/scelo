@@ -205,8 +205,11 @@ function NodeChatbotPanel({
           ref={scrollRef}
           className="nodrag nowheel scrollbar-none max-h-28 overflow-auto rounded-xl bg-bg/60 p-2 text-[10px] leading-snug"
         >
-          {messages.map((m) => (
-            <div key={m.id} className="mb-1 last:mb-0">
+          {messages.map((m, idx) => (
+            <div
+              key={m.id}
+              className={`mb-1 last:mb-0 ${idx >= messages.length - 2 ? "ia-rise-in" : ""}`}
+            >
               <span
                 className="mr-1 font-mono text-[8px] uppercase tracking-[0.15em] text-fg-dim"
                 style={m.role === "assistant" ? { color: focusRing } : undefined}
@@ -273,7 +276,7 @@ function HubNode({ data }: NodeProps<HubNodeData>) {
   const { theme } = useContext(BlueprintContext);
   return (
     <div
-      className="glass-card w-[270px] rounded-lg"
+      className="ia-node-in glass-card w-[270px] rounded-lg"
       style={{
         // Primary tint on the hub so the typed wires read as leaving it.
         // Inline border wins over the .glass-card hairline.
@@ -482,7 +485,7 @@ function ToolNode({ data }: NodeProps<ToolNodeData>) {
 
   return (
     <div
-      className={`glass-card w-[240px] rounded-md transition ${data.isFocused ? "ring-2 ring-primary" : ""}`}
+      className={`ia-node-in glass-card w-[240px] rounded-md transition ${data.isFocused ? "ring-2 ring-primary" : ""}`}
       style={{
         // Family colour is data-bearing — inline `borderColor` wins over
         // the `.glass-card` 1px hairline so the model family stays legible.
@@ -1293,13 +1296,13 @@ function StatTile({
   inlineColor?: string;
 }) {
   const tone = accent ? TILE_ACCENTS[accent] : null;
-  const wrapCls = tone ? tone.wrap : "border-border";
+  // Neutral box; the colour lives in the bar and the label only.
+  const wrapCls = "border-border/70";
   const barCls = tone ? tone.bar : "bg-border";
   const labelCls = tone ? tone.label : "text-fg-dim";
   return (
     <div
       className={`relative overflow-hidden rounded border ${wrapCls} bg-bg px-2 py-1.5 pl-2.5`}
-      style={inlineColor ? { borderColor: inlineColor } : undefined}
     >
       <span
         className={`absolute inset-y-0 left-0 w-[3px] ${barCls}`}
@@ -1350,7 +1353,7 @@ function LeftStatsPanel({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="border-b border-border px-3 py-1.5 font-mono text-[10px] uppercase tracking-wider text-fg-dim">
+      <div className="border-b border-border px-3 py-1.5 pr-8 font-mono text-[10px] uppercase tracking-wider text-fg-dim">
         dataset stats
       </div>
       <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-auto p-2">
@@ -1500,7 +1503,7 @@ function ModelDetailsPanel({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="border-b border-border px-3 py-1.5 font-mono text-[10px] uppercase tracking-wider text-fg-dim">
+      <div className="border-b border-border px-3 py-1.5 pl-8 font-mono text-[10px] uppercase tracking-wider text-fg-dim">
         model details
       </div>
       <div className="min-h-0 flex-1 overflow-auto p-3">
@@ -2984,7 +2987,7 @@ export function ToolsWorkstation() {
               setRegenSeed((s) => s + 1);
             }}
             disabled={!dataset || status === "loading"}
-            className="rounded border border-border bg-bg-2 px-2 py-1 font-mono text-[11px] text-fg-mute hover:border-primary hover:text-primary disabled:cursor-not-allowed disabled:opacity-50"
+            className="ia-tool-btn"
           >
             {status === "loading" ? "identifying…" : "identify models"}
           </button>
@@ -2992,7 +2995,7 @@ export function ToolsWorkstation() {
             type="button"
             onClick={regenerate}
             disabled={!dataset || status === "loading"}
-            className="rounded border border-border bg-bg-2 px-2 py-1 font-mono text-[11px] text-fg-mute hover:border-primary hover:text-primary disabled:cursor-not-allowed disabled:opacity-50"
+            className="ia-tool-btn"
           >
             regenerate
           </button>
@@ -3001,7 +3004,7 @@ export function ToolsWorkstation() {
             onClick={relayout}
             disabled={!dataset || selectedModels.length === 0}
             title="Lay the graph back out left to right and refit the view."
-            className="rounded border border-border bg-bg-2 px-2 py-1 font-mono text-[11px] text-fg-mute hover:border-primary hover:text-primary disabled:cursor-not-allowed disabled:opacity-50"
+            className="ia-tool-btn"
           >
             re-layout
           </button>
@@ -3020,7 +3023,7 @@ export function ToolsWorkstation() {
                     ? `${pipeline.blocked} switched-on model${pipeline.blocked === 1 ? "" : "s"} can't run — Hard will say why.`
                     : "Run the picks in Hard Data."
             }
-            className="rounded border border-primary/60 bg-primary/10 px-2 py-1 font-mono text-[11px] text-primary hover:border-primary hover:bg-primary/20 disabled:cursor-not-allowed disabled:border-border disabled:bg-bg-2 disabled:text-fg-dim"
+            className="ia-tool-btn ia-tool-btn-cta"
           >
             next: hard →
           </button>

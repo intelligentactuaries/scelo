@@ -202,8 +202,10 @@ function Pane({
   // firing the heavier workstations' mount-time effects until needed.
   if (!visited) return null;
   return (
+    // ia-view-in replays each time the stage is shown again (display:none →
+    // block restarts CSS animations), so every stage switch fades up.
     <div
-      className="absolute inset-0 overflow-auto"
+      className="ia-view-in absolute inset-0 overflow-auto"
       style={{ display: active ? "block" : "none" }}
       aria-hidden={!active}
     >

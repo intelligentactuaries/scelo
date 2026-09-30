@@ -1569,7 +1569,7 @@ function QuintileStrip({ meta }: { meta: ColumnMeta }) {
         {cuts.map((c) => (
           <div
             key={c.label}
-            className="relative flex flex-col overflow-hidden rounded border border-accent-2/60 bg-bg-1 px-2 py-1 pl-2.5"
+            className="relative flex flex-col overflow-hidden rounded border border-border/70 bg-bg-1 px-2 py-1 pl-2.5"
           >
             <span className="absolute inset-y-0 left-0 w-[3px] bg-accent-2" />
             <span className="text-[9px] uppercase tracking-wider text-accent-2">{c.label}</span>
@@ -1583,7 +1583,8 @@ function QuintileStrip({ meta }: { meta: ColumnMeta }) {
 
 function Stat({ label, value, accent }: { label: string; value: string; accent?: StatAccent }) {
   const tone = accent ? STAT_ACCENTS[accent] : null;
-  const wrapCls = tone ? tone.wrap : "border-border";
+  // Neutral box; the colour lives in the bar and the label only.
+  const wrapCls = "border-border/70";
   const barCls = tone ? tone.bar : "bg-border";
   const labelCls = tone ? tone.label : "text-fg-dim";
   return (

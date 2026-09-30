@@ -396,7 +396,7 @@ export function AddModelMenu({
   return (
     <section
       ref={rootRef}
-      className="nodrag nowheel absolute z-30 flex w-[300px] flex-col overflow-hidden rounded-xl border border-border bg-bg-1 shadow-xl"
+      className="ia-pop-in nodrag nowheel absolute z-30 flex w-[300px] flex-col overflow-hidden rounded-xl border border-border bg-bg-1 shadow-xl"
       style={{ left: x, top: y }}
       aria-label={title}
       onContextMenu={(e) => e.preventDefault()}

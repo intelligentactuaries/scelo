@@ -345,7 +345,7 @@ export function SimulateScenarioModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-bg/80 backdrop-blur-sm"
+      className="ia-backdrop-in fixed inset-0 z-50 flex items-center justify-center bg-bg/80 backdrop-blur-sm"
       onClick={onClose}
       role="dialog"
       aria-modal="true"
@@ -354,7 +354,7 @@ export function SimulateScenarioModal({
       }}
     >
       <div
-        className="relative max-h-[88vh] w-[min(680px,92vw)] overflow-auto rounded-md border border-border bg-bg-1 p-5 shadow-xl"
+        className="ia-dialog-in relative max-h-[88vh] w-[min(680px,92vw)] overflow-auto rounded-md border border-border bg-bg-1 p-5 shadow-xl"
         onClick={(e) => e.stopPropagation()}
         onKeyDown={(e) => e.stopPropagation()}
         role="presentation"
