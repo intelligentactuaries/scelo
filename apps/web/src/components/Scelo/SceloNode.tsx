@@ -5,14 +5,26 @@
 // "explain this ultimate"). The message thread is collapsed until messages
 // exist so the resting state stays calm.
 
-import { type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
+import { Arrow } from "@/components/Arrow";
+import {
+  type KeyboardEvent,
+  type ReactNode,
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useNavigate } from "react-router-dom";
 import { Handle, type NodeProps, Position } from "reactflow";
 import { ChatInputPill } from "./ChatInputPill";
 import { SceloChatMarkdown } from "./SceloChatMarkdown";
 import { getColumnMetas } from "./columnMetaCache";
 import { FAMILY_COLOR_DARK, MODEL_BY_ID } from "./modelCatalog";
-import { type RunResult } from "./modelRunner";
+import type { RunResult } from "./modelRunner";
 import { useScelo } from "./sceloContext";
 import { useNodeChat } from "./useNodeChat";
 
@@ -193,6 +205,61 @@ function useStageSummary(stage: SceloStage): StageSummary {
   }, [runs]);
 }
 
+// The three cards share one height: the tallest card's natural height, so
+// the row reads as a set and the edges between them run level. Each card
+// reports the height of its own sections (never the stretched card, so it
+// can shrink back), and every card takes the tallest as its min-height.
+type NodeHeights = { tallest: number; report: (stage: SceloStage, height: number) => void };
+const NodeHeightsContext = createContext<NodeHeights | null>(null);
+
+export function SceloNodeHeights({ children }: { children: ReactNode }) {
+  const [heights, setHeights] = useState<Record<string, number>>({});
+  const report = useCallback((stage: SceloStage, height: number) => {
+    setHeights((prev) => (prev[stage] === height ? prev : { ...prev, [stage]: height }));
+  }, []);
+  const tallest = Math.max(0, ...Object.values(heights));
+  const value = useMemo(() => ({ tallest, report }), [tallest, report]);
+  return <NodeHeightsContext.Provider value={value}>{children}</NodeHeightsContext.Provider>;
+}
+
+// Reports the card's natural height: its frame plus the header and chat
+// sections. ResizeObserver sizes are layout sizes, untouched by the canvas
+// zoom, and fractional, so the shared height is exact.
+function useReportNaturalHeight(stage: SceloStage) {
+  const report = useContext(NodeHeightsContext)?.report;
+  const cardRef = useRef<HTMLDivElement | null>(null);
+  const headRef = useRef<HTMLDivElement | null>(null);
+  const chatRef = useRef<HTMLDivElement | null>(null);
+
+  useLayoutEffect(() => {
+    const card = cardRef.current;
+    const head = headRef.current;
+    const chat = chatRef.current;
+    if (!report || !card || !head || !chat) return;
+    const sizes = new Map<Element, number>();
+    const ro = new ResizeObserver((entries) => {
+      for (const e of entries) {
+        sizes.set(e.target, e.borderBoxSize?.[0]?.blockSize ?? e.contentRect.height);
+      }
+      const h = sizes.get(head);
+      const c = sizes.get(chat);
+      if (h === undefined || c === undefined) return;
+      const cs = getComputedStyle(card);
+      const frame =
+        Number.parseFloat(cs.paddingTop) +
+        Number.parseFloat(cs.paddingBottom) +
+        Number.parseFloat(cs.borderTopWidth) +
+        Number.parseFloat(cs.borderBottomWidth);
+      report(stage, Math.ceil(frame + h + c));
+    });
+    ro.observe(head);
+    ro.observe(chat);
+    return () => ro.disconnect();
+  }, [report, stage]);
+
+  return { cardRef, headRef, chatRef };
+}
+
 // SI-prefixed value formatter for the in-node detail line. Avoids overflow
 // when a headline is "1,532,963" inside a 280-px card; "1.5M" sits much
 // better visually.
@@ -316,6 +383,8 @@ function NodeChat({ stage }: { stage: SceloStage }) {
 export function SceloNode({ data }: NodeProps<SceloNodeData>) {
   const navigate = useNavigate();
   const summary = useStageSummary(data.stage);
+  const tallest = useContext(NodeHeightsContext)?.tallest ?? 0;
+  const { cardRef, headRef, chatRef } = useReportNaturalHeight(data.stage);
 
   // Per-stage accent — single thread of colour that ties the small dot, the
   // stage label, and (on focus) the border together. Same palette the
@@ -336,7 +405,11 @@ export function SceloNode({ data }: NodeProps<SceloNodeData>) {
   };
 
   return (
-    <div className="glass-card group w-[280px] rounded-2xl p-6">
+    <div
+      ref={cardRef}
+      className="glass-card group flex w-[280px] flex-col rounded-2xl p-6"
+      style={tallest > 0 ? { minHeight: tallest } : undefined}
+    >
       {/* Tools is the only node connected on both sides. Handles stay tiny
           and grey — present for the edge to attach to, never a focal point. */}
       {data.stage !== "soft" && (
@@ -363,6 +436,7 @@ export function SceloNode({ data }: NodeProps<SceloNodeData>) {
           role + tabIndex + key/click handlers cover the a11y contract. */}
       <div
         role="button"
+        ref={headRef}
         tabIndex={0}
         onClick={drillIn}
         onKeyDown={onCardKey}
@@ -396,7 +470,7 @@ export function SceloNode({ data }: NodeProps<SceloNodeData>) {
             aria-hidden
             className="font-mono text-[11px] text-fg-dim transition group-hover:text-fg"
           >
-            open →
+            open <Arrow />
           </span>
         </div>
 
@@ -408,7 +482,12 @@ export function SceloNode({ data }: NodeProps<SceloNodeData>) {
         {summary.bar && summary.bar.segments.length > 0 && <MiniStackedBar bar={summary.bar} />}
       </div>
 
-      <NodeChat stage={data.stage} />
+      {/* Takes up the height a shorter card gains, so every card's chat
+          sits along the same bottom line. */}
+      <div aria-hidden className="flex-1" />
+      <div ref={chatRef}>
+        <NodeChat stage={data.stage} />
+      </div>
     </div>
   );
 }

@@ -34,11 +34,14 @@ export default {
         "accent-3": token("accent-3"),
       },
       fontFamily: {
-        // Aligned with website_v2 — editorial serif for displays, Inter
-        // sans for body, JetBrains Mono for mono labels/eyebrows.
-        display: ["'Fraunces'", "'Cormorant Garamond'", "ui-serif", "Georgia", "serif"],
+        // One typeface across the IDE: SN Pro. `display` and `mono` stay as
+        // names so existing classes keep their intent (headline, label), but
+        // both resolve to SN Pro; theme.css gives `font-mono` tabular
+        // numerals so figures still line up. Only the code editor and the
+        // terminal keep a fixed-width face, set in their own options.
+        display: ["'SN Pro'", "Inter", "ui-sans-serif", "system-ui", "sans-serif"],
         sans: ["'SN Pro'", "Inter", "ui-sans-serif", "system-ui", "sans-serif"],
-        mono: ["'JetBrains Mono'", "ui-monospace", "monospace"],
+        mono: ["'SN Pro'", "Inter", "ui-sans-serif", "system-ui", "sans-serif"],
       },
       borderRadius: {
         DEFAULT: "4px",

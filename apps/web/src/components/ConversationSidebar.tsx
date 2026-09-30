@@ -12,6 +12,7 @@
 // All persistence still goes through the conversationStore; pinning uses a
 // non-breaking optional `pinned` flag added to the Conversation type.
 
+import { Arrow } from "@/components/Arrow";
 import { conversationStore } from "@/lib/conversations";
 import type { Conversation } from "@/lib/conversations";
 import { type ThemeChoice, useTheme } from "@/lib/theme";
@@ -547,7 +548,7 @@ export function ConversationSidebar({ version = 0, collapsed = false, onToggleCo
               className="block px-3 py-2 text-fg-mute hover:bg-bg hover:text-fg"
               onClick={() => setSettingsOpen(false)}
             >
-              GitHub ↗
+              GitHub <Arrow dir="up-right" />
             </a>
             <button
               type="button"

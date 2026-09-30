@@ -33,8 +33,8 @@ function activeStage(pathname: string): "macro" | "soft" | "tools" | "hard" {
 }
 
 export default function Scelo() {
-  // `.scelo-app` scopes the SN Pro font override (theme.css) to this subtree
-  // only — the rest of /dashboards keeps Inter / Fraunces / JetBrains Mono.
+  // `.scelo-app` lets theme.css hold SN Pro over the inline font styles the
+  // canvas and chart libraries set inside this subtree.
   return (
     <SceloProvider>
       <div className="scelo-app h-full">

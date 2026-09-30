@@ -2,6 +2,7 @@
 // tool result corresponds to a specialist with a real dashboard surface.
 // The dashboard route reads ?prefill={base64-json} on mount.
 
+import { Arrow } from "@/components/Arrow";
 import { useMemo } from "react";
 import { Link } from "react-router-dom";
 
@@ -49,7 +50,7 @@ export function OpenInDashboardButton({ specialist, dashboardPath, prefill }: Pr
       className="inline-flex items-center gap-2 self-start border border-primary bg-primary/5 px-3 py-1.5 font-mono text-primary text-xs hover:bg-primary/15"
     >
       open in {label}
-      <span aria-hidden>↗</span>
+      <Arrow dir="up-right" />
     </Link>
   );
 }

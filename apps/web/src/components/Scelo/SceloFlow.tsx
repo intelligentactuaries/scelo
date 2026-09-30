@@ -15,7 +15,7 @@ import "reactflow/dist/style.css";
 import { Link } from "react-router-dom";
 import { ExportButton } from "./ExportScreen";
 import { FlowControls } from "./FlowControls";
-import { SceloNode, type SceloNodeData } from "./SceloNode";
+import { SceloNode, type SceloNodeData, SceloNodeHeights } from "./SceloNode";
 import { nextPaint } from "./UploadIndicator";
 import { downloadSce, parseSce } from "./projectFile";
 import { clearSceloSession, useScelo } from "./sceloContext";
@@ -119,23 +119,25 @@ export function SceloFlow({ className }: { className?: string }) {
       <ProjectBar />
       {/* data-intro: the launch intro reveals the bar, then the canvas. */}
       <div data-intro="2" className="min-h-0 flex-1">
-        <ReactFlow
-          nodes={nodes}
-          edges={edges}
-          onNodesChange={onNodesChange}
-          onEdgesChange={onEdgesChange}
-          nodeTypes={nodeTypes}
-          fitView
-          fitViewOptions={{ padding: 0.2 }}
-          minZoom={0.4}
-          maxZoom={1.6}
-          nodesConnectable={false}
-          nodesDraggable={true}
-          elementsSelectable={false}
-          proOptions={{ hideAttribution: true }}
-        >
-          <FlowControls />
-        </ReactFlow>
+        <SceloNodeHeights>
+          <ReactFlow
+            nodes={nodes}
+            edges={edges}
+            onNodesChange={onNodesChange}
+            onEdgesChange={onEdgesChange}
+            nodeTypes={nodeTypes}
+            fitView
+            fitViewOptions={{ padding: 0.2 }}
+            minZoom={0.4}
+            maxZoom={1.6}
+            nodesConnectable={false}
+            nodesDraggable={true}
+            elementsSelectable={false}
+            proOptions={{ hideAttribution: true }}
+          >
+            <FlowControls />
+          </ReactFlow>
+        </SceloNodeHeights>
       </div>
     </div>
   );

@@ -2,11 +2,12 @@
 // macro-view node chats, workstation stage chatbars, the per-column popover,
 // the per-model detail dashboard, etc. — so every textarea + send affordance
 // in the product reads identically: one rounded pill, no visible scrollbars,
-// helper hint + send glyph at the bottom-right, focus-within border.
+// a return-key send button at the bottom-right, focus-within border.
 //
 // Sizing is controlled by the `size` prop: "xs" is the compact macro-node
 // shape, "sm" is the roomier workstation shape.
 
+import { EnterKey } from "@/components/Arrow";
 import { type KeyboardEvent, type RefObject, useRef } from "react";
 
 export type ChatInputPillSize = "xs" | "sm";
@@ -20,7 +21,6 @@ export function ChatInputPill({
   placeholder,
   rows = 2,
   size = "sm",
-  helperHint,
   streamingHint = "thinking…",
   textareaRef,
   autoFocus = false,
@@ -35,8 +35,6 @@ export function ChatInputPill({
   placeholder: string;
   rows?: number;
   size?: ChatInputPillSize;
-  /** Bottom-left hint. Defaults to "press ↵ to send". */
-  helperHint?: string;
   /** Bottom-left hint shown while a stream is in flight. Defaults to "thinking…". */
   streamingHint?: string;
   textareaRef?: RefObject<HTMLTextAreaElement>;
@@ -63,7 +61,7 @@ export function ChatInputPill({
           hint: "text-[8px]",
           sendBtn: "h-6 w-6",
           stopBtn: "text-[8px]",
-          icon: 12,
+          icon: 14,
           containerPad: "px-3 pb-1.5 pt-2",
           radius: "rounded-2xl",
           radiusBtn: "rounded-full",
@@ -73,7 +71,7 @@ export function ChatInputPill({
           hint: "text-[9px]",
           sendBtn: "h-7 w-7",
           stopBtn: "text-[9px]",
-          icon: 13,
+          icon: 15,
           containerPad: "px-3.5 pb-2 pt-2.5",
           radius: "rounded-2xl",
           radiusBtn: "rounded-full",
@@ -96,8 +94,9 @@ export function ChatInputPill({
         className={`nodrag nowheel scrollbar-none block w-full resize-none border-0 bg-transparent p-0 font-mono ${dims.textArea} text-fg placeholder:italic placeholder:text-fg-dim focus:outline-none focus:ring-0`}
       />
       <div className="mt-1 flex items-center justify-between">
+        {/* Empty at rest: the return-key button says how to send. */}
         <span className={`font-mono ${dims.hint} tracking-wider text-fg-dim`}>
-          {isStreaming ? streamingHint : (helperHint ?? "press ↵ to send")}
+          {isStreaming ? streamingHint : null}
         </span>
         {isStreaming ? (
           <button
@@ -114,34 +113,15 @@ export function ChatInputPill({
             onClick={onSubmit}
             disabled={!draft.trim() || disabled}
             aria-label="send"
-            className={`nodrag flex ${dims.sendBtn} ${dims.radiusBtn} items-center justify-center bg-fg/5 text-fg-mute transition hover:bg-primary/15 hover:text-primary disabled:cursor-not-allowed disabled:bg-transparent disabled:text-fg-dim disabled:opacity-50`}
+            title="Send (Enter)"
+            // Stays a visible key at rest (dimmer, not faded out), and
+            // brightens once there is something to send.
+            className={`nodrag flex ${dims.sendBtn} ${dims.radiusBtn} items-center justify-center bg-fg/10 text-fg transition hover:bg-primary/15 hover:text-primary disabled:cursor-not-allowed disabled:bg-fg/5 disabled:text-fg-mute`}
           >
-            <SendArrow size={dims.icon} />
+            <EnterKey size={dims.icon} />
           </button>
         )}
       </div>
     </div>
-  );
-}
-
-// Small paper-airplane glyph for the send button. Inline SVG so we don't pull
-// in an icon library; `currentColor` lets the button decide the tint.
-function SendArrow({ size = 12 }: { size?: number }) {
-  return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      width={size}
-      height={size}
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <path d="M22 2L11 13" />
-      <path d="M22 2l-7 20-4-9-9-4 20-7z" />
-    </svg>
   );
 }

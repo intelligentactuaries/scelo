@@ -6,13 +6,14 @@
 // whether its dataset is present and switches from the synthetic
 // substitute to the canonical pipeline accordingly.
 
+import { Arrow } from "@/components/Arrow";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import {
-  isDesktopIDE,
   type DatasetProgress,
   type DatasetSpec,
   type DatasetStatus,
+  isDesktopIDE,
 } from "../lib/sceloIDE";
 import { emitToast } from "../lib/toastBus";
 
@@ -96,7 +97,7 @@ export default function SettingsData() {
           to="/"
           className="ia-btn ia-btn-md ia-btn-secondary mt-4"
         >
-          ← back
+          <Arrow dir="left" /> back
         </Link>
       </div>
     );
@@ -271,7 +272,7 @@ export default function SettingsData() {
                   rel="noreferrer"
                   className="text-[10px] text-fg-mute hover:text-fg"
                 >
-                  source ↗
+                  source <Arrow dir="up-right" />
                 </a>
               </div>
             </li>
@@ -284,7 +285,7 @@ export default function SettingsData() {
           to="/"
           className="ia-btn ia-btn-md ia-btn-secondary"
         >
-          ← back to chat
+          <Arrow dir="left" /> back to chat
         </Link>
       </div>
     </div>

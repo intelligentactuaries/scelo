@@ -8,6 +8,7 @@
 // in one screen, verify that lifelib / chainladder / ChainLadder /
 // climada / etc. all loaded cleanly — no terminal, no pip, no R prompt.
 
+import { Arrow } from "@/components/Arrow";
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import {
@@ -47,7 +48,7 @@ export default function RuntimeCheck() {
           to="/dashboards/scelo"
           className="mt-4 inline-block rounded border border-border bg-bg-2 px-3 py-1.5 text-sm hover:border-fg"
         >
-          ← back to Scelo
+          <Arrow dir="left" /> back to Scelo
         </Link>
       </div>
     );
@@ -93,7 +94,7 @@ export default function RuntimeCheck() {
           to="/dashboards/scelo"
           className="rounded border border-fg bg-fg px-4 py-1.5 text-sm text-bg hover:opacity-90"
         >
-          → open Scelo
+          open Scelo <Arrow />
         </Link>
         <button
           type="button"

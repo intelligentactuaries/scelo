@@ -2,6 +2,7 @@
 // are fleshed out. The expand affordance on every macro node is consistent;
 // only Soft Data currently has a real workstation behind it.
 
+import { Arrow } from "@/components/Arrow";
 import { useNavigate } from "react-router-dom";
 import type { SceloStage } from "./SceloNode";
 
@@ -23,7 +24,7 @@ export function PlaceholderWorkstation({ stage, title, subtitle }: Props) {
           onClick={() => navigate("/dashboards/scelo")}
           className="font-mono text-xs text-fg-mute hover:text-primary"
         >
-          ← macro view
+          <Arrow dir="left" /> macro view
         </button>
         <div className="h-4 w-px bg-border" />
         <div className="min-w-0">

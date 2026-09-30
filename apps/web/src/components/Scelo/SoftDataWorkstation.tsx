@@ -15,6 +15,7 @@
 // so we don't have to round-trip a synthetic ChartSpec through the API
 // layer.
 
+import { Arrow } from "@/components/Arrow";
 import { delimiterFor } from "@/lib/csvParse";
 import { streamParseCsv } from "@/lib/csvStream";
 import { useTheme } from "@/lib/theme";
@@ -1739,7 +1740,7 @@ function SampleLibraryModal({
                     aria-hidden
                     className="font-mono text-[11px] text-fg-dim transition group-hover:text-fg"
                   >
-                    load →
+                    load <Arrow />
                   </span>
                 </div>
               </button>
@@ -3307,7 +3308,7 @@ export function SoftDataWorkstation() {
           onClick={() => navigate("/dashboards/scelo")}
           className="font-mono text-xs text-fg-mute hover:text-primary"
         >
-          ← macro view
+          <Arrow dir="left" /> macro view
         </button>
         <div className="h-4 w-px bg-border" />
         <div className="min-w-0">
@@ -3418,7 +3419,7 @@ export function SoftDataWorkstation() {
             }
             className="ia-tool-btn ia-tool-btn-cta"
           >
-            next: tools →
+            next: tools <Arrow />
           </button>
         </div>
       </header>

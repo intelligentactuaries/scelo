@@ -65,7 +65,7 @@ export function FlowGraph({ spec, className }: Props) {
           border: `1px solid ${palette.status[n.status ?? "idle"]}`,
           borderRadius: 4,
           padding: 8,
-          fontFamily: "'JetBrains Mono', monospace",
+          fontFamily: "'SN Pro', 'Inter', sans-serif",
           fontSize: 12,
         },
       })),

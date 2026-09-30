@@ -11,7 +11,7 @@ const COLORS = {
   border: "#2a2a2a",
 };
 
-const FONT_FAMILY = "'JetBrains Mono', monospace";
+const FONT_FAMILY = "'SN Pro', 'Inter', sans-serif";
 
 // Server-generated chart specs occasionally ship `tooltip.formatter`
 // callbacks as JavaScript source strings (the FastAPI side ships JSON

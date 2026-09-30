@@ -7,7 +7,7 @@
 //
 // Same conventions as the rest of the IDE's charts: tree-shaken echarts/core,
 // theme colours resolved before they reach the canvas (a canvas renderer
-// cannot read `var(--consensus)`), JetBrains Mono throughout.
+// cannot read `var(--consensus)`), SN Pro throughout.
 
 import { useEffect, useMemo, useRef } from 'react';
 import * as echarts from 'echarts/core';
@@ -19,7 +19,7 @@ import { useTheme } from '../lib/theme';
 
 echarts.use([EBarChart, GridComponent, LegendComponent, TooltipComponent, CanvasRenderer]);
 
-const MONO = "'JetBrains Mono', ui-monospace, monospace";
+const FONT = "'SN Pro', sans-serif";
 
 export interface BarSeries {
   name: string;
@@ -54,13 +54,13 @@ export function BarChart({
     const catAxis = {
       type: 'category' as const,
       data: categories,
-      axisLabel: { fontFamily: MONO, fontSize: 11, color: colors.fgMute },
+      axisLabel: { fontFamily: FONT, fontSize: 11, color: colors.fgMute },
       axisLine: { lineStyle: { color: colors.grid } },
       axisTick: { show: false },
     };
     const valAxis = {
       type: 'value' as const,
-      axisLabel: { fontFamily: MONO, fontSize: 11, color: colors.fgMute, formatter: format },
+      axisLabel: { fontFamily: FONT, fontSize: 11, color: colors.fgMute, formatter: format },
       splitLine: { lineStyle: { color: colors.grid } },
       axisLine: { show: false },
     };
@@ -70,7 +70,7 @@ export function BarChart({
       tooltip: {
         trigger: 'axis',
         axisPointer: { type: 'shadow' },
-        textStyle: { fontFamily: MONO, fontSize: 12 },
+        textStyle: { fontFamily: FONT, fontSize: 12 },
         valueFormatter: format,
       },
       // One series needs no legend — its name is the panel label above it.
@@ -82,7 +82,7 @@ export function BarChart({
               icon: 'circle',
               itemWidth: 9,
               itemHeight: 9,
-              textStyle: { fontFamily: MONO, fontSize: 11, color: colors.fg },
+              textStyle: { fontFamily: FONT, fontSize: 11, color: colors.fg },
             }
           : { show: false },
       xAxis: horizontal ? valAxis : catAxis,

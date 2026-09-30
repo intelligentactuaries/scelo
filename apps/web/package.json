@@ -12,11 +12,11 @@
     "test": "bun test"
   },
   "dependencies": {
-    "@fontsource/fraunces": "^5.2.9",
     "@fontsource/inter": "^5.2.8",
     "@fontsource/jetbrains-mono": "^5.2.8",
     "@fontsource/sn-pro": "^5.2.6",
     "@monaco-editor/react": "^4.7.0",
+    "@scelo/core": "workspace:*",
     "echarts": "^5.5.1",
     "echarts-for-react": "^3.0.2",
     "highlight.js": "^11.11.1",
@@ -35,8 +35,7 @@
     "sane-topojson": "^4.0.0",
     "topojson-client": "^3.1.0",
     "xterm": "^5.3.0",
-    "xterm-addon-fit": "^0.8.0",
-    "@scelo/core": "workspace:*"
+    "xterm-addon-fit": "^0.8.0"
   },
   "devDependencies": {
     "@happy-dom/global-registrator": "^20.9.0",

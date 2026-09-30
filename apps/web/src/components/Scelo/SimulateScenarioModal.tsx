@@ -8,6 +8,7 @@
 //                columns per row via a sample-then-extrapolate pattern
 //                so 10k-row datasets don't trigger 10k LLM calls.
 
+import { Arrow } from "@/components/Arrow";
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { EditableNumber } from "./EditableNumber";
@@ -509,7 +510,7 @@ export function SimulateScenarioModal({
                 className="mt-2 w-full rounded border border-border bg-bg-2 px-3 py-1.5 font-mono text-[11px] text-fg-mute hover:text-fg"
                 title="Open the full swarm screen — it live-probes the server and shows the embedded swarm UI once it's up"
               >
-                open the swarm screen →
+                open the swarm screen <Arrow />
               </button>
             )}
           </div>

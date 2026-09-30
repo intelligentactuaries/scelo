@@ -6,7 +6,8 @@
 
 Every launch plays a short intro, the S₀.₂ mark drawing itself in, and opens on
 the **Scelo pipeline**: the macro view of the three stages, Soft → Tools → Hard
-(see [The pipeline](../pipeline/index.md)). The bar above it carries:
+(see [The pipeline](../pipeline/index.md)). **get started**, top left, takes
+you to the welcome screen. The bar above the pipeline carries:
 
 - **workspace** — the files, editor and terminal (see
   [The workspace](../workspace/index.md)). With no workspace open yet, it takes
@@ -39,9 +40,9 @@ the `/runtime-check` route. If a component shows an error, see
 
 ![The welcome screen — open a folder or scaffold a sample workspace](../assets/img/welcome.png){ .shadow }
 
-The **welcome** screen is where you choose where to work. **workspace** takes
-you there while no workspace is open, and the workspace header links back to
-it:
+The **welcome** screen is where you choose where to work. **get started**, top
+left of the pipeline, always opens it; **workspace** takes you there while no
+workspace is open, and the workspace header links back to it:
 
 - **Open Folder…** — point Scelo at any directory; it becomes the workspace
   root.

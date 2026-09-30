@@ -22,6 +22,7 @@
 //   * Active row highlight (mouse hover or keyboard).
 //   * 80-item render cap so the list stays instant on huge inputs.
 
+import { EnterKey } from "@/components/Arrow";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 export interface PaletteProps<T> {
@@ -165,7 +166,10 @@ export default function Palette<T>({
         </ul>
         <div className="rounded-b-md border-t border-border px-3 py-1 text-[10px] text-fg-mute">
           {summary ?? `${visible.length} item${visible.length === 1 ? "" : "s"}`}
-          <span className="ml-3">↑↓ navigate · ↵ select · esc close</span>
+          <span className="ml-3">
+            ↑↓ navigate · <EnterKey size={11} className="inline-block align-middle" /> select · esc
+            close
+          </span>
         </div>
       </div>
     </div>

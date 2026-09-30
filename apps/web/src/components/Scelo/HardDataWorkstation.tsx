@@ -16,6 +16,7 @@
 // optional tiny chart (line or bar). Clicking a result node fills the
 // right panel with the full detail and the AI narrative.
 
+import { Arrow } from "@/components/Arrow";
 import ReactECharts from "@/components/ReactEChartsCrisp";
 import { streamOrchestrator } from "@/lib/api";
 import { openInSwarm } from "@/lib/swarmBus";
@@ -1992,7 +1993,13 @@ function LifelibNotebookCta({
             style={{ background: "rgb(var(--rgb-primary))" }}
           />
         )}
-        {nbBusy ? "building notebook…" : "↓ Export · lifelib notebook"}
+        {nbBusy ? (
+          "building notebook…"
+        ) : (
+          <>
+            <Arrow dir="down" /> Export · lifelib notebook
+          </>
+        )}
       </button>
       {nbError && (
         <div className="mt-1.5 text-[10px] text-error">notebook export failed — {nbError}</div>
@@ -2858,7 +2865,7 @@ function CouncilAttachCta({ focused }: { focused: RunResult }) {
             className="ia-btn ia-btn-sm ia-btn-secondary mt-2 w-full justify-center"
             title="Open the full swarm screen — it live-probes the server and shows the embedded swarm UI once it's up"
           >
-            open the swarm screen →
+            open the swarm screen <Arrow />
           </button>
         </div>
       )}
@@ -3058,7 +3065,7 @@ function OpenInSwarmLink({ runId, live = false }: { runId: string; live?: boolea
         <span className="font-medium">{live ? "Watch live in swarm" : "Open in swarm"}</span>
       </span>
       <span className="font-mono text-[10px] text-fg-dim group-hover:text-fg-mute">
-        {live ? "deliberating now →" : "full deliberation →"}
+        {live ? "deliberating now" : "full deliberation"} <Arrow />
       </span>
     </button>
   );
@@ -3613,7 +3620,7 @@ export function HardDataWorkstation() {
           onClick={() => navigate("/dashboards/scelo")}
           className="font-mono text-xs text-fg-mute hover:text-primary"
         >
-          ← macro view
+          <Arrow dir="left" /> macro view
         </button>
         <button
           type="button"
@@ -3621,7 +3628,7 @@ export function HardDataWorkstation() {
           title="Step back to model selection."
           className="font-mono text-xs text-fg-mute hover:text-primary"
         >
-          ← back: tools
+          <Arrow dir="left" /> back: tools
         </button>
         <div className="h-4 w-px bg-border" />
         <div className="min-w-0">
@@ -3702,7 +3709,7 @@ export function HardDataWorkstation() {
             onClick={() => navigate("/dashboards/scelo/soft")}
             className="text-primary hover:underline"
           >
-            go to Soft Data →
+            go to Soft Data <Arrow />
           </button>
         </div>
       )}

@@ -5,9 +5,10 @@
 // (reloads the renderer pointed at the new dir) or remove (registry entry
 // only — never touches the dir itself).
 
+import { Arrow } from "@/components/Arrow";
 import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { isDesktopIDE, type WorkspaceRecord } from "../lib/sceloIDE";
+import { type WorkspaceRecord, isDesktopIDE } from "../lib/sceloIDE";
 import { emitToast } from "../lib/toastBus";
 
 export default function SettingsWorkspaces() {
@@ -38,7 +39,7 @@ export default function SettingsWorkspaces() {
           to="/"
           className="mt-4 inline-block rounded border border-border bg-bg-2 px-3 py-1.5 text-sm hover:border-fg"
         >
-          ← back
+          <Arrow dir="left" /> back
         </Link>
       </div>
     );
@@ -149,7 +150,7 @@ export default function SettingsWorkspaces() {
           to="/"
           className="ia-btn ia-btn-md ia-btn-secondary"
         >
-          ← back to chat
+          <Arrow dir="left" /> back to chat
         </Link>
       </div>
     </div>

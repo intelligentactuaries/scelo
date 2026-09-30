@@ -568,7 +568,7 @@ function chartOption(
               // would crowd; rely on hover tooltip there.
               show: mapKey === "US" || mapKey === "ZA",
               fontSize: 9,
-              fontFamily: "'JetBrains Mono', monospace",
+              fontFamily: "'SN Pro', 'Inter', sans-serif",
               color: "#ffffff",
               formatter: (p: { name?: string }) => (p.name ? shortLabel(mapKey, p.name) : ""),
             },
@@ -774,7 +774,7 @@ function chartOption(
             top: spec.title ? 26 : 4,
             style: {
               text: rLabel,
-              fontFamily: "'JetBrains Mono', monospace",
+              fontFamily: "'SN Pro', 'Inter', sans-serif",
               fontSize: 10,
               fill: palette.textMute,
             },

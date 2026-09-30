@@ -11,6 +11,7 @@
 // alive machinery from the monorepo is dropped here because there's
 // only one dashboard to mount.
 
+import { Arrow } from "@/components/Arrow";
 import { SwarmNavLink } from "@/components/SwarmStatus";
 import { isDesktopIDE } from "@/lib/sceloIDE";
 import Scelo from "@/routes/Scelo";
@@ -25,15 +26,17 @@ export default function DashboardsShell() {
     return <Navigate to="/dashboards/scelo" replace />;
   }
 
+  // In the IDE this leads back to the welcome screen, where a workspace is
+  // opened or a sample scaffolded.
   const desktop = isDesktopIDE();
-  const target = desktop ? "/workspace" : "/";
-  const label = desktop ? "← back to workspace" : "← back to chat";
+  const target = desktop ? "/welcome" : "/";
+  const label = desktop ? "get started" : "back to chat";
 
   return (
     <div className="flex h-full flex-col">
       <nav className="flex shrink-0 items-center gap-3 border-b border-border bg-bg-1 px-3 py-1.5 text-xs">
         <Link to={target} className="font-mono text-fg-mute hover:text-primary">
-          {label}
+          <Arrow dir="left" /> {label}
         </Link>
         {/* right-aligned so a live deliberation is one click away from any
             stage — soft, tools, or hard. */}

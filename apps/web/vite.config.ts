@@ -22,5 +22,8 @@ export default defineConfig({
   build: {
     outDir: "dist",
     sourcemap: true,
+    // theme.css names the SN Pro arrows file once per weight; inlined, that
+    // is ten base64 copies. Emit it as one file instead.
+    assetsInlineLimit: (file) => (file.endsWith("sn-pro-arrows.woff2") ? false : undefined),
   },
 });

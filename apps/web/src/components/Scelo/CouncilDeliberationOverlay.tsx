@@ -15,6 +15,7 @@
 // Esc / "hide" tucks the overlay away without touching the run; "cancel"
 // aborts it. Animations respect prefers-reduced-motion.
 
+import { Arrow } from "@/components/Arrow";
 import { useEffect, useRef, useState } from "react";
 import { PersonaBloom, seatColorFor } from "./PersonaBloom";
 
@@ -323,7 +324,7 @@ export function CouncilDeliberationOverlay({
           </span>
         </button>
         <button type="button" onClick={onWatchLive} className="ia-btn ia-btn-sm ia-btn-secondary">
-          watch live in swarm ↗
+          watch live in swarm <Arrow dir="up-right" />
         </button>
         <button
           type="button"

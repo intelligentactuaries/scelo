@@ -1,6 +1,6 @@
 // WMTR strip — sits above the canvas tab content whenever a run carries
 // a Nanoeconomics Monte Carlo baseline. Mirrors the visual grammar of
-// website_v2's /lab/wmtr (cream panel chrome, JetBrains-Mono labels,
+// website_v2's /lab/wmtr (cream panel chrome, SN Pro labels,
 // ECharts `baseOption()` styling), so a viewer feels the two surfaces
 // belong to one lab.
 
@@ -53,19 +53,19 @@ echarts.use([
 // bottom margin carries the centred x-axis name.
 const ECHART_GRID = { left: 8, right: 16, top: 26, bottom: 16, containLabel: true };
 
-const MONO = "'JetBrains Mono', ui-monospace, monospace";
+const FONT = "'SN Pro', sans-serif";
 
 function baseOption(colors: ThemeColors) {
   return {
     backgroundColor: 'transparent',
-    textStyle: { color: colors.fg, fontFamily: MONO },
+    textStyle: { color: colors.fg, fontFamily: FONT },
     grid: ECHART_GRID,
     xAxis: {
       type: 'value' as const,
       name: 'years',
       nameLocation: 'middle' as const,
       nameGap: 26,
-      nameTextStyle: { color: colors.muted, fontSize: 9, fontFamily: MONO },
+      nameTextStyle: { color: colors.muted, fontSize: 9, fontFamily: FONT },
       axisLine: { lineStyle: { color: colors.border } },
       axisLabel: { color: colors.fgMute, fontSize: 10 },
       splitLine: { lineStyle: { color: colors.grid } },
@@ -81,10 +81,10 @@ function baseOption(colors: ThemeColors) {
       axisPointer: { type: 'line' as const, lineStyle: { color: colors.muted, width: 1 } },
       backgroundColor: colors.tooltipBg,
       borderColor: colors.tooltipBorder,
-      textStyle: { color: colors.tooltipText, fontSize: 11, fontFamily: MONO },
+      textStyle: { color: colors.tooltipText, fontSize: 11, fontFamily: FONT },
     },
     legend: {
-      textStyle: { color: colors.fgMute, fontSize: 10, fontFamily: MONO },
+      textStyle: { color: colors.fgMute, fontSize: 10, fontFamily: FONT },
       itemWidth: 14,
       itemHeight: 8,
       top: 0,
@@ -357,7 +357,7 @@ export function trajectoryOption(w: RunWmtr, colors: ThemeColors): object {
             position: 'insideEndTop',
             color: colors.muted,
             fontSize: 10,
-            fontFamily: MONO,
+            fontFamily: FONT,
           },
         },
       },
@@ -509,7 +509,7 @@ export function outcomeOption(w: RunWmtr, colors: ThemeColors): object {
           position: 'top',
           formatter: (p: { value: number }) => `${p.value.toFixed(0)}%`,
           color: colors.fgMute,
-          fontFamily: MONO,
+          fontFamily: FONT,
           fontSize: 10,
         },
       },
@@ -746,7 +746,7 @@ export function outcomeMixOption(w: RunWmtr, colors: ThemeColors, opts: AsOf = {
         show: mix[o][last] >= 0.05,
         formatter: () => `${label(o)} ${(mix[o][last] * 100).toFixed(0)}%`,
         color: colors.fgMute,
-        fontFamily: MONO,
+        fontFamily: FONT,
         fontSize: 10,
         distance: 6,
       },
@@ -766,7 +766,7 @@ export function outcomeMixOption(w: RunWmtr, colors: ThemeColors, opts: AsOf = {
                 position: 'end' as const,
                 color: OUTCOME_COLOR.collapsed,
                 fontSize: 9,
-                fontFamily: MONO,
+                fontFamily: FONT,
               },
             },
           }
@@ -870,12 +870,12 @@ export function outcomeGaugeOption(w: RunWmtr, colors: ThemeColors, opts: AsOf =
 
   return {
     backgroundColor: 'transparent',
-    textStyle: { color: colors.fg, fontFamily: MONO },
+    textStyle: { color: colors.fg, fontFamily: FONT },
     tooltip: {
       trigger: 'item' as const,
       backgroundColor: colors.tooltipBg,
       borderColor: colors.tooltipBorder,
-      textStyle: { color: colors.tooltipText, fontSize: 11, fontFamily: MONO },
+      textStyle: { color: colors.tooltipText, fontSize: 11, fontFamily: FONT },
       formatter: (p: { name: string; value: number }) => {
         const o = OUTCOME_BY_LABEL[p.name];
         const paths = Math.round((f[o] ?? 0) * nPaths);
@@ -913,12 +913,12 @@ export function outcomeGaugeOption(w: RunWmtr, colors: ThemeColors, opts: AsOf =
         splitLine: { show: false },
         axisTick: { show: false },
         axisLabel: { show: false },
-        title: { fontSize: 11, fontFamily: MONO, color: colors.fgMute },
+        title: { fontSize: 11, fontFamily: FONT, color: colors.fgMute },
         detail: {
           width: 42,
           height: 13,
           fontSize: 11,
-          fontFamily: MONO,
+          fontFamily: FONT,
           // Text in an ink token, pill outline in the series colour: the
           // palette check puts amber above the dark-mode lightness band and
           // under 3:1 on cream, so the number itself must not wear it.
@@ -1024,7 +1024,7 @@ export function driverBridgeOption(w: RunWmtr, colors: ThemeColors, opts: AsOf =
   return {
     ...b,
     // `containLabel` sizes the gutter from measured text, which under a
-    // webfont can be measured before JetBrains Mono has loaded — leaving the
+    // webfont can be measured before SN Pro has loaded — leaving the
     // longest category ("relationships") clipped at the left edge. The extra
     // left margin is the slack that costs nothing and survives that race.
     grid: { left: 24, right: 64, top: 18, bottom: 20, containLabel: true },
@@ -1097,7 +1097,7 @@ export function driverBridgeOption(w: RunWmtr, colors: ThemeColors, opts: AsOf =
             return signed(i === steps.length ? c.net : steps[i].value);
           },
           color: colors.fgMute,
-          fontFamily: MONO,
+          fontFamily: FONT,
           fontSize: 10,
         },
       },

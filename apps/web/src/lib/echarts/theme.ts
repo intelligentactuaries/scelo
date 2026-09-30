@@ -43,7 +43,7 @@ function buildTheme(palette: string[], c: ThemeColors): Record<string, unknown> 
   return {
     color: palette,
     backgroundColor: c.bg,
-    textStyle: { color: c.fg, fontFamily: "'JetBrains Mono', monospace" },
+    textStyle: { color: c.fg, fontFamily: "'SN Pro', 'Inter', sans-serif" },
     title: {
       left: 12,
       top: 8,

@@ -1,3 +1,13 @@
+/* SN Pro's own arrows (← ↑ → ↓ ↔ ↕ ↖ ↗ ↘ ↙), which the @fontsource subsets
+   leave out: the Arrows block of the upstream variable SN Pro (v1.005,
+   OFL-1.1), joined to the family per loaded weight. Same file as the
+   IDE renderer's (apps/web/src/styles/theme.css). */
+@font-face { font-family: "SN Pro"; font-style: normal; font-weight: 300; font-display: swap; src: url("./assets/fonts/sn-pro-arrows.woff2") format("woff2"); unicode-range: U+2190-2199; }
+@font-face { font-family: "SN Pro"; font-style: normal; font-weight: 400; font-display: swap; src: url("./assets/fonts/sn-pro-arrows.woff2") format("woff2"); unicode-range: U+2190-2199; }
+@font-face { font-family: "SN Pro"; font-style: normal; font-weight: 500; font-display: swap; src: url("./assets/fonts/sn-pro-arrows.woff2") format("woff2"); unicode-range: U+2190-2199; }
+@font-face { font-family: "SN Pro"; font-style: normal; font-weight: 600; font-display: swap; src: url("./assets/fonts/sn-pro-arrows.woff2") format("woff2"); unicode-range: U+2190-2199; }
+@font-face { font-family: "SN Pro"; font-style: normal; font-weight: 700; font-display: swap; src: url("./assets/fonts/sn-pro-arrows.woff2") format("woff2"); unicode-range: U+2190-2199; }
+
 :root {
   /* ─── Light theme — aligned with the public site (website_v2 cream/ink) ─
      Token NAMES stay the same as before so the 3000+ downstream rules
@@ -523,7 +533,8 @@ select option {
   font-size: 10.5px;
   color: var(--muted);
   opacity: 0.75;
-  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
 }
 .sim-phase.is-pending {
   opacity: 0.4;
@@ -828,7 +839,7 @@ select option {
 }
 
 .chat-content.chat-content-md code {
-  font-family: ui-monospace, SFMono-Regular, 'JetBrains Mono', Menlo, Consolas, monospace;
+  font-family: var(--mono);
   font-size: 12px;
   background: rgba(0, 0, 0, 0.05);
   border: 1px solid var(--border);
@@ -842,7 +853,7 @@ select option {
   background: rgba(0, 0, 0, 0.05);
   border: 1px solid var(--border);
   border-radius: 6px;
-  font-family: ui-monospace, SFMono-Regular, 'JetBrains Mono', Menlo, Consolas, monospace;
+  font-family: var(--mono);
   font-size: 12px;
   line-height: 1.45;
   overflow-x: auto;
@@ -1608,7 +1619,7 @@ code {
   color: var(--error, #d9534f);
 }
 .round-intervention-param {
-  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-family: var(--mono);
   font-weight: 600;
   color: var(--fg);
 }
@@ -3972,7 +3983,7 @@ body.is-resizing * {
 
 /* ─────────────────────────────────────────────────────────────────────────
    WMTR strip — sibling section of the swarm shell. Identity is carried in
-   the data layer (forest-green ECharts series, JetBrains Mono chart labels,
+   the data layer (forest-green ECharts series, SN Pro chart labels,
    25–75 band, cubic-bezier mount easing). The container itself blends with
    the swarm: same surface as the rest of the canvas, hairline dividers
    matching `.council-stack-sankey-label` rhythm, mono section header.
@@ -4915,7 +4926,7 @@ body.is-resizing * {
 }
 
 .sim-progress-elapsed {
-  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-family: var(--mono);
   font-size: 11px;
   color: var(--muted);
   font-variant-numeric: tabular-nums;

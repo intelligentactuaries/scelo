@@ -10,6 +10,7 @@
 // Default stays Ollama — selecting a hosted provider is opt-in and
 // affects every chat call from this device until changed back.
 
+import { Arrow } from "@/components/Arrow";
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import {
@@ -249,14 +250,14 @@ export default function SettingsAI() {
           to="/"
           className="ia-btn ia-btn-md ia-btn-secondary"
         >
-          ← back to chat
+          <Arrow dir="left" /> back to chat
         </Link>
         {isDesktopIDE() && (
           <Link
             to="/workspace"
             className="ia-btn ia-btn-md ia-btn-secondary"
           >
-            open workspace →
+            open workspace <Arrow />
           </Link>
         )}
       </div>

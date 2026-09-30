@@ -46,6 +46,7 @@ import ReactFlow, {
   useNodesState,
 } from "reactflow";
 import "reactflow/dist/style.css";
+import { Arrow } from "@/components/Arrow";
 import { useTheme } from "@/lib/theme";
 import {
   AddModelMenu,
@@ -2960,7 +2961,7 @@ export function ToolsWorkstation() {
           onClick={() => navigate("/dashboards/scelo")}
           className="font-mono text-xs text-fg-mute hover:text-primary"
         >
-          ← macro view
+          <Arrow dir="left" /> macro view
         </button>
         <button
           type="button"
@@ -2968,7 +2969,7 @@ export function ToolsWorkstation() {
           title="Step back to Soft Data."
           className="font-mono text-xs text-fg-mute hover:text-primary"
         >
-          ← back: soft
+          <Arrow dir="left" /> back: soft
         </button>
         <div className="h-4 w-px bg-border" />
         <div className="min-w-0">
@@ -3025,7 +3026,7 @@ export function ToolsWorkstation() {
             }
             className="ia-tool-btn ia-tool-btn-cta"
           >
-            next: hard →
+            next: hard <Arrow />
           </button>
         </div>
       </header>
@@ -3089,7 +3090,7 @@ export function ToolsWorkstation() {
             onClick={() => navigate("/dashboards/scelo/soft")}
             className="text-primary hover:underline"
           >
-            go to Soft Data →
+            go to Soft Data <Arrow />
           </button>
         </div>
       )}

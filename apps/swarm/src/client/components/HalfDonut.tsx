@@ -29,7 +29,7 @@ import { useTheme } from '../lib/theme';
 
 echarts.use([PieChart, LegendComponent, TooltipComponent, CanvasRenderer]);
 
-const MONO = "'JetBrains Mono', ui-monospace, monospace";
+const FONT = "'SN Pro', sans-serif";
 
 /** Below this the arch has no room for outside labels beside it. */
 const LABEL_MIN_WIDTH = 340;
@@ -61,7 +61,7 @@ export function HalfDonut({ name, data }: { name: string; data: DonutSlice[] }) 
       backgroundColor: 'transparent',
       tooltip: {
         trigger: 'item',
-        textStyle: { fontFamily: MONO, fontSize: 12 },
+        textStyle: { fontFamily: FONT, fontSize: 12 },
         valueFormatter: (v: number) => `${v} (${pct(v)}%)`,
       },
       legend: {
@@ -77,7 +77,7 @@ export function HalfDonut({ name, data }: { name: string; data: DonutSlice[] }) 
         icon: 'circle',
         itemWidth: 9,
         itemHeight: 9,
-        textStyle: { fontFamily: MONO, fontSize: 12, color: colors.fg },
+        textStyle: { fontFamily: FONT, fontSize: 12, color: colors.fg },
         formatter: (label: string) => `${label} ${pct(byName.get(label)?.value ?? 0)}%`,
       },
       series: [
@@ -92,7 +92,7 @@ export function HalfDonut({ name, data }: { name: string; data: DonutSlice[] }) 
           label: {
             show: showLabels,
             formatter: '{b}\n{d}%',
-            fontFamily: MONO,
+            fontFamily: FONT,
             fontSize: 12,
             color: colors.fg,
             lineHeight: 16,

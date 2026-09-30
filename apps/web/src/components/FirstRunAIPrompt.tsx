@@ -4,6 +4,7 @@
 // fires twice and never fires for users who already have Ollama
 // running or a provider configured.
 
+import { Arrow } from "@/components/Arrow";
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
@@ -63,7 +64,7 @@ export default function FirstRunAIPrompt() {
                 className="rounded border border-border bg-bg-2 px-2 py-1 text-xs text-fg hover:border-primary"
                 onClick={dismiss}
               >
-                Download Ollama →
+                Download Ollama <Arrow />
               </a>
               <button
                 type="button"
