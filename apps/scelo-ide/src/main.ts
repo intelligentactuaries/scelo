@@ -32,6 +32,7 @@ import {
   clipboard,
   dialog,
   ipcMain,
+  nativeTheme,
   protocol,
   safeStorage,
   shell,
@@ -292,6 +293,40 @@ function attachZoom(win: BrowserWindow): void {
   });
 }
 
+// The window's own colour, matched to the renderer's theme: cream or
+// charcoal from apps/web/styles/theme.css. The renderer reports its resolved
+// theme (preload `windowTheme`); it is kept so the next launch's first frame
+// is already right, whatever the OS theme says.
+const WINDOW_BG = { light: "#E8E4D8", dark: "#1B1815" } as const;
+type WindowTheme = keyof typeof WINDOW_BG;
+
+function _windowThemeFile(): string {
+  return join(app.getPath("userData"), "window-theme.json");
+}
+
+function launchWindowBackground(): string {
+  try {
+    const t = (JSON.parse(readFileSync(_windowThemeFile(), "utf-8")) as { theme?: string }).theme;
+    if (t === "light" || t === "dark") return WINDOW_BG[t];
+  } catch {
+    // Nothing kept yet: follow the OS, as the renderer's "system" choice does.
+  }
+  return nativeTheme.shouldUseDarkColors ? WINDOW_BG.dark : WINDOW_BG.light;
+}
+
+let _keptWindowTheme: WindowTheme | null = null;
+ipcMain.on("scelo:window-theme", (event, theme: unknown) => {
+  if (theme !== "light" && theme !== "dark") return;
+  BrowserWindow.fromWebContents(event.sender)?.setBackgroundColor(WINDOW_BG[theme]);
+  if (theme === _keptWindowTheme) return;
+  _keptWindowTheme = theme;
+  try {
+    writeFileSync(_windowThemeFile(), JSON.stringify({ theme }), "utf-8");
+  } catch (e) {
+    log.warn("window theme: could not persist", e);
+  }
+});
+
 function createMainWindow(): BrowserWindow {
   const win = new BrowserWindow({
     width: 1480,
@@ -299,7 +334,12 @@ function createMainWindow(): BrowserWindow {
     minWidth: 1100,
     minHeight: 680,
     title: "Scelo IDE",
-    backgroundColor: "#E8E4D8", // matches the cream theme in apps/web/styles/theme.css
+    // Shown on the renderer's first paint — the launch intro in
+    // apps/web/index.html — so the window never opens on an empty colour
+    // (Grok's flashes white). The colour underneath is the app's own theme
+    // from the last run (launchWindowBackground).
+    show: false,
+    backgroundColor: launchWindowBackground(),
     autoHideMenuBar: !isMac,
     icon: join(resourceDir(), "icons", "icon.png"),
     webPreferences: {
@@ -309,6 +349,17 @@ function createMainWindow(): BrowserWindow {
       sandbox: false, // preload uses child_process; sandbox would block it
     },
   });
+
+  // Reveal on first paint; if that never comes (a renderer that cannot
+  // load), show anyway so the window is not lost off-screen.
+  let revealed = false;
+  const reveal = () => {
+    if (revealed || win.isDestroyed()) return;
+    revealed = true;
+    win.show();
+  };
+  win.once("ready-to-show", reveal);
+  setTimeout(reveal, 4000);
 
   // External links open in the system browser, not in a child window.
   win.webContents.setWindowOpenHandler(({ url }) => {

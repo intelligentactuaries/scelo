@@ -55,3 +55,14 @@ ReactDOM.createRoot(rootEl).render(
     </BrowserRouter>
   </React.StrictMode>,
 );
+
+// The desktop launch intro (index.html) holds until the app has painted its
+// first frame, fonts included, so its reveal never uncovers a half-drawn
+// window. A no-op wherever the intro is not showing.
+void document.fonts.ready.then(() =>
+  requestAnimationFrame(() =>
+    requestAnimationFrame(() =>
+      (window as Window & { __iaIntroReady?: () => void }).__iaIntroReady?.(),
+    ),
+  ),
+);

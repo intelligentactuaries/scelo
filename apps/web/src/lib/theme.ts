@@ -36,6 +36,9 @@ function paint(resolved: ResolvedTheme): void {
   root.setAttribute("data-theme", resolved);
   root.classList.toggle("dark", resolved === "dark");
   root.classList.toggle("light", resolved === "light");
+  // In the desktop shell, the window's own colour follows, so the next
+  // launch's first frame is already in this theme (no flash).
+  window.scelo?.windowTheme?.(resolved);
 }
 
 export function setThemeChoice(choice: ThemeChoice): void {

@@ -371,6 +371,8 @@ interface LlmBridge {
 }
 
 interface SceloBridge {
+  /** Tell the desktop shell the resolved theme (window colour on launch). */
+  windowTheme?: (theme: "light" | "dark") => void;
   runPython(req: { script: string; argv?: string[]; stdin?: string }): Promise<ExecResult>;
   runR(req: { script: string; argv?: string[]; stdin?: string }): Promise<ExecResult>;
   runtimeStatus(): Promise<RuntimeStatus>;

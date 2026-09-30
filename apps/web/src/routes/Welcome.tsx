@@ -90,7 +90,8 @@ export default function Welcome() {
   return (
     <div className="flex min-h-screen flex-col bg-bg text-fg">
       <ToastTray />
-      <header className="border-b border-border bg-bg-2 px-6 py-4">
+      {/* data-intro: the order the launch intro reveals these in (index.html). */}
+      <header data-intro="1" className="border-b border-border bg-bg-2 px-6 py-4">
         <div className="flex items-baseline justify-between">
           <div>
             <h1 className="flex items-center gap-3 font-display text-2xl text-fg">
@@ -139,7 +140,7 @@ export default function Welcome() {
       </header>
 
       <main className="mx-auto grid w-full max-w-5xl gap-8 px-6 py-10 lg:grid-cols-[1fr_1fr]">
-        <section>
+        <section data-intro="2">
           <h2 className="font-display text-lg">Get started</h2>
           <div className="mt-3 grid gap-2">
             <PrimaryAction
@@ -228,7 +229,7 @@ export default function Welcome() {
           )}
         </section>
 
-        <section>
+        <section data-intro="3">
           <h2 className="font-display text-lg">Sample workspaces</h2>
           <p className="mt-1 text-sm text-fg-mute">
             Each template scaffolds a small but runnable workspace, no placeholders, no TODO bodies.

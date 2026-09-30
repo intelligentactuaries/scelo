@@ -169,6 +169,9 @@ interface GitStatus {
 }
 
 contextBridge.exposeInMainWorld("scelo", {
+  // The renderer's resolved theme, so the window opens in the right colour
+  // (main.ts keeps it for the next launch's first frame).
+  windowTheme: (theme: "light" | "dark"): void => ipcRenderer.send("scelo:window-theme", theme),
   runPython: (req: ExecRequest): Promise<ExecResult> =>
     ipcRenderer.invoke("scelo:runPython", req),
   runR: (req: ExecRequest): Promise<ExecResult> =>

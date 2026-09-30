@@ -16,12 +16,85 @@
                 : "light";
           document.documentElement.setAttribute("data-theme", resolved);
           document.documentElement.classList.add(resolved);
+          if (window.scelo && window.scelo.windowTheme) window.scelo.windowTheme(resolved);
         } catch (e) {
           document.documentElement.setAttribute("data-theme", "dark");
           document.documentElement.classList.add("dark");
         }
       })();
     </script>
+    <script>
+      // Launch intro (see #ia-intro below): desktop IDE only, once per window.
+      (function () {
+        try {
+          if (
+            location.protocol === "scelo:" &&
+            sessionStorage.getItem("ia.intro.shown") !== "1" &&
+            localStorage.getItem("ia.intro") !== "off"
+          ) {
+            document.documentElement.classList.add("ia-intro-on");
+          }
+        } catch (e) {}
+      })();
+    </script>
+    <style>
+      /* Launch intro — the S₀.₂ mark on the app's own background, painted in
+         the window's first frame. Draws from the two apps it studies: Grok's
+         mark comes alive as it appears (here a pen traces the S, the ink
+         fills in, the version ticks into place); Cursor holds a calm, still
+         mark while the app loads, then steps aside and the first screen
+         fades in in a short cascade ([data-intro] 1, 2, 3). */
+      #ia-intro { display: none; }
+      html.ia-intro-on #ia-intro {
+        position: fixed; inset: 0; z-index: 2147483000;
+        display: grid; place-items: center;
+        background: #e8e4d8; color: #181715; --ia-pen: #3c6e5a;
+        /* An even curve for the exit: out-quint front-loads the change and
+           reads as a cut, where this dissolve should be seen. */
+        transition: opacity 420ms cubic-bezier(0.4, 0, 0.2, 1);
+      }
+      html.ia-intro-on[data-theme="dark"] #ia-intro {
+        background: #1b1815; color: #faf6ea; --ia-pen: #6eb491;
+      }
+      #ia-intro svg {
+        width: 104px; height: auto; overflow: visible;
+        animation: ia-breathe 2800ms ease-in-out 1250ms infinite;
+      }
+      #ia-intro .ia-trace {
+        fill: none; stroke: var(--ia-pen); stroke-width: 1.4px;
+        stroke-linejoin: round; stroke-dasharray: 1000; stroke-dashoffset: 1000;
+        animation:
+          ia-draw 640ms cubic-bezier(0.77, 0, 0.175, 1) 40ms forwards,
+          ia-out 280ms ease 560ms forwards;
+      }
+      #ia-intro .ia-ink { opacity: 0; animation: ia-in 380ms cubic-bezier(0.16, 1, 0.3, 1) 420ms forwards; }
+      #ia-intro .ia-sub { opacity: 0; transform: translateY(70px); }
+      #ia-intro .ia-sub { animation: ia-rise 380ms cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+      #ia-intro .ia-sub.d0 { animation-delay: 560ms; }
+      #ia-intro .ia-sub.d1 { animation-delay: 630ms; }
+      #ia-intro .ia-sub.d2 { animation-delay: 700ms; }
+      #ia-intro.is-leaving { opacity: 0; pointer-events: none; }
+      #ia-intro.is-leaving svg {
+        animation: ia-leave 300ms cubic-bezier(0.4, 0, 0.2, 1) forwards;
+      }
+      html.ia-intro-reveal [data-intro] {
+        animation: ia-reveal 460ms cubic-bezier(0.16, 1, 0.3, 1) backwards;
+      }
+      html.ia-intro-reveal [data-intro="2"] { animation-delay: 80ms; }
+      html.ia-intro-reveal [data-intro="3"] { animation-delay: 160ms; }
+      @keyframes ia-draw { to { stroke-dashoffset: 0; } }
+      @keyframes ia-out { to { opacity: 0; } }
+      @keyframes ia-in { to { opacity: 1; } }
+      @keyframes ia-rise { to { opacity: 1; transform: none; } }
+      @keyframes ia-breathe { 50% { transform: scale(1.015); } }
+      @keyframes ia-leave { to { opacity: 0; transform: scale(0.97); } }
+      @keyframes ia-reveal { from { opacity: 0; } }
+      @media (prefers-reduced-motion: reduce) {
+        #ia-intro *, html.ia-intro-reveal [data-intro] { animation: none !important; }
+        #ia-intro .ia-trace { display: none; }
+        #ia-intro .ia-ink, #ia-intro .ia-sub { opacity: 1; transform: none; }
+      }
+    </style>
     <link rel="icon" type="image/png" href="/logo_dot.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
@@ -33,6 +106,65 @@
   </head>
   <body class="bg-bg text-fg font-sans">
     <div id="root"></div>
+    <div id="ia-intro" aria-hidden="true">
+      <svg viewBox="179 243 642 514" fill="currentColor">
+        <g transform="translate(164.3190828514431,674.6319537385419) scale(0.606045301886316)">
+          <g transform="matrix(1,0,0,-1,0,0)">
+            <path class="ia-trace" pathLength="1000" vector-effect="non-scaling-stroke" d="M321 -9Q277 -9 230.5 0.5Q184 10 143.5 28.5Q103 47 76 74Q63 87 60.0 101.5Q57 116 62.0 128.0Q67 140 78.0 147.0Q89 154 102.0 153.0Q115 152 128 140Q168 102 216.0 87.0Q264 72 320 72Q391 72 435.5 97.5Q480 123 479 171Q479 201 452.5 225.0Q426 249 356 268L250 298Q155 325 110.0 365.0Q65 405 65 471Q65 534 98.5 581.0Q132 628 190.5 653.5Q249 679 325 679Q370 679 408.5 667.5Q447 656 479.0 637.0Q511 618 535 593Q549 580 551.5 566.0Q554 552 548.5 540.0Q543 528 532.5 521.0Q522 514 509.0 515.5Q496 517 482 529Q448 560 409.0 578.0Q370 596 324 596Q275 596 238.5 582.0Q202 568 182.0 542.0Q162 516 162 479Q162 439 188.0 419.0Q214 399 279 381L385 351Q451 332 493.0 309.0Q535 286 555.0 253.5Q575 221 576 175Q576 114 543.0 73.0Q510 32 452.5 11.5Q395 -9 321 -9Z" />
+            <path class="ia-ink" d="M321 -9Q277 -9 230.5 0.5Q184 10 143.5 28.5Q103 47 76 74Q63 87 60.0 101.5Q57 116 62.0 128.0Q67 140 78.0 147.0Q89 154 102.0 153.0Q115 152 128 140Q168 102 216.0 87.0Q264 72 320 72Q391 72 435.5 97.5Q480 123 479 171Q479 201 452.5 225.0Q426 249 356 268L250 298Q155 325 110.0 365.0Q65 405 65 471Q65 534 98.5 581.0Q132 628 190.5 653.5Q249 679 325 679Q370 679 408.5 667.5Q447 656 479.0 637.0Q511 618 535 593Q549 580 551.5 566.0Q554 552 548.5 540.0Q543 528 532.5 521.0Q522 514 509.0 515.5Q496 517 482 529Q448 560 409.0 578.0Q370 596 324 596Q275 596 238.5 582.0Q202 568 182.0 542.0Q162 516 162 479Q162 439 188.0 419.0Q214 399 279 381L385 351Q451 332 493.0 309.0Q535 286 555.0 253.5Q575 221 576 175Q576 114 543.0 73.0Q510 32 452.5 11.5Q395 -9 321 -9Z" />
+          </g>
+          <g class="ia-sub d0"><g transform="matrix(0.3,0,0,-0.3,637.0,100.0)"><path d="M300 -9Q178 -9 109.0 76.0Q40 161 40 336Q40 455 71.0 530.5Q102 606 160.5 642.5Q219 679 300 679Q382 679 440.0 643.0Q498 607 529.0 531.5Q560 456 560 337Q560 220 529.0 143.0Q498 66 440.0 28.5Q382 -9 300 -9ZM300 72Q353 72 390.0 98.0Q427 124 446.0 182.5Q465 241 465 337Q465 435 446.0 492.0Q427 549 390.0 573.5Q353 598 300 598Q247 598 210.0 573.0Q173 548 154.0 491.0Q135 434 135 337Q135 241 154.0 182.5Q173 124 210.0 98.0Q247 72 300 72Z" /></g></g>
+          <g class="ia-sub d1"><g transform="matrix(0.3,0,0,-0.3,817.0,100.0)"><path d="M118 -4Q91 -4 74.0 13.0Q57 30 57 57Q57 83 74.0 100.0Q91 117 118 117Q146 117 162.0 100.0Q178 83 178 57Q178 30 162.0 13.0Q146 -4 118 -4Z" /></g></g>
+          <g class="ia-sub d2"><g transform="matrix(0.3,0,0,-0.3,887.2,100.0)"><path d="M119 0Q92 0 80.0 12.5Q68 25 68 47Q68 59 74.5 72.0Q81 85 94 98L314 327Q348 361 369.5 385.0Q391 409 401.0 430.0Q411 451 411 479Q411 514 394.5 540.5Q378 567 346.5 581.5Q315 596 270 596Q233 596 194.0 581.5Q155 567 121 536Q109 524 96.5 523.5Q84 523 74.0 530.0Q64 537 59.0 548.5Q54 560 56.5 573.5Q59 587 70 598Q95 622 129.5 640.0Q164 658 203.0 668.5Q242 679 280 679Q352 679 402.0 654.0Q452 629 478.0 585.5Q504 542 504 487Q504 460 496.5 435.0Q489 410 473.0 385.0Q457 360 433.5 332.5Q410 305 378 271L172 54V81H496Q517 81 528.0 71.0Q539 61 539 41Q539 21 528.0 10.5Q517 0 496 0Z" /></g></g>
+        </g>
+      </svg>
+    </div>
+    <script>
+      // Hold the intro until the app has painted (main.tsx calls
+      // __iaIntroReady) and the mark has finished arriving, then step aside.
+      // A click or key skips it; it never stays longer than MAX.
+      (function () {
+        var el = document.getElementById("ia-intro");
+        var html = document.documentElement;
+        if (!el) return;
+        if (!html.classList.contains("ia-intro-on")) {
+          el.remove();
+          return;
+        }
+        try {
+          sessionStorage.setItem("ia.intro.shown", "1");
+        } catch (e) {}
+        var reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+        var start = performance.now();
+        var MIN = reduced ? 350 : 1100;
+        var MAX = 6000;
+        var ready = false;
+        var gone = false;
+        function leave() {
+          if (gone) return;
+          gone = true;
+          html.classList.add("ia-intro-reveal");
+          el.classList.add("is-leaving");
+          setTimeout(function () {
+            el.remove();
+            html.classList.remove("ia-intro-on");
+          }, 460);
+          setTimeout(function () {
+            html.classList.remove("ia-intro-reveal");
+          }, 1000);
+        }
+        window.__iaIntroReady = function () {
+          if (ready) return;
+          ready = true;
+          var wait = MIN - (performance.now() - start);
+          if (wait > 0) setTimeout(leave, wait);
+          else leave();
+        };
+        setTimeout(leave, MAX);
+        el.addEventListener("pointerdown", leave);
+        addEventListener("keydown", leave, { once: true });
+      })();
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
