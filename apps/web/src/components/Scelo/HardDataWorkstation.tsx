@@ -3969,7 +3969,7 @@ function ReportPreviewModal({
               className="-mx-8 -mt-8 mb-6 flex items-center gap-4 px-8 py-5"
               style={{ background: "#1f1f1f", color: "#fafafa" }}
             >
-              {/* New S0.1 wordmark on a white chip. SceloLogo paints with
+              {/* The versioned S wordmark on a white chip. SceloLogo paints with
                   currentColor, so the chip sets a dark `color` to keep the
                   mark legible (the banner text around it is light). */}
               <div

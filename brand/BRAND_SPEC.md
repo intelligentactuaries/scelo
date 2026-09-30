@@ -52,7 +52,8 @@ scelo-brand/
 ├── assets/
 │   ├── SNPro-Regular.ttf   # pinned font (Google Fonts SN Pro 400)
 │   └── SNPro-LICENSE.txt   # OFL license
-└── scelo_S0_1.{svg,png}    # example output for v0.1
+├── scelo_S0_1.{svg,png}    # example output for v0.1
+└── scelo_S0_2.{svg,png}    # the mark for v0.2 (current release)
 ```
 
 ## Requirements
