@@ -65,11 +65,10 @@
 
 ### Installers
 
-- **The whole Python stack ships on Linux.** The Linux installer now carries
-  the complete bundled Python stack — SciPy, scikit-learn, statsmodels,
-  LightGBM, chainladder and climada — which earlier installers left out. See
-  [Linux](installation/linux.md) and
-  [Bundled Python & R](workspace/terminal.md#bundled-python-r).
+- **The whole Python stack ships.** The Linux, Windows and macOS installers
+  now carry the complete bundled Python stack — SciPy, scikit-learn,
+  statsmodels, LightGBM, chainladder and climada — which earlier installers
+  left out. See [Bundled Python & R](workspace/terminal.md#bundled-python-r).
 - **chainladder that fits.** The bundled chainladder moves from 0.8.26, which
   imported under pandas 3 but could not fit a triangle, to 0.10.1; the RAA
   chain-ladder IBNR (52,135) now matches R's ChainLadder.
@@ -78,8 +77,9 @@
   their dependencies; earlier Linux installers only worked where those
   happened to be installed already. On Linux the bundled R runs on Ubuntu
   24.04 and later. See [Linux](installation/linux.md).
-- **A real terminal.** On Linux and macOS the integrated terminal runs in a
-  real pseudo-terminal. Earlier installers silently fell back to a plain pipe:
+- **A real terminal.** On Linux, macOS and Windows (ConPTY) the integrated
+  terminal runs in a real pseudo-terminal. Earlier installers silently fell
+  back to a plain pipe:
   commands ran, but without a prompt, colours, line editing or full-screen
   programs. See [Terminal & runtimes](workspace/terminal.md#the-integrated-terminal).
 - **A new mark.** The app icon and wordmark are now the S₀.₂ mark.
@@ -88,3 +88,7 @@
   unsigned and not notarised, so clear the download's quarantine flag once
   (one Terminal command) before opening it. See
   [Windows & macOS](installation/windows-macos.md).
+- **Built and tested in CI.** The macOS and Windows installers are built on
+  GitHub's own macOS and Windows machines, which check the bundled Python and
+  R and launch the app before anything is published; the Windows installer is
+  also installed there first.

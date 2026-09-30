@@ -91,6 +91,6 @@ the Python side of Scelo is unaffected. See
 Earlier installers could not load the terminal's pseudo-terminal module and fell
 back to a plain pipe: commands ran, but without a prompt, colours, line editing
 or full-screen programs. From 0.2.0 the terminal is a real pseudo-terminal on
-Linux and macOS. If you still see the plain pipe, check the log for
+Linux, macOS and Windows. If you still see the plain pipe, check the log for
 `node-pty: load failed` (where the log lives:
 [File locations](file-locations.md#logs)).
