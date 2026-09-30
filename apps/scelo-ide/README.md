@@ -184,7 +184,8 @@ the Google Fonts `<link>` in `index.html`.
 - [x] Real R bundling logic per OS (Linux: repack from system/CRAN deb; macOS: xar-extract R.framework from CRAN .pkg; Windows: silent install of R-installer)
 - [x] R packages auto-resolved on bundle (ChainLadder, lifecontingencies, forecast, mgcv, data.table, jsonlite)
 - [x] electron-updater wired (GitHub Releases publish target, 6h polling, env-disable, dev no-ops)
-- [x] GitHub Actions release matrix (ubuntu / macos / windows on `scelo-ide-v*` tags)
+- [ ] GitHub Actions release matrix (ubuntu / macos / windows on `scelo-ide-v*` tags) — not built: only macOS has a release workflow
+- [x] macOS release build: `.github/workflows/release-macos.yml` (workflow_dispatch with the tag; Apple Silicon `.dmg`, ad-hoc signed, attached to the existing release). Linux is built on a workstation, Windows on a Windows machine (BUILD-WINDOWS.md)
 - [x] macOS signing + notarisation config (env-driven CSC_LINK / APPLE_ID / hardenedRuntime + entitlements.mac.plist)
 - [x] Windows signing config (env-driven CSC_LINK)
 - [x] First-run `/runtime-check` screen — probes the bundled Python + R for per-package import / library status

@@ -55,21 +55,29 @@ Rather not pipe a script into a root shell? The
 has the same repo as a deb822 `.sources` entry.
 
 **Everything else** is on the
-[**Releases tab**](https://github.com/intelligentactuaries/scelo/releases).
-Note the platforms are not in lockstep: Linux is on **0.1.5** (both the apt
-repository above and the Releases tab), Windows on **0.1.2**, and **macOS has
-no build yet** — see
-[INSTALL-WINDOWS-MACOS.md](INSTALL-WINDOWS-MACOS.md) to build it locally.
+[**Releases tab**](https://github.com/intelligentactuaries/scelo/releases):
+the `.AppImage` and `.deb` for Linux, the `.exe` for Windows, and from 0.2.0 a
+`.dmg` for **Apple Silicon Macs** (macOS 14+; there is no Intel build). The
+platforms are not always in lockstep, so each release lists the installers it
+carries, and the [downloads page](https://intelligentactuaries.com/scelo)
+always links each platform's newest build. To build one yourself, see
+[INSTALL-WINDOWS-MACOS.md](INSTALL-WINDOWS-MACOS.md).
 
 Caveats worth knowing before you download:
 
 - **Not code-signed yet** — Windows SmartScreen warns on first launch
-  (**More info → Run anyway**).
+  (**More info → Run anyway**), and macOS blocks the first launch until you
+  allow it under **System Settings → Privacy & Security → Open Anyway** (steps
+  in the [install guide](https://docs.intelligentactuaries.com/scelo/installation/windows-macos/)).
+- **R on Linux needs Ubuntu 24.04.** The bundled R is Ubuntu 24.04's, repacked,
+  and loads its system libraries (a default `apt install` pulls them in via the
+  recommended `r-base-core`). On 22.04 everything but the R bridges works.
 - **The AppImage needs FUSE 2** on Ubuntu 22.04+, which is no longer installed
   by default. `chmod +x` it, and if it exits on a `libfuse.so.2` error run
   `sudo apt install libfuse2t64`. The apt and `.deb` routes don't need it.
-- **Auto-update works on Linux only.** No release ships a `latest.yml`, so
-  electron-updater has nothing to poll on Windows; reinstall from Releases.
+- **Auto-update works on Linux only.** No release ships a `latest.yml` or
+  `latest-mac.yml`, so electron-updater has nothing to poll on Windows or macOS;
+  reinstall from Releases.
   apt installs update normally with the rest of your system.
 
 ## What's in this repository

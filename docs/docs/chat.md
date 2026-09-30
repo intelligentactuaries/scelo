@@ -7,7 +7,7 @@ where you're working, each framed for that context.
 
 | Chat | Where | Scoped to |
 | --- | --- | --- |
-| **Stage chat** | Bottom of each workstation (Soft / Tools / Hard) | That stage's job |
+| **Stage chat** | Right-hand panel of each workstation (Soft / Tools / Hard) | That stage's job |
 | **Macro-node chat** | On each card in the macro view | That stage, briefly |
 | **Column chat** | Hover a column header in Soft Data | That one column |
 | **Model chat** | On each model node in Tools | That model |
@@ -29,6 +29,14 @@ they work even fully offline. In the Soft Data chat:
 In a **column** chat:
 
 - `make this american`, `remove all non-dates`, `clean this column`.
+
+In the **Tools** chats (the stage chat, the hub and each model node):
+
+- `add mack`, `remove chain ladder`, `swap chain-ladder for Mack`,
+  `switch off mack` — change the model stack.
+- `wire cbd into life contingencies`,
+  `unplug lee-carter from life contingencies` — plug or unplug a wire between
+  two models already on the canvas (see [Tools](pipeline/tools.md#connecting)).
 
 Anything that isn't one of these falls through to the normal AI chat.
 

@@ -2,8 +2,8 @@
 
 The intake desk. Load a dataset, understand it, and get it clean and shaped
 before it goes to the models. Layout is cribbed from a data-wrangler: a columns
-list on the left, the grid in the middle, a column summary on the right, and a
-scoped chatbot across the bottom.
+list on the left, the grid in the middle, then a column summary and the scoped
+chat as panels on the right.
 
 <div class="scelo-demo" data-scelo-demo="soft"><p class="sd-fallback">The Soft Data workstation: the grid, per-column headers, the cleaning banner, and the scoped chat. The animated illustration needs JavaScript.</p></div>
 

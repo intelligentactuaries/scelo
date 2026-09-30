@@ -7,8 +7,13 @@ the status bar. The header shows the working directory and a running/exited
 indicator plus *"bundled python/R on PATH"*.
 
 - It's a **real PTY** (via node-pty) — interactive REPLs and full-screen TUIs
-  work: `ipython`, the `R` REPL, `vim`, `htop`, etc. On Windows it uses ConPTY
-  (pwsh → powershell → cmd); on macOS/Linux your `$SHELL`.
+  work: `ipython`, the `R` REPL, `vim`, `htop`, etc. On macOS/Linux it runs your
+  `$SHELL`; on Windows ConPTY (pwsh → powershell → cmd).
+- The PTY needs node-pty built for Scelo's Electron. The Linux and macOS
+  installers carry it from **0.2.0**; a Windows installer built without it, and
+  every installer before 0.2.0, falls back to a **plain pipe**: commands run,
+  but with no prompt, colours, line editing or full-screen programs. See
+  [Troubleshooting](../reference/troubleshooting.md#the-terminal-has-no-colours-prompt-or-line-editing).
 - There is **one long-lived terminal** per workspace window. When you hide it,
   it stays mounted — **long-running jobs keep running** (dev servers, training
   loops) and reappear when you toggle it back.

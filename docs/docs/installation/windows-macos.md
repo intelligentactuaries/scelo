@@ -7,8 +7,8 @@ the install on your own machine.
 
 Download the installer for your platform from the
 [downloads page](https://intelligentactuaries.com/scelo). Filenames are
-version-stamped (`Scelo.IDE-<version>-x64.exe`); the download tile always
-points at the current one.
+version-stamped (`Scelo-IDE-<version>-x64.exe`, `Scelo-IDE-<version>-arm64.dmg`);
+the download tile always points at the newest build for your platform.
 
 === "Windows"
 
@@ -19,10 +19,29 @@ points at the current one.
 
 === "macOS"
 
-    **No prebuilt `.dmg` yet.** macOS has not had a signed release, so the
-    downloads page shows macOS as "build from source" rather than offering an
-    installer. Use the local build below — it produces the same app, and the
-    `.dmg` it writes can be installed normally.
+    For **Apple Silicon** Macs (M1 or later) on **macOS 14 Sonoma or later**.
+    There is no Intel build: the bundled Python is an Apple Silicon build.
+
+    1. Download the `.dmg` from the macOS tile and open it.
+    2. Drag **Scelo IDE** onto **Applications**.
+    3. Open it once and allow it. The app is not signed or notarised by Apple
+       yet, so Gatekeeper stops the first launch:
+
+        - **macOS 15 Sequoia and later:** open Scelo IDE, close the warning,
+          then go to **System Settings → Privacy & Security**, scroll to
+          *"Scelo IDE" was blocked…* and click **Open Anyway**, then confirm.
+        - **macOS 14 Sonoma:** in **Applications**, Control-click (right-click)
+          Scelo IDE, choose **Open**, then **Open** again.
+
+        After that it opens normally.
+
+    If macOS instead says Scelo IDE **"is damaged and can't be opened"**,
+    that is the quarantine flag on an unsigned download, not a broken file.
+    Clear it once in Terminal, then open the app:
+
+    ```bash
+    xattr -dr com.apple.quarantine "/Applications/Scelo IDE.app"
+    ```
 
 ## Build the latest on your own machine
 

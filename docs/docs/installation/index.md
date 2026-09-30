@@ -22,8 +22,8 @@ Scelo is a desktop app. Pick your platform:
 
 | | Minimum |
 | --- | --- |
-| **OS** | Ubuntu 22.04+ / Debian 12+ (x64) · Windows 10/11 (x64) · macOS 12+ (Intel & Apple Silicon) |
-| **Disk** | ~2 GB (the installer bundles a full Python + R runtime) |
+| **OS** | Ubuntu 22.04+ / Debian 12+ (x64) · Windows 10/11 (x64) · macOS 14+ on Apple Silicon (M1 or later) |
+| **Disk** | ~2.5 GB installed (the installer bundles a full Python + R runtime) |
 | **RAM** | 8 GB recommended |
 | **Network** | Only for first download and optional hosted AI / the swarm. The core app runs **offline**. |
 
@@ -32,16 +32,25 @@ Scelo is a desktop app. Pick your platform:
     package set (lifelib, chainladder, climada, forecast, ChainLadder, and
     more). You do **not** need Python or R installed on your machine.
 
-    The Ubuntu 22.04 floor comes from this bundle: the packaged R runtime is
-    built against the 22.04 baseline, so older distributions are missing the
-    system libraries it links. Any distro at or above that baseline works.
+    One exception on Linux: the bundled **R** is Ubuntu 24.04's R, repacked,
+    and it loads that release's system libraries. It runs on Ubuntu 24.04,
+    where a default `apt install` pulls those libraries in; on older
+    distributions the R bridges don't run yet, while the rest of Scelo
+    (Python included) does. Details on the [Linux](linux.md) page.
+
+    On macOS the prebuilt `.dmg` is for Apple Silicon only (the bundled
+    Python is an arm64 build) and needs macOS 14 Sonoma or later, because
+    several of the bundled numerical libraries (NumPy, SciPy) are built for
+    it.
 
 ## A note on "unknown publisher" warnings
 
 Downloaded installers are not yet code-signed, so:
 
-- **Windows** SmartScreen and **macOS** Gatekeeper warn on first launch (choose
-  *Run anyway* / right-click → *Open*).
+- **Windows** SmartScreen warns on first launch (choose *More info → Run
+  anyway*).
+- **macOS** Gatekeeper blocks the first launch until you allow it once — see
+  the [macOS steps](windows-macos.md#one-click-installer).
 - A side-loaded Linux `.deb` shows "third party" in App Center.
 
 The **verified, signed** way to install on Linux is the **apt repository** —

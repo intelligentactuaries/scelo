@@ -49,8 +49,12 @@ See [Soft Data](pipeline/soft-data.md) for everything this stage can do.
 Click **next: tools →**. You get a bench of actuarial models (Chain Ladder,
 Mack, Bornhuetter-Ferguson, Lee-Carter, Cairns-Blake-Dowd, WMTR forecast, …).
 
-- Drag or click models onto the canvas, or hit **identify models** to let Scelo
-  suggest a set for your data's domain.
+- Click models in the catalog (right-hand panel), or hit **identify models**
+  to let Scelo suggest a set for your data's domain.
+- The canvas is a typed graph: the dataset hub offers only the inputs your data
+  really contains, and wires join pins whose types agree. Drop a wire on empty
+  canvas, or right-click it, for the models that fit. A model your data can't
+  feed says why on its node.
 - Each model node has a scoped chat (`swap chain-ladder for Mack`, `compare
   models`).
 
@@ -58,14 +62,18 @@ See [Tools](pipeline/tools.md).
 
 ## 4. Hard Data — run and read
 
-Click **next: hard →**. Scelo runs every selected model and lays the results out
-on a canvas:
+Click **next: hard →**. Scelo runs every switched-on model and lays the results
+out on a canvas:
 
 - **Result nodes** show a headline number, a sparkline or table, and a
-  confidence interval. Click the **⤢** to open a model's detail dashboard.
-- The **Board Pack** hub aggregates everything; click **⤢** → **report · pdf**
-  for a printable board pack.
-- On a result card, **Convene council** sends the forecast to the swarm.
+  confidence interval. Click the **⤢** to open a model's detail dashboard. A
+  model whose inputs aren't in your data says *not applicable*, with the
+  reason.
+- The **Board Pack** hub aggregates everything; click its **⤢** (or
+  **report · pdf** in the toolbar) for a printable board pack, summarised in
+  plain English.
+- In the result side panel, **Convene council** sends a result's forecast to
+  the swarm.
 
 See [Hard Data](pipeline/hard-data.md).
 
@@ -74,8 +82,9 @@ See [Hard Data](pipeline/hard-data.md).
 After convening a council, click **Open in swarm** to jump into the full swarm
 view: a deliberation graph, society pulse, and a population simulator.
 
-See [The swarm](swarm/index.md). (The swarm runs as a separate local server —
-[start it first](swarm/running.md).)
+See [The swarm](swarm/index.md). (The swarm runs as its own local server,
+which Scelo IDE bundles and starts with the app — see
+[Running the swarm](swarm/running.md).)
 
 ---
 

@@ -69,6 +69,7 @@ Both are documented in [Python & R libraries](libraries/index.md), from
 | --- | --- |
 | [Installation](installation/index.md) | Get Scelo onto Linux, Windows, or macOS |
 | [Getting started](getting-started.md) | Your first run, end to end |
+| [What's new](whats-new.md) | What changed in each release |
 | [The workspace](workspace/index.md) | Editor, terminal, Git, search, command palette |
 | [The pipeline](pipeline/index.md) | Soft Data, Tools, Hard Data in depth |
 | [The swarm](swarm/index.md) | Council, society pulse, and simulation |

@@ -108,6 +108,7 @@ nav:
       - Windows & macOS: installation/windows-macos.md
       - First launch: installation/first-launch.md
   - Getting started: getting-started.md
+  - What's new: whats-new.md
   - The workspace:
       - workspace/index.md
       - Editor & files: workspace/editor.md

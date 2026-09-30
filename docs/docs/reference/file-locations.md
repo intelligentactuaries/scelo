@@ -5,9 +5,22 @@ Where Scelo keeps its settings, runtimes, and per-workspace state. The app's
 
 | Platform | `userData` path |
 | --- | --- |
-| Linux | `~/.config/Scelo IDE/` |
-| macOS | `~/Library/Application Support/Scelo IDE/` |
-| Windows | `%APPDATA%\Scelo IDE\` |
+| Linux | `~/.config/@ia/scelo-ide/` |
+| macOS | `~/Library/Application Support/@ia/scelo-ide/` |
+| Windows | `%APPDATA%\@ia\scelo-ide\` |
+
+(The folder is named after the app's internal name, `@ia/scelo-ide`, not the
+product name.)
+
+## Logs
+
+| Platform | App log (`main.log`) |
+| --- | --- |
+| Linux | `~/.config/@ia/scelo-ide/logs/main.log` |
+| macOS | `~/Library/Logs/@ia/scelo-ide/main.log` |
+| Windows | `%APPDATA%\@ia\scelo-ide\logs\main.log` |
+
+The swarm server writes `swarm.log` in the `logs` folder under `userData`.
 
 ## Inside `userData`
 

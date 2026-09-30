@@ -2,14 +2,12 @@
 
 ## The swarm panel says "offline" / "unreachable at :3010"
 
-The swarm server isn't running (or something moved it off **3010**, its default).
-From a Scelo checkout:
-
-```bash
-bun run dev:swarm
-```
-
-That starts **both** the API (3010) and the UI (5190), on any OS. See
+Scelo IDE starts its bundled swarm server when the app opens (on
+`127.0.0.1:3010`, or the next free port). If the panel stays offline, use its
+**restart swarm server** button, or quit and reopen Scelo; the panel shows the
+reason from `<userData>/logs/swarm.log` if the server keeps failing. In the
+browser build, or when hacking on the swarm, start the dev pair from a checkout
+with `bun run dev:swarm` (API 3010, UI 5190) and Scelo adopts it. See
 [Running the swarm](../swarm/running.md).
 
 ## "Test connection" returns "(connected — model returned no text)"
@@ -68,7 +66,30 @@ quick iterations, or point the swarm at a faster provider in its own settings. S
 Install it from the signed apt repository so it's verified and auto-updating —
 see [Linux installation](../installation/linux.md).
 
-## Windows / macOS: "unknown publisher" or a partial download
+## Windows / macOS: "unknown publisher", or macOS blocks the app
 
-The cross-platform packages may need a finishing step on your own OS. Follow
-[Windows & macOS](../installation/windows-macos.md).
+The installers are not code-signed yet. On Windows, choose **More info → Run
+anyway**. On macOS, allow the app once under **System Settings → Privacy &
+Security → Open Anyway** (or Control-click → **Open** on macOS 14). If macOS
+calls it **"damaged and can't be opened"**, the download's quarantine flag is
+the cause, not the file; clear it with
+`xattr -dr com.apple.quarantine "/Applications/Scelo IDE.app"`. Step by step:
+[Windows & macOS](../installation/windows-macos.md#one-click-installer).
+
+## R bridges fail on Linux ("libR.so: cannot open shared object file")
+
+The bundled R on Linux is Ubuntu 24.04's R, repacked, and it loads the system's
+R libraries. On Ubuntu 24.04, install them with `sudo apt install r-base-core`
+(a default `apt install scelo-ide` already does, as a recommended package). On
+22.04 and older distributions the bundled R can't run yet (it needs glibc 2.38);
+the Python side of Scelo is unaffected. See
+[Linux](../installation/linux.md).
+
+## The terminal has no colours, prompt or line editing
+
+Earlier installers could not load the terminal's pseudo-terminal module and fell
+back to a plain pipe: commands ran, but without a prompt, colours, line editing
+or full-screen programs. From 0.2.0 the terminal is a real pseudo-terminal on
+Linux and macOS. If you still see the plain pipe, check the log for
+`node-pty: load failed` (where the log lives:
+[File locations](file-locations.md#logs)).

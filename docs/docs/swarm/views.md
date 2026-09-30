@@ -5,7 +5,9 @@ left edge — one animal per surface, and the animal is the only thing on
 screen that identifies it: the bunny is Forecast, the dog Council
 Reactions, the hamster Society Pulse, the turtle Readback, the chick
 Simulation, and the cat — sitting slightly apart — the Canon. The active
-pet grows a step and wears its name; the rest step back to icons.
+pet grows a step and wears its name; the rest step back to icons. Every pet
+is [alive](index.md#the-surfaces-and-their-pets): it breathes, blinks and
+watches your cursor.
 
 ## Forecast
 
@@ -24,7 +26,9 @@ The heart of the deliberation:
 - A **readback Sankey**: profession → *trust the forecast?* → confidence band.
 - A **decision sidebar** — click an agent to see its per-round reasoning,
   key risk, and final vote — or open an [audit interview](#audit-interviews)
-  with them; click a profession to see the group's aggregate.
+  with them; click a profession to see the group's aggregate. The panel icon
+  in its header collapses it to a slim handle carrying the same icon and its
+  name; click the handle to bring it back.
 
 ### Recommended interventions
 

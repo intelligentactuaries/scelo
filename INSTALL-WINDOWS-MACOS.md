@@ -1,9 +1,10 @@
 # Run the latest Scelo IDE on Windows / macOS
 
-Linux users get a one-click installer (`.AppImage` / `.deb`) from the
-[downloads page](https://intelligentactuaries.com/scelo). For the **very
-latest** build on **Windows or macOS**, you finish the install on your own
-machine in two steps: a small source download, then a one-command "finisher"
+Every platform has a one-click installer on the
+[downloads page](https://intelligentactuaries.com/scelo): `.AppImage` / `.deb`
+on Linux, `.exe` on Windows, and (from 0.2.0) an unsigned `.dmg` for Apple
+Silicon Macs on macOS 14+. For a build **newer than the last release** on
+**Windows or macOS**, you finish the install on your own machine in two steps: a small source download, then a one-command "finisher"
 that fetches the OS-specific pieces (Electron + a bundled Python + R runtime)
 and builds you a native installer.
 
@@ -35,6 +36,9 @@ bash scripts/finish-install.sh
 
 When it finishes, your installer is in `apps/scelo-ide/build/`
 (`Scelo IDE-<version>-arm64.dmg`). Open it and drag Scelo to Applications.
+Apple Silicon only: the bundled Python is an arm64 build. Packaging compiles
+the terminal's `node-pty` module, which needs the Xcode Command Line Tools
+(`xcode-select --install`; you already have them if `git` works).
 
 ### Windows
 
@@ -68,10 +72,11 @@ First run needs an internet connection. After that the IDE runs fully offline.
 
 ## Notes
 
-- **Disk + time:** the bundled runtime is ~1 GB and the first build can take
+- **Disk + time:** the bundled runtime is ~2 GB and the first build can take
   10–30 minutes (mostly R packages).
 - **Council / simulation features** use the swarm server (`apps/swarm` in this
-  repo, not part of the installer) — start it with `bun run dev:swarm` from the
-  repo root if you want them. Same command on Windows and macOS.
+  repo). The installer you build bundles it and Scelo starts it with the app;
+  with `--run`, start it yourself with `bun run dev:swarm` from the repo root.
+  Same command on Windows and macOS.
 - Everything else (soft data, cleaning, models, hard data, board pack) runs
   offline with no extra setup.

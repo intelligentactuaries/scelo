@@ -33,6 +33,13 @@ other surfaces read from, not another view of the run.
 | ![chick](../assets/img/pets/chick.svg){ .pet-inline } chick | **Simulation** | Population simulation of a scenario → macro impact |
 | ![cat](../assets/img/pets/cat.svg){ .pet-inline } cat | **Canon** | The reference works injected into every agent's prompt |
 
+The pets are alive. Each one breathes, sways and blinks — with the odd double
+blink and, rarely, a wink — and its eyes follow your cursor, but only so far:
+a pet glances at the pointer rather than staring it down. Hover a pet and it
+leans in, curious; the chosen one is happy, and hops when you pick it. The
+bunny that greets you on an empty swarm follows the cursor too, and twirls if
+you click it. If your system asks for reduced motion, the pets hold still.
+
 ## It runs as its own server — started for you
 
 The swarm is a self-contained app (`apps/swarm` in the Scelo repo) with its own
@@ -40,6 +47,10 @@ server. Scelo IDE **bundles it and starts it with the app** on a loopback port,
 and stops it on quit — nothing to launch by hand. See
 [Running the swarm](running.md) for where it lives, its data and log, and the
 checkout (dev) mode.
+
+Inside Scelo IDE the swarm wears the IDE's theme, so a dark IDE frames a dark
+swarm. The theme button in the swarm's own header decides: **auto**, the
+default, follows the IDE, while **light** or **dark** pins that theme.
 
 !!! tip
     The swarm is a decision-*support* cockpit. The agents report; the actuary

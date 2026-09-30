@@ -5,9 +5,16 @@ one to use: it is the only verified, auto-updating path.
 
 !!! info "Supported distributions"
     **Ubuntu 22.04+, Debian 12+, or any distro on the same baseline** (x64).
-    The floor is set by the bundled R runtime, which is built against
-    Ubuntu 22.04's system libraries — this applies to all three install
-    methods below, including the AppImage.
+    The app and its bundled Python stack run on all of them, with every
+    install method below.
+
+    The bundled **R** is narrower. It is Ubuntu 24.04's R, repacked, and it
+    loads that release's system libraries (glibc 2.38+, ICU 74, BLAS/LAPACK),
+    so the R bridges run on **Ubuntu 24.04**. There the package recommends
+    `r-base-core`, which a default `apt install` pulls in along with those
+    libraries; with the AppImage, or if you install without recommends, run
+    `sudo apt install r-base-core` yourself. On 22.04 and other
+    distributions the R bridges don't run yet; everything else does.
 
     The **apt** repository is published for two Ubuntu codenames only —
     `jammy` (22.04) and `noble` (24.04). Any other codename resolves to a
@@ -108,7 +115,7 @@ sudo apt remove scelo-ide
 Download the `.deb` from the website and install it with `apt`:
 
 ```bash
-sudo apt install ./Scelo.IDE-*-amd64.deb
+sudo apt install ./Scelo-IDE-*-amd64.deb
 ```
 
 !!! warning "Side-loaded `.deb` shows 'third party'"
@@ -129,8 +136,8 @@ where you cannot install anything system-wide.
 
 ```bash
 # download from the website's Linux tile, then:
-chmod +x Scelo.IDE-*-x86_64.AppImage
-./Scelo.IDE-*-x86_64.AppImage
+chmod +x Scelo-IDE-*-x86_64.AppImage
+./Scelo-IDE-*-x86_64.AppImage
 ```
 
 The AppImage needs no root and leaves nothing installed system-wide — handy for

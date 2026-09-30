@@ -44,10 +44,15 @@ cutting a release, not part of building for a second platform.
 4. **Internet access** — the build downloads node deps, Electron, portable
    CPython and the R installer.
 5. **~8 GB free disk** — the staged runtime is ~1.5 GB and the output is ~1 GB.
-6. **A compiler is usually NOT needed.** `@homebridge/node-pty-prebuilt-multiarch`
-   and `@vscode/ripgrep` ship Windows prebuilts. Only if the native rebuild step
-   errors, install **Visual Studio 2022 Build Tools** with the "Desktop
-   development with C++" workload, then retry.
+6. **A C++ compiler is optional, but it is what gives the terminal a real
+   console.** `@vscode/ripgrep` ships a Windows binary.
+   `@homebridge/node-pty-prebuilt-multiarch` does **not** ship one for the
+   Electron we use (33): its npm package carries Linux binaries only and its
+   Electron prebuilds stop at Electron 29. Without building it, the installed
+   IDE's terminal falls back to a plain pipe (commands run, but no prompt,
+   colours or line editing). To build it, install **Visual Studio 2022 Build
+   Tools** with the "Desktop development with C++" workload and **Python 3**,
+   then run the optional `build:pty` in step 4.
 7. **No Wine, no WSL.** This is a native Windows build.
 
 ---
@@ -88,7 +93,11 @@ TARGET_OS=win bun run bundle:runtime
 
 Downloads portable **CPython 3.11.10** (windows-msvc) and **R 4.4.2** (win) and
 installs the IA actuarial stack into `resources/runtime/`. Idempotent
-(re-running skips already-staged, checksum-matched components). Verify:
+(re-running skips already-staged, checksum-matched components). GDAL's Python
+bindings are deliberately left out (they have no Windows wheel; see the comment
+in `scripts/bundle-runtimes.sh`), and the stage ends by importing the whole
+stack from the bundled interpreter: if that fails, the stage fails, rather than
+shipping a bare runtime as early installers did. Verify:
 
 ```bash
 ls resources/runtime/python/python.exe
@@ -103,10 +112,14 @@ fails loudly until the app is running.
 
 ```bash
 cd apps/scelo-ide
+bun run build:pty      # optional, needs the VS C++ Build Tools (prerequisite 6)
 bun run dist:win
 ```
 
-`dist:win` runs `bun run build` then `electron-builder --win nsis`.
+`build:pty` compiles `node-pty` against Electron's headers and checks that a
+shell echoes back through it; if it fails, carry on without it (the terminal
+then uses the plain-pipe fallback). `dist:win` runs `bun run build` then
+`electron-builder --win nsis`.
 
 > **Why Git Bash.** Since 0.1.6, `build` ends with `bundle:swarm`, which is
 > `bash scripts/bundle-swarm.sh`. From PowerShell that fails with
@@ -134,8 +147,8 @@ Output lands in `apps/scelo-ide/build/`:
 
 ## 5. Verify the build
 
-1. `apps/scelo-ide/build/Scelo IDE-<version>-x64.exe` exists, roughly 1 GB
-   (0.1.2 was 937 MB before the swarm was bundled; the swarm adds ~100 MB).
+1. `apps/scelo-ide/build/Scelo IDE-<version>-x64.exe` exists, several hundred
+   MB (the Linux `.deb` of 0.2.0, with the full Python stack, is 561 MB).
 2. **The swarm was bundled** (this is what makes it a >= 0.1.6 build):
    `build\win-unpacked\resources\swarm\swarm-server.exe` exists, and
    `resources\swarm\ui\` is populated.
@@ -143,7 +156,11 @@ Output lands in `apps/scelo-ide/build/`:
    - the **Welcome** screen loads;
    - the header **swarm** LED goes ● live on its own, with no second terminal
      and no `bun run dev:swarm`;
-   - **Soft Data** loads a sample table and the grid scrolls.
+   - **Soft Data** loads a sample table and the grid scrolls;
+   - if you ran `build:pty`, the terminal (Ctrl+`) shows a PowerShell prompt
+     with colours, and
+     `build\win-unpacked\resources\app.asar.unpacked\node_modules\@homebridge\node-pty-prebuilt-multiarch\build\Release\conpty.node`
+     exists.
 4. Skim the release notes for the tag you built and spot-check anything called
    out there. (Deliberately not enumerated here: a per-version checklist in this
    file goes stale the moment the next version ships.)
@@ -210,7 +227,8 @@ Action or deploy.
   wrong `TARGET_OS`.
 - **Swarm LED never lights** in the installed app: check
   `resources\swarm\swarm-server.exe` shipped (step 5.2), then the log at
-  `%APPDATA%\Scelo IDE\logs\swarm.log`.
+  `%APPDATA%\@ia\scelo-ide\logs\swarm.log` (the app log, `main.log`, is
+  next to it).
 
 ---
 
@@ -227,8 +245,12 @@ Action or deploy.
 >    `git checkout <TAG>`, `bun install`. Do not change `package.json` version.
 > 3. **In Git Bash**: `cd apps/scelo-ide && TARGET_OS=win bun run bundle:runtime`.
 >    Verify `resources/runtime/python/python.exe` and an `R.exe` exist.
+>    The stage fails if the bundled Python stack does not import; do not work
+>    around that, report it.
 > 4. **In Git Bash** (not PowerShell, the build runs a bash script):
->    `cd apps/scelo-ide && bun run dist:win`.
+>    `cd apps/scelo-ide && bun run build:pty` (optional: needs VS 2022 C++ Build
+>    Tools + Python 3; if it fails, note it and continue), then
+>    `bun run dist:win`.
 > 5. Verify `build/Scelo IDE-<version>-x64.exe` (~1 GB) and
 >    `build/win-unpacked/resources/swarm/swarm-server.exe` both exist.
 > 6. Copy the artifact to the hyphenated name `Scelo-IDE-<version>-x64.exe`.

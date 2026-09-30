@@ -40,7 +40,8 @@ a clear job and its own scoped AI assistant.
 `Dashboards → Scelo` shows the three stages as cards on a canvas:
 
 - Each card carries a **status summary** (rows/cols for Soft, model count for
-  Tools, run count + headline for Hard).
+  Tools, run count + headline for Hard — with errors and *not applicable*
+  models counted separately).
 - A small **chat box** on each card answers stage-scoped questions without
   drilling in (e.g. "restore a project", "swap chain-ladder for Mack",
   "explain this ultimate").
@@ -58,7 +59,8 @@ a clear job and its own scoped AI assistant.
 
 -   :material-tune-vertical: **[Tools](tools.md)**
 
-    Choose actuarial models — by hand or AI-suggested. The model bench.
+    Choose actuarial models — by hand or AI-suggested — and wire them on a
+    typed canvas. The model bench.
 
 -   :material-chart-box: **[Hard Data](hard-data.md)**
 
@@ -68,5 +70,17 @@ a clear job and its own scoped AI assistant.
 
 !!! note "State flows forward"
     The dataset you load in Soft is available to Tools and Hard; the models you
-    pick in Tools drive the runs in Hard. You can move freely between stages and
-    your work persists.
+    switch on in Tools, and the wires between them, drive the runs in Hard. You
+    can move freely between stages and your work persists.
+
+## Side panels
+
+Each workstation keeps its detail panels and its stage chat beside its main
+view: Soft's column summary; Tools' stats and model details; Hard's run stats
+and result details. The **panel-toggle icon** in a panel's header corner
+collapses it to a thin rail labelled with its name — *soft · column*,
+*tools · model*, *hard · chat*, … — headed by the same icon; click the rail to
+open the panel again. Panels slide open and shut like a drawer. Drag a
+panel's inner edge to resize it, and double-click the edge to reset its width.
+Widths and collapsed panels hold while you move between the stages; they
+aren't saved with the session.
