@@ -119,6 +119,13 @@ export default function Welcome() {
             </p>
           </div>
           <nav className="flex items-center gap-1">
+            <Link to="/dashboards/scelo" className="ia-btn ia-btn-sm ia-btn-ghost">
+              scelo
+            </Link>
+            <SwarmNavLink />
+            <Link to="/settings/ai" className="ia-btn ia-btn-sm ia-btn-ghost">
+              settings
+            </Link>
             {desktop ? (
               <Link to="/workspace" className="ia-btn ia-btn-sm ia-btn-ghost">
                 workspace
@@ -128,13 +135,6 @@ export default function Welcome() {
                 chat
               </Link>
             )}
-            <Link to="/dashboards/scelo" className="ia-btn ia-btn-sm ia-btn-ghost">
-              scelo
-            </Link>
-            <SwarmNavLink />
-            <Link to="/settings/ai" className="ia-btn ia-btn-sm ia-btn-ghost">
-              settings
-            </Link>
           </nav>
         </div>
       </header>
