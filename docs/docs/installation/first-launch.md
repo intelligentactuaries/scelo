@@ -1,11 +1,28 @@
 # First launch
 
-![The welcome screen — open a folder or scaffold a sample workspace](../assets/img/welcome.png){ .shadow }
+![Scelo opens on the pipeline: soft data, tools, hard data](../assets/img/pipeline.png){ .shadow }
+
+## The pipeline, straight away
+
+Every launch plays a short intro, the S₀.₂ mark drawing itself in, and opens on
+the **Scelo pipeline**: the macro view of the three stages, Soft → Tools → Hard
+(see [The pipeline](../pipeline/index.md)). The bar above it carries:
+
+- **workspace** — the files, editor and terminal (see
+  [The workspace](../workspace/index.md)). With no workspace open yet, it takes
+  you to the welcome screen to pick one.
+- **open .sce / save .sce** — the whole session as a project file.
+- **export · whole pipeline**.
+- **+ start project** — name the session so its chats persist.
+- **reset session** — wipe the dataset, model picks, runs and activity log. It
+  asks first.
+
+A click or a key skips the intro; with reduced motion on, the mark simply
+appears.
 
 ## The runtime check
 
-On the very first launch, Scelo opens the **runtime check** — a report on the
-bundled stack it just installed:
+The **runtime check** reports on the bundled stack:
 
 - **Python** — the portable interpreter version and that it can import the IA
   package set (numpy, pandas, lifelib, chainladder, climada, …).
@@ -14,13 +31,17 @@ bundled stack it just installed:
 - **Status per component** — green when ready; a clear message if something
   didn't stage.
 
-You can re-open this any time at the `/runtime-check` route. If a component
-shows an error, see [Troubleshooting](../reference/troubleshooting.md).
+Open it any time with **Navigate: Runtime Check** in the command palette, or at
+the `/runtime-check` route. If a component shows an error, see
+[Troubleshooting](../reference/troubleshooting.md).
 
 ## The welcome screen
 
-After the runtime check, every launch lands on the **welcome** screen, where you
-choose where to work:
+![The welcome screen — open a folder or scaffold a sample workspace](../assets/img/welcome.png){ .shadow }
+
+The **welcome** screen is where you choose where to work. **workspace** takes
+you there while no workspace is open, and the workspace header links back to
+it:
 
 - **Open Folder…** — point Scelo at any directory; it becomes the workspace
   root.

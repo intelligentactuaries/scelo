@@ -4,8 +4,8 @@ This is the five-minute tour: from a dataset to a board pack to a swarm council.
 
 ## 1. Open the pipeline
 
-From the welcome screen, the Scelo pipeline lives at **Dashboards → Scelo**.
-The macro view shows three stages wired together:
+Scelo opens on the pipeline, straight after its launch intro. The macro view
+shows three stages wired together:
 
 <figure class="ia-diagram" markdown="0">
 <svg viewBox="0 0 620 96" role="img" aria-label="Soft to Tools to Hard" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg">

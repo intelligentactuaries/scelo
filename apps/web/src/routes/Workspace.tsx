@@ -41,6 +41,9 @@ export default function Workspace() {
   // AI) instead of the silent grey pane the editor would otherwise
   // show. Swarm is its own /swarm route now, so we don't need to
   // skip-the-redirect for it.
+  // Wait for the shell to say which workspace is open: on the first render
+  // `path` is always null, which used to redirect every visit.
+  if (isDesktopIDE() && !workspace.ready) return null;
   if (isDesktopIDE() && workspace.path === null) {
     return <Navigate to="/welcome" replace />;
   }

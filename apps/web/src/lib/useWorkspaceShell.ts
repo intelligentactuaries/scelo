@@ -75,6 +75,9 @@ export interface WorkspaceShell {
   };
   /** Active workspace path + sidebar layout. Persisted per-workspace. */
   workspace: {
+    /** False until the desktop shell has said which workspace is open: a
+     *  null `path` means "none" only once this is true. */
+    ready: boolean;
     path: string | null;
     setPath: (path: string | null) => void;
     sidebarTab: SidebarTab;
@@ -125,6 +128,7 @@ export function useWorkspaceShell(): WorkspaceShell {
   const [openTabs, setOpenTabs] = useState<string[]>([]);
   const [activeTab, setActiveTab] = useState<string | null>(null);
   const [workspacePath, setWorkspacePath] = useState<string | null>(null);
+  const [workspaceReady, setWorkspaceReady] = useState(() => !isDesktopIDE());
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>("files");
   const [sidebarWidth, setSidebarWidthRaw] = useState<number>(SIDEBAR_WIDTH_DEFAULT);
   const setSidebarWidth = useCallback((w: number) => {
@@ -231,6 +235,10 @@ export function useWorkspaceShell(): WorkspaceShell {
       if (cur.id) {
         await window.scelo!.workspace.setForWindow(cur.id);
       }
+      // The open workspace's path was read here but never kept, so /workspace
+      // always saw null and bounced to /welcome.
+      setWorkspacePath(cur.path);
+      setWorkspaceReady(true);
       const s = await window.scelo!.workspace.stateGet();
       setOpenTabs(s.openTabs);
       setActiveTab(s.activeTab);
@@ -552,6 +560,7 @@ export function useWorkspaceShell(): WorkspaceShell {
       closeTab,
     },
     workspace: {
+      ready: workspaceReady,
       path: workspacePath,
       setPath: setWorkspacePath,
       sidebarTab,

@@ -413,10 +413,8 @@ function createMainWindow(): BrowserWindow {
   });
 
   // Renderer is the built apps/web SPA, served via the scelo:// protocol so
-  // BrowserRouter sees clean paths. First launch lands on /runtime-check to
-  // surface the bundled-stack status (Python + R + IA packages); every
-  // subsequent launch goes straight to /dashboards/scelo. A first-run marker
-  // is persisted under app.getPath("userData").
+  // BrowserRouter sees clean paths. Every launch lands on the Scelo pipeline
+  // (initialRoute), right after the launch intro in index.html.
   const indexFile = rendererIndex();
   if (!existsSync(indexFile)) {
     // Fail loud and useful — the most common cause is forgetting `bun run build:renderer`.
@@ -517,24 +515,10 @@ function attachContextMenu(win: BrowserWindow): void {
  *     Scelo brain map is the safest "did I install this right?" landing).
  */
 function initialRoute(): string {
-  const marker = join(app.getPath("userData"), ".first-run-complete");
-  const firstLaunch = !existsSync(marker);
-  if (firstLaunch) {
-    try {
-      require("node:fs").writeFileSync(marker, "");
-    } catch {
-      // If we can't write the marker, just show runtime-check every launch —
-      // not the end of the world. Better than failing to launch.
-    }
-    return "/runtime-check";
-  }
-  try {
-    const reg = _readRegistry();
-    if (reg.workspaces.length > 0) return "/workspace";
-    return "/workspace"; // first-run splash will show
-  } catch {
-    return "/dashboards/scelo";
-  }
+  // Every launch opens on the Scelo pipeline, straight after the launch
+  // intro; its bar has the workspace one click away, and the runtime check
+  // stays in the command palette.
+  return "/dashboards/scelo";
 }
 
 function buildMenu(): void {

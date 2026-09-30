@@ -38,7 +38,7 @@ export default function App() {
       <Routes>
         <Route
           path="/"
-          element={desktop ? <Navigate to="/welcome" replace /> : <ChatHome />}
+          element={desktop ? <Navigate to="/dashboards/scelo" replace /> : <ChatHome />}
         />
         <Route path="/c/:conversationId" element={<ChatRoute />} />
 

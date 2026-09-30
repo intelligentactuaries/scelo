@@ -12,12 +12,13 @@ import ReactFlow, {
   useNodesState,
 } from "reactflow";
 import "reactflow/dist/style.css";
+import { Link } from "react-router-dom";
 import { ExportButton } from "./ExportScreen";
 import { FlowControls } from "./FlowControls";
 import { SceloNode, type SceloNodeData } from "./SceloNode";
 import { nextPaint } from "./UploadIndicator";
 import { downloadSce, parseSce } from "./projectFile";
-import { useScelo } from "./sceloContext";
+import { clearSceloSession, useScelo } from "./sceloContext";
 
 const nodeTypes = { scelo: SceloNode };
 
@@ -116,7 +117,8 @@ export function SceloFlow({ className }: { className?: string }) {
   return (
     <div className={`${className ?? ""} flex flex-col`}>
       <ProjectBar />
-      <div className="min-h-0 flex-1">
+      {/* data-intro: the launch intro reveals the bar, then the canvas. */}
+      <div data-intro="2" className="min-h-0 flex-1">
         <ReactFlow
           nodes={nodes}
           edges={edges}
@@ -298,7 +300,10 @@ function ProjectBar() {
 
   if (mode === "project" && project) {
     return (
-      <div className="flex shrink-0 items-center gap-2 border-b border-primary/40 bg-primary/[0.05] px-3 py-1.5">
+      <div
+        data-intro="1"
+        className="flex shrink-0 items-center gap-2 border-b border-primary/40 px-3 py-1.5"
+      >
         <span
           aria-hidden
           className="inline-block h-1.5 w-1.5 rounded-full bg-primary"
@@ -311,6 +316,7 @@ function ProjectBar() {
         </span>
         <span className="font-mono text-[10px] text-fg-dim">· chats persist</span>
         <div className="flex-1" />
+        <WorkspaceLink />
         <ProjectFileActions />
         <ExportButton stage="macro" variant="primary" label="export · whole pipeline" />
         <button
@@ -321,12 +327,16 @@ function ProjectBar() {
         >
           end project
         </button>
+        <ResetSessionButton />
       </div>
     );
   }
 
   return (
-    <div className="flex shrink-0 items-center gap-2 border-b border-border bg-bg-1 px-3 py-1.5">
+    <div
+      data-intro="1"
+      className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-1.5"
+    >
       <span aria-hidden className="inline-block h-1.5 w-1.5 rounded-full bg-fg-dim" />
       <span className="font-mono text-[10px] uppercase tracking-wider text-fg-dim">
         quick exploration
@@ -366,6 +376,7 @@ function ProjectBar() {
         </>
       ) : (
         <>
+          <WorkspaceLink />
           <ProjectFileActions />
           <ExportButton stage="macro" variant="primary" label="export · whole pipeline" />
           <button
@@ -376,9 +387,85 @@ function ProjectBar() {
           >
             + start project
           </button>
+          <ResetSessionButton />
         </>
       )}
     </div>
+  );
+}
+
+// The workspace (files, editor, terminal), one click from the pipeline.
+function WorkspaceLink() {
+  return (
+    <Link
+      to="/workspace"
+      title="Open the workspace: files, editor and terminal"
+      className="ia-tool-btn py-0.5 text-[10px] uppercase tracking-wider"
+    >
+      workspace
+    </Link>
+  );
+}
+
+/** Wipe the working session. It otherwise auto-persists everything (dataset,
+ *  filters, model picks, runs, derived columns, events) across navigation
+ *  and reloads; this is the only thing that drops it, so it confirms inline. */
+function ResetSessionButton() {
+  const {
+    setDataset,
+    setFilters,
+    setSelectedModels,
+    setDomain,
+    setPickSummary,
+    setRuns,
+    setDerivedColumns,
+    setTransformLog,
+    clearEvents,
+  } = useScelo();
+  const [confirming, setConfirming] = useState(false);
+
+  if (!confirming) {
+    return (
+      <button
+        type="button"
+        onClick={() => setConfirming(true)}
+        title="Wipe dataset, filters, model picks, runs, derived columns, and the activity log."
+        className="ia-tool-btn ia-tool-btn-danger py-0.5 text-[10px] uppercase tracking-wider"
+      >
+        reset session
+      </button>
+    );
+  }
+  return (
+    <span className="flex items-center gap-1">
+      <span className="px-1 font-mono text-[10px] text-fg">wipe all scelo work?</span>
+      <button
+        type="button"
+        onClick={() => {
+          setDataset(null);
+          setFilters([]);
+          setSelectedModels([]);
+          setDomain(null);
+          setPickSummary(null);
+          setRuns({});
+          setDerivedColumns({});
+          setTransformLog(new Set());
+          clearEvents();
+          clearSceloSession();
+          setConfirming(false);
+        }}
+        className="ia-tool-btn ia-tool-btn-danger py-0.5 text-[10px] uppercase tracking-wider"
+      >
+        yes, reset
+      </button>
+      <button
+        type="button"
+        onClick={() => setConfirming(false)}
+        className="ia-tool-btn py-0.5 text-[10px] uppercase tracking-wider"
+      >
+        cancel
+      </button>
+    </span>
   );
 }
 

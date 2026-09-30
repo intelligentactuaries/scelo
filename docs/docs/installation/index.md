@@ -14,7 +14,7 @@ Scelo is a desktop app. Pick your platform:
 
 -   :material-rocket-launch: **[First launch](first-launch.md)**
 
-    The runtime check and choosing a workspace.
+    The pipeline you land on, the runtime check, and choosing a workspace.
 
 </div>
 

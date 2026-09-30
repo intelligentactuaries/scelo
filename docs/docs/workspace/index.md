@@ -13,8 +13,9 @@ your pipeline exports, or any actuarial code of your own.
 
 ## Opening a workspace
 
-Open the workspace at **`/workspace`** (or from the welcome screen). The first
-time, pick a folder:
+Open the workspace with **workspace** in the pipeline's bar (or at
+**`/workspace`**). With no workspace open yet, it takes you to the welcome
+screen; or pick a folder here:
 
 - The **FILES** sidebar shows a **choose… / change…** button → native folder
   picker.

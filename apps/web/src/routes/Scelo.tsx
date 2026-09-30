@@ -14,14 +14,13 @@
 
 import { HardDataWorkstation } from "@/components/Scelo/HardDataWorkstation";
 import { SceloFlow } from "@/components/Scelo/SceloFlow";
-import { SceloLogo } from "@/components/Scelo/SceloLogo";
 import {
   SAMPLE_OPTIONS_LIST,
   type SampleKey,
   SoftDataWorkstation,
 } from "@/components/Scelo/SoftDataWorkstation";
 import { ToolsWorkstation } from "@/components/Scelo/ToolsWorkstation";
-import { SceloProvider, clearSceloSession, useScelo } from "@/components/Scelo/sceloContext";
+import { SceloProvider, useScelo } from "@/components/Scelo/sceloContext";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { useLocation } from "react-router-dom";
 
@@ -215,93 +214,7 @@ function Pane({
 }
 
 function MacroStage() {
-  return (
-    <div className="flex h-full flex-col">
-      <header className="shrink-0 border-b border-border px-6 py-5">
-        <div className="flex items-baseline justify-between gap-4">
-          <div>
-            <div className="eyebrow mb-2 flex items-center gap-2">
-              <SceloLogo className="h-5 w-5 text-fg-mute" />
-              <span>Scelo · brain layer</span>
-            </div>
-            <h1 className="display text-fg text-[clamp(1.4rem,1.9vw,1.9rem)] max-w-[40ch]">
-              Soft data → Tools → Hard data.
-            </h1>
-          </div>
-          <ResetSceloButton />
-        </div>
-        <p className="mt-3 max-w-[78ch] text-[13.5px] leading-[1.55] text-fg-mute">
-          The macro view of the AI system's reasoning fabric. Each stage carries its own scoped
-          chatbot; click the expand icon on a node to drill into its workstation.
-        </p>
-      </header>
-      <div className="min-h-0 flex-1">
-        <SceloFlow className="h-full w-full" />
-      </div>
-    </div>
-  );
-}
-
-/** Explicit "wipe the working session" affordance. The session
- *  auto-persists everything (dataset, filters, model picks, runs,
- *  derived columns, events) across route navigation + reloads; this
- *  is the ONLY thing that drops it. Confirmation modal lives inline
- *  to keep the action one click away from the macro view. */
-function ResetSceloButton() {
-  const {
-    setDataset,
-    setFilters,
-    setSelectedModels,
-    setDomain,
-    setPickSummary,
-    setRuns,
-    setDerivedColumns,
-    setTransformLog,
-    clearEvents,
-  } = useScelo();
-  const [confirming, setConfirming] = useState(false);
-
-  if (!confirming) {
-    return (
-      <button
-        type="button"
-        onClick={() => setConfirming(true)}
-        title="Wipe dataset, filters, model picks, runs, derived columns, and the activity log."
-        className="ia-btn ia-btn-md ia-btn-danger shrink-0"
-      >
-        reset session
-      </button>
-    );
-  }
-  return (
-    <div className="flex shrink-0 items-center gap-2 rounded border border-error/60 bg-error/5 px-3 py-1.5 text-xs">
-      <span className="text-fg">Wipe all Scelo work?</span>
-      <button
-        type="button"
-        onClick={() => {
-          setDataset(null);
-          setFilters([]);
-          setSelectedModels([]);
-          setDomain(null);
-          setPickSummary(null);
-          setRuns({});
-          setDerivedColumns({});
-          setTransformLog(new Set());
-          clearEvents();
-          clearSceloSession();
-          setConfirming(false);
-        }}
-        className="ia-btn ia-btn-sm ia-btn-primary border-error bg-error"
-      >
-        yes, reset
-      </button>
-      <button
-        type="button"
-        onClick={() => setConfirming(false)}
-        className="ia-btn ia-btn-sm ia-btn-ghost"
-      >
-        cancel
-      </button>
-    </div>
-  );
+  // The pipeline canvas is the whole stage: its bar carries the project,
+  // workspace and session actions.
+  return <SceloFlow className="h-full w-full" />;
 }
