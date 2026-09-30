@@ -395,8 +395,15 @@ stage_r_mac() {
     rm -rf "$tmp"
     return 1
   fi
-  rsync -aL "$fw_root/" "$dest/"
+  # Not -L: the payload carries links to absolute /Library/Frameworks/…
+  # paths (fontconfig's conf.d), which only resolve in a system-wide install,
+  # so dereferencing them fails. The trailing slash still enters Current/;
+  # --safe-links keeps the framework's relative links and drops those.
+  rsync -a --safe-links "$fw_root/" "$dest/"
   rm -rf "$tmp"
+  for f in Resources/bin/R Resources/bin/exec/R Resources/lib/libR.dylib; do
+    [ -e "$dest/$f" ] || { echo "  ! macOS R.framework staged without $f"; return 1; }
+  done
   # Relocatable, like the Linux repack: bin/R pins R_HOME_DIR to
   # /Library/Frameworks/R.framework/Resources, so inside the app it would run
   # a system R (or none). Resolve it from the script's own location instead;
