@@ -132,7 +132,9 @@ stage_python_packages() {
   else
     PYTHONNOUSERSITE=1 PYTHONPATH= "$py_bin" -I -m pip install --no-cache-dir -r "$req"
   fi
-  PYTHONNOUSERSITE=1 PYTHONPATH= "$py_bin" -I - <<'PY'
+  # -X utf8: Windows' console is cp1252, which cannot print the ✓ below (and
+  # -I ignores PYTHONIOENCODING).
+  PYTHONNOUSERSITE=1 PYTHONPATH= "$py_bin" -I -X utf8 - <<'PY'
 import importlib.util, pathlib, py_compile, sys
 
 spec = importlib.util.find_spec("climada")
