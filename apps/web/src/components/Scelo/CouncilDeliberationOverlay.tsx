@@ -35,7 +35,9 @@ type Progress = {
 const ROUND_LABEL: Record<1 | 2 | 3, string> = {
   1: "independent views",
   2: "peers respond",
-  3: "votes + interventions",
+  // A result is judged as stated and gets no WMTR forecast, so no
+  // parameter interventions (apps/swarm/src/shared/forecastScope.ts).
+  3: "votes",
 };
 
 function useElapsed(): string {
@@ -216,7 +218,7 @@ export function CouncilDeliberationOverlay({
         ? `${p.roundDone} / ${p.roundTotal} agents responded`
         : p.phase === "society"
           ? `${p.societyDone} / ${p.societyTotal} personas reacted`
-          : "clustering stances + proposed shifts";
+          : "clustering stances";
 
   return (
     <div className="fixed inset-0 z-[90] flex flex-col items-center justify-center bg-bg/90 backdrop-blur-md">

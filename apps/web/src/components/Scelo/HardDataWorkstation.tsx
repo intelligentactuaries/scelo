@@ -2828,8 +2828,8 @@ function CouncilAttachCta({ focused }: { focused: RunResult }) {
         </span>
       </div>
       <p className="mt-1 text-[11px] text-fg-mute">
-        N stratified personas interrogate this result. Trust / distrust + a proposed parameter shift
-        come back.
+        N stratified personas judge this result as stated. Trust, distrust and uncertain come back
+        here; the reasons are in the swarm.
       </p>
       {probe === "down" && !synth && (
         <div className="mt-2 rounded border border-border bg-bg-2 p-2 text-[10px] text-fg-mute">
