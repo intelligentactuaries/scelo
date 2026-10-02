@@ -133,9 +133,10 @@ library / base R only.
   row per person (20–2000 of them), with the macro roll-up — workdays
   lost, GDP drag, excess mortality, insurer claims — in the notes.
   The echoed `seed` reproduces a run exactly.
-- **Augment** matches your own rows to the simulated cohort by age /
-  sex / comorbidity bucket and joins `sim_*` outcome columns on
-  (capped at 100,000 rows, the IDE's limit).
+- **Augment** matches your own rows to the simulated cohort on the age /
+  sex / comorbidity each row states (a row that states none gets the
+  whole cohort's figures; `sim_bucket_match` says which) and joins
+  `sim_*` outcome columns on (capped at 100,000 rows, the IDE's limit).
 
 !!! warning "When the swarm is not running"
     The client does not pretend. Every swarm call fails with one clear

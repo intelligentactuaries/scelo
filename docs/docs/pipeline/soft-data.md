@@ -147,7 +147,12 @@ synthesis (SMOTE, copulas, CTGAN), move to the modeling stage.
 ## Simulating and exporting
 
 - **▷ simulate** — generate a synthetic dataset by simulating a population's
-  response to a scenario (via the swarm). See [The swarm](../swarm/index.md).
+  response to a scenario, or **augment** the loaded one with `sim_*` columns
+  (via the swarm). A run shows its progress, can be paused, resumed or
+  stopped, and lands on the columns it added. Augment matches rows only on the
+  age, sex and comorbidity columns they have; a dataset with none of them gets
+  the whole cohort's figures on every row, and the dialog says so first. See
+  [The swarm](../swarm/index.md).
 - **export ▾** — export the cleaned dataset (CSV / Parquet).
 - **export · code** — export everything you did as a runnable Python / R / C++
   script. See [Exporting](../exporting.md).

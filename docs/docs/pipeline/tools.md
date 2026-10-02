@@ -63,11 +63,13 @@ The reserving methods take no model inputs: Mack and the bootstrap refit chain
 ladder themselves, and Bornhuetter-Ferguson keeps a prior of its own, because
 a chain-ladder prior would collapse it onto chain ladder.
 
-New models arrive wired. A model that joins the canvas — from the catalog, the
-picker or the chat — is plugged into what it can consume or feed, taking the
-first switched-on model that makes it (Lee-Carter before CBD); wires you drew
-or unplugged are left alone. A model that can't run without another brings it
-along: adding SHAP adds the GBM it explains.
+New models arrive wired, and so do models you switch on. A model that joins
+the canvas — from the catalog, the picker or the chat — or is switched on is
+plugged into what it can consume or feed, taking the first switched-on model
+that makes it (Lee-Carter before CBD); wires you drew or unplugged are left
+alone. A fresh pick (**identify models**, **regenerate**) wires every model it
+picks. A model that can't run without another brings it along: adding SHAP
+adds the GBM it explains.
 
 ### Connecting
 

@@ -1,5 +1,43 @@
 # What's new
 
+## 0.2.2
+
+*Released 2026-10-02.*
+
+### Simulate from a scenario
+
+- **It opens again.** Clicking **▷ simulate** blanked the whole window in every
+  release since 0.1.2. It now opens the dialog.
+- **You can see it work.** While a run is under way, the dialog shows the same
+  progress overlay as the rest of Scelo: a table materialising over a rail
+  that fills with the agents that have answered ("30 / 120") and scans while
+  references are resolved and results are scaled.
+- **Pause, resume, stop.** Pause holds the run where it stands: the calls in
+  flight are cancelled and asked again on resume, and no new agent starts.
+  Stop ends the run and changes nothing. Closing Scelo, or leaving it mid-run,
+  stops the run too.
+- **Augment matches only what your rows say.** A row is matched to the
+  reference cohort on the age, sex and comorbidity columns it actually has.
+  Rows without them used to be treated as a 35-year-old woman with no
+  comorbidities, and all handed one agent's answers; they now get the whole
+  cohort's figures, labelled `cohort` in `sim_bucket_match`. The dialog says
+  so before you run it and suggests generating a dataset instead.
+- **You land on what it added.** When a run finishes, the grid scrolls to its
+  first `sim_*` column. Running augment again replaces the earlier `sim_*`
+  values instead of stacking another "+ sim", and a run in which every agent
+  failed says so and changes nothing. See
+  [Simulating and exporting](pipeline/soft-data.md#simulating-and-exporting).
+
+### Tools
+
+- **Switching a model on wires it.** A model that arrives switched off,
+  because the data can't feed it, and is switched on later (by its toggle, a
+  new pick or the chat) is now plugged into the models waiting on it, so SHAP
+  beside a GBM no longer says it can't run. **Identify models** and
+  **regenerate** wire every model they pick, and sessions and `.sce` projects
+  saved with a model left unplugged this way are repaired when they open. See
+  [Pins and wires](pipeline/tools.md#pins-and-wires).
+
 ## 0.2.1
 
 *Released 2026-10-01.*

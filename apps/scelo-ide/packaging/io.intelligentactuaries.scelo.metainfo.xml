@@ -90,6 +90,22 @@
     abandoned. Dates are the release publication dates on GitHub.
   -->
   <releases>
+    <release version="0.2.2" date="2026-10-02">
+      <description>
+        <p>
+          Simulate from a scenario opens again (it blanked the window since
+          0.1.2), shows its progress, and can be paused, resumed and stopped.
+          Augment matches rows only on the age, sex and comorbidity they
+          state, where rows without them used to be treated as one
+          35-year-old woman; a finished run lands on the columns it added.
+        </p>
+        <p>
+          In Tools, a model that is switched on is wired to the models waiting
+          on it, so SHAP beside a GBM no longer says it cannot run; projects
+          saved with such a gap are repaired when they open.
+        </p>
+      </description>
+    </release>
     <release version="0.2.1" date="2026-10-01">
       <description>
         <p>
