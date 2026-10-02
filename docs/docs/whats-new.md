@@ -14,8 +14,10 @@
   references are resolved and results are scaled.
 - **Pause, resume, stop.** Pause holds the run where it stands: the calls in
   flight are cancelled and asked again on resume, and no new agent starts.
-  Stop ends the run and changes nothing. Closing Scelo, or leaving it mid-run,
-  stops the run too.
+  Stop ends the run and changes nothing. Closing the dialog leaves a run going:
+  it lands when it finishes, and reopening the dialog shows where it is.
+  Leaving the pipeline (for the workspace or settings) or quitting Scelo stops
+  it.
 - **Augment matches only what your rows say.** A row is matched to the
   reference cohort on the age, sex and comorbidity columns it actually has.
   Rows without them used to be treated as a 35-year-old woman with no
