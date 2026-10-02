@@ -804,6 +804,19 @@
   animation: iaPulse 1.1s ease-in-out infinite;
 }
 
+/* A held process (a paused simulation): the loops freeze where they are — a
+   still frame — and the pip stops breathing and dims, so paused reads as
+   stillness rather than as different motion. Two-class selectors so they
+   outrank the reduced-motion fallbacks below as well. */
+.ia-paused .ia-skel-cell,
+.ia-paused .ia-rail-scan {
+  animation-play-state: paused;
+}
+.ia-paused .ia-load-pip {
+  animation: none;
+  opacity: 0.45;
+}
+
 /* Rolling counter / pct: SN Pro's tabular numerals keep the digits width-
    stable, so the counter never reflows. */
 .scelo-app .ia-num {

@@ -6,12 +6,13 @@
 //   layout="overlay" → a dimmed scrim over the grid while combineAll() runs
 //
 // Determinate where truthful: the CSV streamer writes real byte-% + a rising
-// row count into uploadState, so the rail FILLS and the counter ticks up.
+// row count into uploadState, so the rail FILLS and the counter ticks up (the
+// swarm simulation's agent pass does the same with its done / total).
 // Indeterminate where there is no signal (parquet decode, the combine merge,
 // the moment before the first CSV chunk) the rail SCANS. A percentage is never
 // invented. Keyframes + reduced-motion live in styles/theme.css.
 
-import { useEffect, useRef, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 
 // ── helper: commit a loading state to screen before blocking the thread ─────
 // Double-rAF guarantees the busy UI set in the current tick actually paints
@@ -45,6 +46,9 @@ export type UploadState = {
   pct?: number;
   /** running row count (CSV only). Absent ⇒ no counter. */
   rowsSeen?: number;
+  /** done / total of a counted pass (simulated agents), shown as "30 / 120"
+   *  in place of the row counter. Never announced per tick — pct is. */
+  count?: { done: number; total: number };
 };
 
 const ACCENT_VAR: Record<UploadAccent, string> = {
@@ -208,24 +212,39 @@ export function UploadIndicator({
   state,
   layout = "inline",
   accent = "warn",
+  paused = false,
+  actions,
 }: {
   state: UploadState;
   layout?: "lg" | "inline" | "overlay";
   accent?: UploadAccent;
+  /** A held process: every loop freezes where it is (theme.css .ia-paused). */
+  paused?: boolean;
+  /** Controls under the rail (pause / stop a run). Block layouts only. */
+  actions?: ReactNode;
 }) {
   const accentVar = ACCENT_VAR[accent];
   const determinate = typeof state.pct === "number";
   const pct = determinate ? Math.min(100, Math.max(0, state.pct as number)) : 0;
   const rolled = useCountUp(state.rowsSeen);
+  const readout = state.count
+    ? `${state.count.done.toLocaleString()} / ${state.count.total.toLocaleString()}`
+    : rolled !== undefined
+      ? `${rolled.toLocaleString()} rows`
+      : undefined;
 
   const pip = <span className="ia-pip ia-load-pip" style={{ background: rgb(accentVar) }} />;
+  const held = paused ? " ia-paused" : "";
+  const controls = actions && (
+    <div className="mt-3 flex items-center justify-center gap-1.5">{actions}</div>
+  );
 
   // ── inline strip: header import / staging (dataset already on screen) ──
   if (layout === "inline") {
     return (
       <div
-        aria-busy="true"
-        className="flex min-h-[26px] shrink-0 items-center gap-2 border-b border-border bg-bg-1 px-3 py-1 font-mono text-[10px] text-fg-mute"
+        aria-busy={!paused}
+        className={`flex min-h-[26px] shrink-0 items-center gap-2 border-b border-border bg-bg-1 px-3 py-1 font-mono text-[10px] text-fg-mute${held}`}
       >
         {pip}
         <span>{state.verb}</span>
@@ -235,10 +254,10 @@ export function UploadIndicator({
             <span className="max-w-[38%] truncate">{state.name}</span>
           </>
         )}
-        {rolled !== undefined && (
+        {readout && (
           <>
             <span className="text-fg-dim">·</span>
-            <span className="ia-num shrink-0">{rolled.toLocaleString()} rows</span>
+            <span className="ia-num shrink-0">{readout}</span>
           </>
         )}
         {determinate && (
@@ -260,8 +279,8 @@ export function UploadIndicator({
   if (layout === "overlay") {
     return (
       <div
-        aria-busy="true"
-        className="absolute inset-0 z-30 flex items-center justify-center bg-bg/70 backdrop-blur-[1.5px]"
+        aria-busy={!paused}
+        className={`absolute inset-0 z-30 flex items-center justify-center bg-bg/70 backdrop-blur-[1.5px]${held}`}
       >
         <div className="w-full max-w-[320px] px-6">
           <SkeletonGrid rows={5} cols={8} cellH={9} />
@@ -274,10 +293,12 @@ export function UploadIndicator({
                 <span className="min-w-0 truncate text-fg">{state.name}</span>
               </>
             )}
+            {readout && <span className="ia-num ml-auto shrink-0 text-fg-mute">{readout}</span>}
           </div>
           <div className="mt-2">
             <Rail state={state} accentVar={accentVar} className="h-[3px] w-full" />
           </div>
+          {controls}
         </div>
         <UploadAnnouncer state={state} />
       </div>
@@ -287,7 +308,7 @@ export function UploadIndicator({
   // ── lg card: the empty-state stage. Same flex-centered footprint as
   //    <EmptyState/>, so swapping one for the other is zero-CLS. ──
   return (
-    <div aria-busy="true" className="flex h-full items-center justify-center">
+    <div aria-busy={!paused} className={`flex h-full items-center justify-center${held}`}>
       <div className="w-full max-w-[320px] px-6">
         <SkeletonGrid rows={5} cols={8} cellH={9} />
         <div className="mt-4 flex items-center gap-2 font-mono text-[11px] text-fg-mute">
@@ -299,11 +320,7 @@ export function UploadIndicator({
               <span className="min-w-0 truncate text-fg">{state.name}</span>
             </>
           )}
-          {rolled !== undefined && (
-            <span className="ia-num ml-auto shrink-0 text-fg-mute">
-              {rolled.toLocaleString()} rows
-            </span>
-          )}
+          {readout && <span className="ia-num ml-auto shrink-0 text-fg-mute">{readout}</span>}
         </div>
         <div className="mt-2 flex items-center gap-2">
           <Rail state={state} accentVar={accentVar} className="h-[3px] flex-1" />
@@ -311,6 +328,7 @@ export function UploadIndicator({
             <span className="ia-num shrink-0 text-[11px] text-fg-mute">{Math.floor(pct)}%</span>
           )}
         </div>
+        {controls}
         <UploadAnnouncer state={state} />
       </div>
     </div>

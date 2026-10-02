@@ -1057,6 +1057,30 @@ function DataGrid({
     };
   }, []);
 
+  // Keep the selected column on screen. A header click already has it in
+  // view; this is for selections made elsewhere — a simulation appends its
+  // sim_* columns past the right edge, and unrevealed, the dataset looked
+  // unchanged. The sticky row-number gutter covers the left of the viewport.
+  useEffect(() => {
+    const el = gridScrollRef.current;
+    const th = selectedColumn ? thRefs.current.get(selectedColumn) : undefined;
+    if (!el || !th) return;
+    const box = el.getBoundingClientRect();
+    const cell = th.getBoundingClientRect();
+    const gutter = el.querySelector("thead th")?.getBoundingClientRect().width ?? 0;
+    const left = box.left + el.clientLeft + gutter;
+    const right = box.left + el.clientLeft + el.clientWidth;
+    if (cell.right <= left || cell.left >= right) {
+      // Wholly off screen: bring it to the left edge, so the columns after
+      // it — the rest of a simulation's sim_* block — arrive with it.
+      el.scrollLeft += cell.left - left;
+    } else if (cell.left < left) {
+      el.scrollLeft -= left - cell.left;
+    } else if (cell.right > right) {
+      el.scrollLeft += cell.right - right;
+    }
+  }, [selectedColumn]);
+
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const cancelClose = useCallback(() => {
     if (closeTimer.current) {
@@ -3708,11 +3732,13 @@ export function SoftDataWorkstation() {
         open={simulateOpen}
         onClose={() => setSimulateOpen(false)}
         existingDataset={dataset}
-        onDataset={(ds) => {
+        onDataset={(ds, focus) => {
           clearEvents();
           clearHistory();
           setDataset(ds);
-          setSelected(ds.columns[0]);
+          // Land on what the run produced — an augment's first sim_* column,
+          // which the grid scrolls into view — else the first column.
+          setSelected(focus ?? ds.columns[0]);
           setFilters([]);
         }}
       />
