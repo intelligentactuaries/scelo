@@ -268,6 +268,15 @@ describe("autoWire · new models arrive plugged in", () => {
       autoWire(on("cbd", "lifecontingencies", "lee-carter"), wires, new Set(["lee-carter"])),
     ).toBe(wires);
   });
+
+  test("requiredOnly fills just the inputs a model can't run without", () => {
+    // Severity's frequency pin is optional (it prices severity alone without
+    // it); SHAP's model pin is required.
+    const ids = ["glm-frequency", "glm-severity", "gbm", "shap"];
+    expect(autoWire(on(...ids), [], new Set(ids), { requiredOnly: true })).toEqual([
+      { source: "gbm", target: "shap" },
+    ]);
+  });
 });
 
 describe("checkConnection · drag rules", () => {

@@ -590,11 +590,15 @@ export function disconnectWire(
  * catalog order — Lee–Carter before CBD) that produces it, when either end
  * is new. Existing wires — including ones the actuary drew or deliberately
  * left unplugged on models already present — are never touched.
+ * `requiredOnly` fills required inputs alone: a model with one empty can't
+ * run, while an optional input left free falls back to the data or a
+ * default, which may be what the actuary chose.
  */
 export function autoWire(
   models: ReadonlyArray<{ id: string; enabled: boolean }>,
   wires: ModelWire[],
   added: ReadonlySet<string>,
+  { requiredOnly = false }: { requiredOnly?: boolean } = {},
 ): ModelWire[] {
   if (added.size === 0) return wires;
   const present = new Set(models.map((m) => m.id));
@@ -603,6 +607,7 @@ export function autoWire(
   let next = wires;
   for (const m of models) {
     for (const input of resultInputs(m.id)) {
+      if (requiredOnly && !input.required) continue;
       if (wireInto(next, m.id, input.id)) continue;
       const source = producers.find(
         (p) =>

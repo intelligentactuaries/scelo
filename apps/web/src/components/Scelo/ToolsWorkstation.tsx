@@ -1751,6 +1751,7 @@ export function ToolsWorkstation() {
     dataset,
     selectedModels,
     setSelectedModels,
+    adoptPick,
     domain,
     setDomain,
     pickSummary,
@@ -1843,7 +1844,7 @@ export function ToolsWorkstation() {
             source: "ai",
             rationale: s.rationale,
           }));
-          setSelectedModels(picks);
+          adoptPick(picks);
           setPicksDatasetName(dataset.name);
           previousIdsRef.current = picks.map((p) => p.id);
           setAiPickIds(picks.map((p) => p.id));
@@ -1878,7 +1879,7 @@ export function ToolsWorkstation() {
             source: "ai",
             rationale: s.rationale,
           }));
-          setSelectedModels(picks);
+          adoptPick(picks);
           setPicksDatasetName(dataset.name);
           previousIdsRef.current = picks.map((p) => p.id);
           setAiPickIds(picks.map((p) => p.id));
@@ -1904,7 +1905,7 @@ export function ToolsWorkstation() {
       columnMetas,
       signature,
       setDomain,
-      setSelectedModels,
+      adoptPick,
       setPickSummary,
       setPicksDatasetName,
       logEvent,

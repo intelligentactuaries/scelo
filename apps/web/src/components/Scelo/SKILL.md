@@ -573,14 +573,18 @@ frequency GLM only with real claim counts and rating factors).
 
 `modelWires` in the session IS the canvas's model → model wiring, and Hard
 executes exactly it (`pipelinePlan`: sources first, results handed on).
-The session provider auto-wires models as they arrive — from the picker,
-the catalog, a chat directive or the macro autopick (`autoWire`: each free
-result input is plugged into the first enabled producer in catalog order,
-when either end is new) and drops wires of models that leave; a wire the
-actuary unplugged stays unplugged. Sessions and `.sce` files from the
-decorative-arrow canvas are migrated once (`WIRES_VERSION`,
-`migrateWires`): wires that carried nothing are dropped and today's
-defaults laid down. The IDE's bridged runners honour the same wires (the
+The session provider auto-wires models as they come into play — join the
+canvas from the picker, the catalog, a chat directive or the macro
+autopick, or get switched on (`cameIntoPlay`; `autoWire`: each free result
+input is plugged into the first enabled producer in catalog order, when
+either end came into play) — and drops wires of models that leave; a wire
+the actuary unplugged stays unplugged. A fresh pick (`adoptPick`: identify /
+regenerate) is wired whole, even models the last pick also had. Sessions
+and `.sce` files are migrated once on load (`WIRES_VERSION`,
+`migrateWires`): from the decorative-arrow canvas, wires that carried
+nothing are dropped and today's defaults laid down; from version 2, which
+wired arrivals only, empty REQUIRED result inputs are plugged (a producer
+switched on after its consumer — GBM after SHAP — was never wired). The IDE's bridged runners honour the same wires (the
 Python Lee–Carter returns its projection; a bridged severity GLM crosses a
 wired statsmodels frequency into the base pure premium).
 

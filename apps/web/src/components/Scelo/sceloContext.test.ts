@@ -1,11 +1,29 @@
-import { describe, expect, test } from "bun:test";
+import { beforeEach, describe, expect, test } from "bun:test";
+import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import type { Dataset } from "@scelo/core";
+import * as React from "react";
 import {
   type HistoryEntry,
+  type SelectedModel,
+  SceloProvider,
+  WIRES_VERSION,
+  cameIntoPlay,
+  migrateWires,
   restoreColumnsFromSnapshot,
   sliceDatasetForPersist,
   trimHistory,
+  useScelo,
 } from "./sceloContext";
+
+try {
+  GlobalRegistrator.register();
+} catch {
+  // already registered by a sibling test file in this bun process
+}
+
+// Imported AFTER GlobalRegistrator.register() so react-dom sees the
+// happy-dom document (the provider tests at the bottom mount it).
+const { act, cleanup, render } = await import("@testing-library/react");
 
 // ── fixtures ─────────────────────────────────────────────────────────────
 
@@ -189,5 +207,131 @@ describe("restoreColumnsFromSnapshot (column-scoped undo)", () => {
     expect(out.columns).toEqual(["a", "b", "c"]);
     expect(out.rows.map((r) => r.b)).toEqual(["x", "y"]);
     expect("b_new" in out.rows[0]).toBe(false);
+  });
+});
+
+// ── wiring: which models get default wires ─────────────────────────────────
+
+const pick = (id: string, enabled: boolean): SelectedModel => ({ id, enabled, source: "ai" });
+
+describe("cameIntoPlay", () => {
+  test("models new to the canvas come into play, switched on or off", () => {
+    expect(cameIntoPlay(new Map(), [pick("gbm", true), pick("shap", false)])).toEqual(
+      new Set(["gbm", "shap"]),
+    );
+  });
+
+  test("a model switched on comes into play; one already on does not", () => {
+    const before = new Map([
+      ["gbm", false],
+      ["shap", true],
+    ]);
+    expect(cameIntoPlay(before, [pick("gbm", true), pick("shap", true)])).toEqual(new Set(["gbm"]));
+  });
+
+  test("switching a model off is not coming into play", () => {
+    expect(cameIntoPlay(new Map([["gbm", true]]), [pick("gbm", false)])).toEqual(new Set());
+  });
+});
+
+describe("migrateWires", () => {
+  const models = ["glm-frequency", "glm-severity", "gbm", "shap"].map((id) => pick(id, true));
+
+  test("a version-2 canvas gets its empty required inputs plugged, nothing more", () => {
+    expect(migrateWires({ selectedModels: models, modelWires: [], wiresVersion: 2 })).toEqual([
+      { source: "gbm", target: "shap" },
+    ]);
+  });
+
+  test("a current canvas is taken exactly as saved", () => {
+    expect(
+      migrateWires({ selectedModels: models, modelWires: [], wiresVersion: WIRES_VERSION }),
+    ).toEqual([]);
+  });
+
+  test("a pre-typed canvas gets today's full default wiring", () => {
+    expect(migrateWires({ selectedModels: models, modelWires: [] })).toEqual([
+      { source: "glm-frequency", target: "glm-severity" },
+      { source: "gbm", target: "shap" },
+    ]);
+  });
+});
+
+describe("SceloProvider wiring", () => {
+  beforeEach(() => {
+    cleanup();
+    localStorage.clear();
+  });
+
+  /** Mount the provider with a probe that keeps the latest context. */
+  function mount() {
+    const captured: { ctx?: ReturnType<typeof useScelo> } = {};
+    function Probe() {
+      captured.ctx = useScelo();
+      return null;
+    }
+    render(React.createElement(SceloProvider, null, React.createElement(Probe)));
+    return () => captured.ctx as ReturnType<typeof useScelo>;
+  }
+
+  test("a re-pick that switches GBM on wires it to the SHAP waiting on it", async () => {
+    const ctx = mount();
+    // The pick for a dataset GBM can't learn from: both arrive switched off.
+    await act(async () => {
+      ctx().setSelectedModels([pick("descriptive", true), pick("gbm", false), pick("shap", false)]);
+    });
+    expect(ctx().modelWires).toEqual([]);
+    // New data, new pick: the same two, now switched on.
+    await act(async () => {
+      ctx().setSelectedModels([
+        pick("workspace-bottleneck", true),
+        pick("descriptive", true),
+        pick("gbm", true),
+        pick("shap", true),
+      ]);
+    });
+    expect(ctx().modelWires).toEqual([{ source: "gbm", target: "shap" }]);
+  });
+
+  test("switching GBM on with its toggle wires it too", async () => {
+    const ctx = mount();
+    await act(async () => {
+      ctx().setSelectedModels([pick("gbm", false), pick("shap", true)]);
+    });
+    expect(ctx().modelWires).toEqual([]);
+    await act(async () => {
+      ctx().setSelectedModels((prev) => prev.map((m) => ({ ...m, enabled: true })));
+    });
+    expect(ctx().modelWires).toEqual([{ source: "gbm", target: "shap" }]);
+  });
+
+  test("a wire the actuary unplugged stays unplugged as the stack changes", async () => {
+    const ctx = mount();
+    await act(async () => {
+      ctx().setSelectedModels([pick("gbm", true), pick("shap", true)]);
+    });
+    expect(ctx().modelWires).toEqual([{ source: "gbm", target: "shap" }]);
+    await act(async () => {
+      ctx().setModelWires([]);
+    });
+    await act(async () => {
+      ctx().setSelectedModels((prev) => [...prev, pick("descriptive", true)]);
+    });
+    expect(ctx().modelWires).toEqual([]);
+  });
+
+  test("a fresh pick wires its models whole, even ones already on the canvas", async () => {
+    const ctx = mount();
+    await act(async () => {
+      ctx().setSelectedModels([pick("gbm", true), pick("shap", true)]);
+    });
+    // e.g. a canvas left unwired by the earlier arrivals-only wiring
+    await act(async () => {
+      ctx().setModelWires([]);
+    });
+    await act(async () => {
+      ctx().adoptPick([pick("gbm", true), pick("shap", true)]);
+    });
+    expect(ctx().modelWires).toEqual([{ source: "gbm", target: "shap" }]);
   });
 });

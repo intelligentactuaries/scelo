@@ -119,11 +119,34 @@ export interface StoredSessionSnapshot {
 // input. Snapshots saved before carry the old canvas's arrows — some fed
 // nothing (mack → bootstrap), some degenerated (chain ladder → BF), and the
 // real defaults were only ever laid down while the Tools canvas was open.
-export const WIRES_VERSION = 2;
+// 3 = models are wired as they come into play, not only as they arrive (see
+// cameIntoPlay). Under 2, a producer switched on after the model that needs
+// it — GBM picked off, then on — was never plugged in, and the consumer was
+// saved unable to run.
+export const WIRES_VERSION = 3;
+
+/** Models that came into play between two stacks: new to the canvas, or just
+ *  switched on. They get default wiring (autoWire); a model already in play
+ *  keeps whatever the actuary did with its pins. Switching on counts because
+ *  a producer often arrives switched off — the data couldn't feed it — and
+ *  is switched on later, by its toggle or by a re-pick for new data; as a
+ *  non-arrival it was never wired to the models waiting on it, which then
+ *  sat on the canvas unable to run (SHAP beside a live GBM). */
+export function cameIntoPlay(
+  before: ReadonlyMap<string, boolean>,
+  now: ReadonlyArray<SelectedModel>,
+): Set<string> {
+  return new Set(
+    now.filter((m) => !before.has(m.id) || (m.enabled && !before.get(m.id))).map((m) => m.id),
+  );
+}
 
 /** Bring a snapshot's wires up to the typed contract: drop wires that carry
  *  nothing, and — once, for a pre-typed snapshot — lay down the default
- *  wiring its models would get today (GBM → SHAP, Lee–Carter → annuity …). */
+ *  wiring its models would get today (GBM → SHAP, Lee–Carter → annuity …).
+ *  A version-2 canvas is the actuary's own wiring, so it only gets its empty
+ *  REQUIRED result inputs plugged — the ones the arrivals-only wiring left
+ *  empty; with one empty a model can't run, so no choice is undone. */
 export function migrateWires(snap: {
   selectedModels: SelectedModel[];
   modelWires: ModelWire[];
@@ -131,9 +154,10 @@ export function migrateWires(snap: {
 }): ModelWire[] {
   const ids = snap.selectedModels.map((m) => m.id);
   const clean = sanitizeWires(snap.modelWires, ids);
-  return snap.wiresVersion === WIRES_VERSION
-    ? clean
-    : autoWire(snap.selectedModels, clean, new Set(ids));
+  if (snap.wiresVersion === WIRES_VERSION) return clean;
+  return autoWire(snap.selectedModels, clean, new Set(ids), {
+    requiredOnly: snap.wiresVersion === 2,
+  });
 }
 
 const EMPTY_SESSION: StoredSessionSnapshot = {
@@ -329,6 +353,10 @@ type SceloState = {
   clearHistory: () => void;
   selectedModels: SelectedModel[];
   setSelectedModels: (m: SelectedModel[] | ((prev: SelectedModel[]) => SelectedModel[])) => void;
+  /** Install a fresh model pick (identify / regenerate). It proposes a new
+   *  canvas for the data, so every model in it gets default wiring — even one
+   *  the previous pick also had. */
+  adoptPick: (models: SelectedModel[]) => void;
   domain: ModelFamily | null;
   setDomain: (d: ModelFamily | null) => void;
   pickSummary: string | null;
@@ -494,22 +522,29 @@ export function SceloProvider({ children }: { children: ReactNode }) {
   );
   const [modelWires, setModelWires] = useState<ModelWire[]>(storedSession.modelWires);
   // Wiring follows the stack wherever it changes — the Tools canvas, the
-  // macro autopick, a chat directive: models that join are plugged into
-  // what they can consume / feed (autoWire), wires of models that leave go.
-  // Keyed on arrivals only, so a wire the actuary unplugged stays unplugged.
-  const wiredIdsRef = useRef<Set<string>>(new Set(storedSession.selectedModels.map((m) => m.id)));
+  // macro autopick, a chat directive: models that come into play are plugged
+  // into what they can consume / feed (autoWire), wires of models that leave
+  // go. Keyed on those moments only (see cameIntoPlay), so a wire the actuary
+  // unplugged stays unplugged.
+  const inPlayRef = useRef<Map<string, boolean>>(
+    new Map(storedSession.selectedModels.map((m) => [m.id, m.enabled])),
+  );
   // The model list a restore just installed — its wiring came with it.
   const restoredModelsRef = useRef<SelectedModel[] | null>(null);
+  // The model list a fresh pick just installed (adoptPick) — wired whole.
+  const freshPickRef = useRef<SelectedModel[] | null>(null);
   useEffect(() => {
     const ids = selectedModels.map((m) => m.id);
-    const before = wiredIdsRef.current;
-    wiredIdsRef.current = new Set(ids);
+    const before = inPlayRef.current;
+    inPlayRef.current = new Map(selectedModels.map((m) => [m.id, m.enabled]));
     if (restoredModelsRef.current === selectedModels) {
       restoredModelsRef.current = null;
       return;
     }
-    const added = new Set(ids.filter((id) => !before.has(id)));
-    const left = [...before].some((id) => !wiredIdsRef.current.has(id));
+    const fresh = freshPickRef.current === selectedModels;
+    if (fresh) freshPickRef.current = null;
+    const added = fresh ? new Set(ids) : cameIntoPlay(before, selectedModels);
+    const left = [...before.keys()].some((id) => !inPlayRef.current.has(id));
     if (added.size === 0 && !left) return;
     setModelWires((prev) => {
       const next = autoWire(selectedModels, sanitizeWires(prev, ids), added);
@@ -725,6 +760,11 @@ export function SceloProvider({ children }: { children: ReactNode }) {
     ],
   );
 
+  const adoptPick = useCallback((models: SelectedModel[]) => {
+    freshPickRef.current = models;
+    setSelectedModels(models);
+  }, []);
+
   const restoreSession = useCallback((snap: StoredSessionSnapshot, proj?: SceloProject | null) => {
     const models = snap.selectedModels ?? [];
     setDataset(snap.dataset ?? null);
@@ -770,6 +810,7 @@ export function SceloProvider({ children }: { children: ReactNode }) {
       clearHistory,
       selectedModels,
       setSelectedModels,
+      adoptPick,
       domain,
       setDomain,
       pickSummary,
@@ -831,6 +872,7 @@ export function SceloProvider({ children }: { children: ReactNode }) {
       endProject,
       snapshotSession,
       restoreSession,
+      adoptPick,
     ],
   );
 
