@@ -3,6 +3,13 @@
 Three ways to install, from most to least recommended. On Ubuntu, apt is the
 one to use: it is the only verified, auto-updating path.
 
+!!! warning "The apt repository is offline for now"
+    Its host has restricted access to it, so the commands in section 1 fail
+    with "402 Payment Required" until it returns. Install with the
+    [`.deb`](#2-deb-debian-ubuntu) in the meantime. If you added the
+    repository before, `apt update` reports an error for it until then;
+    nothing else is affected.
+
 !!! info "Supported distributions"
     **Ubuntu 22.04+, Debian 12+, or any distro on the same baseline** (x64).
     The app and its bundled Python stack run on all of them, with every
