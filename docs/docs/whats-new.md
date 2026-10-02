@@ -40,6 +40,13 @@
   saved with a model left unplugged this way are repaired when they open. See
   [Pins and wires](pipeline/tools.md#pins-and-wires).
 
+### Council
+
+- **The council card says what comes back.** On a Hard Data result, the
+  council card and the deliberation overlay no longer promise a proposed
+  parameter shift: since 0.2.1 a result is judged as stated, so trust,
+  distrust or uncertain come back, with the reasons in the swarm.
+
 ## 0.2.1
 
 *Released 2026-10-01.*
