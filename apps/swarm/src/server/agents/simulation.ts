@@ -10,6 +10,7 @@ import type {
   SimulationOutcome,
   SocietyAgent,
 } from '../../shared/types';
+import { type SimulationControl, SimulationStopped } from './simulationControl';
 
 const TIER = 'society' as const;
 /**
@@ -45,6 +46,8 @@ export interface SimulationOpts {
    *  is independent, and so re-running a pinned seed reproduces it exactly. */
   seed?: number;
   onProgress?: (e: SimulationProgress) => void;
+  /** Pause / stop from outside the run (see simulationControl.ts). */
+  control?: SimulationControl;
 }
 
 export type SimulationProgress =
@@ -534,6 +537,7 @@ async function runOne(
   ref: string,
   fresh: boolean,
   seed: number | undefined,
+  signal: AbortSignal | undefined,
 ): Promise<SimulationAgentResult> {
   const system = buildAgentSystemPrompt(agent, scenario, ref);
   const ask = async (nudge: string, salt: number | undefined): Promise<string> =>
@@ -543,7 +547,7 @@ async function runOne(
         { role: 'user', content: nudge },
       ] satisfies Message[],
       TIER,
-      { fresh, maxTokens: MAX_TOKENS, temperature: 0.5, cacheSalt: salt },
+      { fresh, maxTokens: MAX_TOKENS, temperature: 0.5, cacheSalt: salt, signal },
     );
 
   try {
@@ -615,12 +619,35 @@ export async function runSimulation(
   const results: SimulationAgentResult[] = new Array(total);
   let done = 0;
   let cursor = 0;
+  // Agents whose call a pause cut off, run again first on resume. The worker
+  // that queues one keeps looping, so a queued agent always has a worker.
+  const requeued: number[] = [];
+  const control = opts.control;
 
   async function worker(): Promise<void> {
-    while (cursor < agents.length) {
-      const i = cursor++;
-      const agent = agents[i];
-      results[i] = await runOne(agent, opts.scenario, opts.referenceBlock, !!opts.fresh, opts.seed);
+    for (;;) {
+      if (control) {
+        await control.ready();
+        if (control.stopped) return;
+      }
+      const i = requeued.length > 0 ? (requeued.shift() as number) : cursor < total ? cursor++ : -1;
+      if (i < 0) return;
+      const signal = control?.signal;
+      const result = await runOne(
+        agents[i],
+        opts.scenario,
+        opts.referenceBlock,
+        !!opts.fresh,
+        opts.seed,
+        signal,
+      );
+      // Cut off by a pause or stop: not an observation. (A reply that landed
+      // before the abort took effect is real, and is kept.)
+      if (signal?.aborted && result.failure?.kind === 'router_error') {
+        requeued.push(i);
+        continue;
+      }
+      results[i] = result;
       done++;
       // Report every agent on a normal run, and thin only when a run is big
       // enough for that to matter — at most ~200 events either way.
@@ -639,6 +666,7 @@ export async function runSimulation(
   await Promise.all(
     Array.from({ length: Math.min(concurrency, total) }, () => worker()),
   );
+  if (control?.stopped) throw new SimulationStopped();
 
   const elapsedMs = Math.round(performance.now() - start);
   opts.onProgress?.({ type: 'sim_done', total, elapsedMs });

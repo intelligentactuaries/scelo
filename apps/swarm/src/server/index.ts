@@ -37,7 +37,9 @@ import {
 import type { WmtrSingleParams } from '../shared/wmtr';
 import type { CanonWork, SimulationAgentResult } from '../shared/types';
 import { sampleSAPopulation } from './agents/saPopulation';
+import { augmentRows } from './agents/augmentLookup';
 import { runSimulation, type SimulationProgress } from './agents/simulation';
+import { type SimulationControl, SimulationRunControl } from './agents/simulationControl';
 import { findMember, listInterviews, readInterview, streamMemberChat } from './memberChat';
 import { bindHost, dataDir, staticDir } from './paths';
 import { aggregateMacro, SA_MACRO_PROVENANCE } from './macroMap';
@@ -315,6 +317,11 @@ route('POST', '/api/run', async ({ req }) => {
 //   POST /api/simulate            — full run (refs + sample + sim + macro)
 //   POST /api/simulate/augment    — augment caller-supplied rows in place
 //   POST /api/simulate/references — preview reference bundle only
+//   POST /api/simulate/runs/:id/pause|resume|stop — hold, release or end a
+//                                    streaming run (its first event names it)
+
+/** Streaming runs in flight, by the id their first event carries. */
+const simulationRuns = new Map<string, SimulationRunControl>();
 
 interface SimulateBody {
   scenario: string;
@@ -403,7 +410,10 @@ route('POST', '/api/simulate', async ({ req }) => {
       ? Math.floor(body.seed)
       : Math.floor(Math.random() * 2 ** 31);
 
-  const runFull = async (onProgress?: (e: SimulationProgress) => void) => {
+  const runFull = async (
+    onProgress?: (e: SimulationProgress) => void,
+    control?: SimulationControl,
+  ) => {
     const t0 = performance.now();
     const refs: ReferenceBundle = await fetchReferenceBundle(drugs);
     const refBlock = formatReferenceBlock(refs);
@@ -418,6 +428,7 @@ route('POST', '/api/simulate', async ({ req }) => {
       fresh: body.fresh,
       seed,
       onProgress,
+      control,
     });
 
     const macro = aggregateMacro(results, { population: body.population });
@@ -444,6 +455,8 @@ route('POST', '/api/simulate', async ({ req }) => {
   // socket warm for the whole multi-minute run, and the last event
   // carries the exact payload the JSON branch would have returned.
   const encoder = new TextEncoder();
+  const control = new SimulationRunControl();
+  simulationRuns.set(control.id, control);
   const stream = new ReadableStream({
     async start(controller) {
       let closed = false;
@@ -452,7 +465,10 @@ route('POST', '/api/simulate', async ({ req }) => {
         try {
           controller.enqueue(encoder.encode(`data: ${JSON.stringify(obj)}\n\n`));
         } catch {
-          closed = true; // client went away — let the run finish quietly
+          // The client went away and its result can never be delivered —
+          // stop spending GPU on it.
+          closed = true;
+          control.stop();
         }
       };
       // Progress events land every ~10 agents; on a busy GPU that gap can
@@ -465,17 +481,20 @@ route('POST', '/api/simulate', async ({ req }) => {
           clearInterval(heartbeat);
         }
       }, 20_000);
+      send({ type: 'run', runId: control.id });
       send({ type: 'phase', phase: 'refs' });
       try {
         const payload = await runFull((e) => {
           if (e.type === 'sim_start') send({ type: 'phase', phase: 'sim', total: e.total });
           else if (e.type === 'sim_progress') send({ type: 'sim_progress', done: e.done, total: e.total });
           else if (e.type === 'sim_done') send({ type: 'phase', phase: 'macro' });
-        });
+        }, control);
         send({ type: 'result', ...payload });
       } catch (e) {
-        send({ type: 'error', message: e instanceof Error ? e.message : String(e) });
+        if (control.stopped) send({ type: 'stopped' });
+        else send({ type: 'error', message: e instanceof Error ? e.message : String(e) });
       } finally {
+        simulationRuns.delete(control.id);
         closed = true;
         clearInterval(heartbeat);
         try {
@@ -484,6 +503,10 @@ route('POST', '/api/simulate', async ({ req }) => {
           /* already closed */
         }
       }
+    },
+    // The client dropped the stream (a stop, a closed window).
+    cancel() {
+      control.stop();
     },
   });
   return new Response(stream, {
@@ -542,7 +565,10 @@ route('POST', '/api/simulate/augment', async ({ req }) => {
   const sampleSize = Math.max(40, Math.min(400, body.sampleSize ?? 400));
   const drugs = (body.drugs ?? []).filter((d): d is string => !!d && d.trim().length > 0);
 
-  const runFull = async (onProgress?: (e: SimulationProgress) => void) => {
+  const runFull = async (
+    onProgress?: (e: SimulationProgress) => void,
+    control?: SimulationControl,
+  ) => {
   const refs = await fetchReferenceBundle(drugs);
   const refBlock = formatReferenceBlock(refs);
   // The reference cohort is a Monte Carlo draw, and the bucket medians below
@@ -571,6 +597,7 @@ route('POST', '/api/simulate/augment', async ({ req }) => {
     fresh: body.fresh,
     seed,
     onProgress,
+    control,
   });
   // Failed agents carry a neutral all-zero placeholder. Leaving them in the
   // buckets below would drag every median toward zero and, in a sparse
@@ -579,121 +606,10 @@ route('POST', '/api/simulate/augment', async ({ req }) => {
   const results = allResults.filter((r) => !r.failure);
   const failedCount = allResults.length - results.length;
 
-  // Index the reference cohort at several granularities.
-  //
-  // A single decade × sex × comorbidity table is too sparse to stand alone:
-  // at the default sample size only ~30 of the ~40 possible buckets are
-  // occupied and several hold a single agent, so many input rows find no
-  // match. The previous fallback claimed to "fall back through coarser
-  // buckets" but actually took the FIRST bucket in Map insertion order —
-  // i.e. the bucket of whichever agent happened to be simulated first. An
-  // 80-year-old man with comorbidities could be handed a 20-year-old
-  // woman's outcomes. That was merely stable while the seed was frozen;
-  // with an independent draw per run it would have become erratic, so it
-  // has to be fixed alongside the seed rather than after it.
-  //
-  // These indexes let an unmatched row degrade to the nearest sensible
-  // neighbourhood — drop comorbidity, then sex, then widen the age band —
-  // and only reach the whole cohort as a last resort.
-  type Key = string;
-  type Bucketed = Map<Key, SimulationAgentResult[]>;
-  const byExact: Bucketed = new Map();
-  const byDecadeSex: Bucketed = new Map();
-  const byDecade: Bucketed = new Map();
-  const byBandSex: Bucketed = new Map();
-  const byBand: Bucketed = new Map();
-  const decadeOf = (age: number) => Math.floor(age / 10) * 10;
-  const bandOf = (age: number) => Math.floor(age / 20) * 20;
-  const push = (m: Bucketed, k: Key, r: SimulationAgentResult) => {
-    const arr = m.get(k) ?? [];
-    arr.push(r);
-    m.set(k, arr);
-  };
-  for (const r of results) {
-    const age = r.agent.age;
-    const sex = r.agent.sex ?? r.agent.health?.sex ?? 'F';
-    const hasCom = !!r.agent.health && r.agent.health.comorbidities.length > 0;
-    push(byExact, `${decadeOf(age)}|${sex}|${hasCom ? 'c' : '0'}`, r);
-    push(byDecadeSex, `${decadeOf(age)}|${sex}`, r);
-    push(byDecade, `${decadeOf(age)}`, r);
-    push(byBandSex, `${bandOf(age)}|${sex}`, r);
-    push(byBand, `${bandOf(age)}`, r);
-  }
-
-  /** Nearest populated neighbourhood for a row, plus how it was matched. */
-  function resolveBucket(
-    age: number,
-    sex: string,
-    hasCom: boolean,
-  ): { arr: SimulationAgentResult[]; match: string } {
-    const tries: Array<[Bucketed, Key, string]> = [
-      [byExact, `${decadeOf(age)}|${sex}|${hasCom ? 'c' : '0'}`, 'age10+sex+comorbidity'],
-      [byDecadeSex, `${decadeOf(age)}|${sex}`, 'age10+sex'],
-      [byDecade, `${decadeOf(age)}`, 'age10'],
-      [byBandSex, `${bandOf(age)}|${sex}`, 'age20+sex'],
-      [byBand, `${bandOf(age)}`, 'age20'],
-    ];
-    for (const [m, k, match] of tries) {
-      const arr = m.get(k);
-      if (arr && arr.length > 0) return { arr, match };
-    }
-    return { arr: results, match: 'cohort' };
-  }
-  function median(xs: number[]): number {
-    if (xs.length === 0) return 0;
-    const s = xs.slice().sort((a, b) => a - b);
-    const m = Math.floor(s.length / 2);
-    return s.length % 2 === 1 ? s[m] : (s[m - 1] + s[m]) / 2;
-  }
-  function lookup(age: number, sex: string, hasCom: boolean) {
-    const { arr, match } = resolveBucket(age, sex, hasCom);
-    if (arr.length === 0) return null;
-    return {
-      // How the estimate was reached and how much evidence backs it. A
-      // median over one agent and a median over thirty are not the same
-      // claim, and the caller loads these rows straight into a modelling
-      // workstation — the distinction has to travel with the data.
-      sim_bucket_match: match,
-      sim_bucket_n: arr.length,
-      sim_treatment_uptake_mode: modeOf(arr.map((r) => r.outcome.behaviour.treatmentUptake)),
-      sim_isolation_days_median: median(arr.map((r) => r.outcome.behaviour.isolationDays)),
-      sim_spending_shift_mode: modeOf(arr.map((r) => r.outcome.behaviour.spendingShift)),
-      sim_infection_probability_median: Number(
-        median(arr.map((r) => r.outcome.health.infectionProbability)).toFixed(3),
-      ),
-      sim_severity_mode: modeOf(arr.map((r) => r.outcome.health.severityIfInfected)),
-      sim_mortality_probability_median: Number(
-        median(arr.map((r) => r.outcome.health.mortalityProbability)).toFixed(4),
-      ),
-      sim_hospitalised_rate: Number(
-        (arr.filter((r) => r.outcome.health.hospitalised).length / arr.length).toFixed(3),
-      ),
-      sim_workdays_lost_median: median(arr.map((r) => r.outcome.economic.workdaysLost)),
-      sim_oop_zar_median: Math.round(median(arr.map((r) => r.outcome.economic.outOfPocketCostZar))),
-      sim_insurer_claim_zar_median: Math.round(
-        median(arr.map((r) => r.outcome.economic.insurerClaimZar)),
-      ),
-    };
-  }
-
-  // Apply lookup to each input row. Try to infer age / sex / comorbidity
-  // columns case-insensitively; fall back to global defaults if absent.
-  function col<T>(r: Record<string, unknown>, names: string[]): T | undefined {
-    const lc = new Map(Object.keys(r).map((k) => [k.toLowerCase(), k] as const));
-    for (const n of names) {
-      const real = lc.get(n.toLowerCase());
-      if (real && r[real] != null) return r[real] as T;
-    }
-    return undefined;
-  }
-  const augmented = body.rows.map((row) => {
-    const age = Number(col<number | string>(row, ['age', 'age_at_entry', 'ageatentry']) ?? 35);
-    const sexRaw = String(col<string>(row, ['sex', 'gender']) ?? 'F').slice(0, 1).toUpperCase();
-    const sex = sexRaw === 'M' ? 'M' : 'F';
-    const hasCom = !!col<string>(row, ['comorbidities']);
-    const out = lookup(age, sex, hasCom);
-    return { ...row, ...(out ?? {}) };
-  });
+  // Each input row gets the outcomes of the reference agents most like the
+  // person in it, matched only on what the row actually states (see
+  // augmentLookup.ts).
+  const { rows: augmented, columns: augmentedColumns } = augmentRows(body.rows, results);
 
   return {
     scenario: body.scenario.trim(),
@@ -711,7 +627,7 @@ route('POST', '/api/simulate/augment', async ({ req }) => {
      *  the cohort must not be read as a population sample. */
     referenceWeighting: 'age-balanced',
     inputRows: body.rows.length,
-    augmentedColumns: Object.keys(augmented[0] ?? {}).filter((k) => k.startsWith('sim_')),
+    augmentedColumns,
     rows: augmented,
   };
   };
@@ -723,6 +639,8 @@ route('POST', '/api/simulate/augment', async ({ req }) => {
   // reference pass, and the final event carries exactly the payload the JSON
   // branch would have returned.
   const encoder = new TextEncoder();
+  const control = new SimulationRunControl();
+  simulationRuns.set(control.id, control);
   const stream = new ReadableStream({
     async start(controller) {
       let closed = false;
@@ -731,7 +649,10 @@ route('POST', '/api/simulate/augment', async ({ req }) => {
         try {
           controller.enqueue(encoder.encode(`data: ${JSON.stringify(obj)}\n\n`));
         } catch {
-          closed = true; // client went away — let the run finish quietly
+          // The client went away and its result can never be delivered —
+          // stop spending GPU on it.
+          closed = true;
+          control.stop();
         }
       };
       const heartbeat = setInterval(() => {
@@ -742,6 +663,7 @@ route('POST', '/api/simulate/augment', async ({ req }) => {
           clearInterval(heartbeat);
         }
       }, 20_000);
+      send({ type: 'run', runId: control.id });
       send({ type: 'phase', phase: 'refs' });
       try {
         const payload = await runFull((e) => {
@@ -749,11 +671,13 @@ route('POST', '/api/simulate/augment', async ({ req }) => {
           else if (e.type === 'sim_progress')
             send({ type: 'sim_progress', done: e.done, total: e.total });
           else if (e.type === 'sim_done') send({ type: 'phase', phase: 'macro' });
-        });
+        }, control);
         send({ type: 'result', ...payload });
       } catch (e) {
-        send({ type: 'error', message: e instanceof Error ? e.message : String(e) });
+        if (control.stopped) send({ type: 'stopped' });
+        else send({ type: 'error', message: e instanceof Error ? e.message : String(e) });
       } finally {
+        simulationRuns.delete(control.id);
         closed = true;
         clearInterval(heartbeat);
         try {
@@ -763,6 +687,10 @@ route('POST', '/api/simulate/augment', async ({ req }) => {
         }
       }
     },
+    // The client dropped the stream (a stop, a closed window).
+    cancel() {
+      control.stop();
+    },
   });
   return new Response(stream, {
     headers: {
@@ -771,6 +699,27 @@ route('POST', '/api/simulate/augment', async ({ req }) => {
       connection: 'keep-alive',
     },
   });
+});
+
+// Hold, release or end a streaming run by the id its first event carried.
+// 404 once the run has finished.
+route('POST', '/api/simulate/runs/:id/:action', ({ params }) => {
+  const run = simulationRuns.get(params.id);
+  if (!run) return json({ error: 'run not found' }, { status: 404 });
+  switch (params.action) {
+    case 'pause':
+      run.pause();
+      break;
+    case 'resume':
+      run.resume();
+      break;
+    case 'stop':
+      run.stop();
+      break;
+    default:
+      return json({ error: `unknown action: ${params.action}` }, { status: 400 });
+  }
+  return json({ runId: run.id, state: run.state });
 });
 
 interface RefsBody {
@@ -783,16 +732,6 @@ route('POST', '/api/simulate/references', async ({ req }) => {
   const refs = await fetchReferenceBundle(drugs);
   return json({ refs, formatted: formatReferenceBlock(refs) });
 });
-
-function modeOf<T extends string>(xs: T[]): T | '' {
-  if (xs.length === 0) return '' as T;
-  const counts = new Map<T, number>();
-  for (const x of xs) counts.set(x, (counts.get(x) ?? 0) + 1);
-  let best: T = xs[0];
-  let bestN = -1;
-  for (const [k, v] of counts) if (v > bestN) { best = k; bestN = v; }
-  return best;
-}
 
 route('GET', '/api/run/:id', ({ params }) => {
   const run = getRun(params.id);
