@@ -35,7 +35,7 @@ import { type ChildProcess, spawn } from "node:child_process";
 import { existsSync, mkdirSync, openSync, readFileSync, statSync } from "node:fs";
 import { createServer } from "node:net";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, posix, win32 } from "node:path";
 
 export type SwarmState = "starting" | "running" | "external" | "stopped" | "error";
 
@@ -385,6 +385,8 @@ export class SwarmSupervisor {
  *  signed-in Claude Code CLI the swarm prefers as a provider. */
 export function augmentedPath(inherited: string | undefined, isWin: boolean): string {
   const sep = isWin ? ";" : ":";
+  // The PATH being built picks the separators, not the host it runs on.
+  const { join } = isWin ? win32 : posix;
   const home = homedir();
   const extras = isWin
     ? [join(home, ".local", "bin"), join(home, "AppData", "Local", "Programs", "Ollama"), join(home, ".bun", "bin")]
