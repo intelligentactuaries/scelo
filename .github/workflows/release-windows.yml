@@ -132,8 +132,16 @@ jobs:
           if (-not $app) { throw "the installer did not install scelo-ide.exe under $env:LOCALAPPDATA\Programs" }
           "installed: $($app.FullName)"
           $res = Join-Path $app.DirectoryName "resources"
-          foreach ($f in "runtime\python\python.exe", "runtime\r\bin\R.exe", "swarm\swarm-server.exe", "app.asar") {
+          foreach ($f in "runtime\python\python.exe", "runtime\r\bin\R.exe", "swarm\swarm-server.exe", "app.asar",
+                         "app.asar.unpacked\node_modules\@vscode\ripgrep-win32-x64\bin\rg.exe") {
             if (-not (Test-Path (Join-Path $res $f))) { throw "installed app is missing $f" }
+          }
+          # pip's launchers, run from where they are installed rather than where
+          # they were built: until 0.2.3 they named the runner's python.exe.
+          foreach ($tool in "pip", "pyright") {
+            $out = & (Join-Path $res "runtime\python\Scripts\$tool.exe") --version 2>&1
+            if ($LASTEXITCODE -ne 0) { throw "the installed $tool.exe does not run: $out" }
+            "$tool.exe: $out"
           }
           "APP=$($app.FullName)" >> $env:GITHUB_ENV
 

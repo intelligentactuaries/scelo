@@ -1,5 +1,44 @@
 # What's new
 
+## 0.2.3
+
+*Released 2026-10-07.*
+
+A fix release, found by installing 0.2.2 on Windows. Most of it was broken on
+every platform.
+
+### Workspace
+
+- **Sample workspaces are created again.** **Create...** beside each sample on
+  the welcome page failed with "copy failed: ENOENT" and left an empty folder
+  behind, so trying again said the folder already existed. All five samples
+  are created, with a git repository, and a copy that fails leaves nothing
+  behind.
+- **Quick Open and Search find things.** The bundled ripgrep was never found,
+  so Quick Open (Ctrl+P) listed nothing and Search reported 0 matches unless
+  `rg` happened to be installed. Both use the bundled one now, on every
+  platform.
+- **Python diagnostics and the Python language server work.** The bundled
+  Python's programs (`pip`, `pyright`, `ipython`, `jupyter`) pointed at the
+  machine that built the installer and failed on yours. They run the bundled
+  interpreter wherever Scelo is installed, and pyright brings its own Node, so
+  it works offline from the first file you open.
+
+### Windows
+
+- **The terminal keeps your Path.** The IDE's terminal saw only the bundled
+  Python and R, so `git`, `node` and every other program on the system Path
+  were "not recognized". They are found by name again, along with the bundled
+  `python`, `pip` and `Rscript`.
+- **The workspace button opens a workspace.** Before any folder was opened it
+  went back to the welcome page. It now opens `Documents\Scelo`, created if
+  need be; open any other folder from the welcome page as before.
+- **A running Ollama is recognised.** On first launch Scelo asked you to
+  download Ollama even when it was running. It now checks properly and only
+  asks when nothing is listening.
+- **Shortcut hints say Ctrl.** The swarm and the chat sidebar showed `⌘↵`,
+  `⌘K` and `⌘N`; on Windows and Linux they now show Ctrl.
+
 ## 0.2.2
 
 *Released 2026-10-02.*

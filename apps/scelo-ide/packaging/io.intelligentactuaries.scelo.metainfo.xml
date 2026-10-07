@@ -90,6 +90,22 @@
     abandoned. Dates are the release publication dates on GitHub.
   -->
   <releases>
+    <release version="0.2.3" date="2026-10-07">
+      <description>
+        <p>
+          The sample workspaces on the welcome page can be created again, and
+          Quick Open and Search in the workspace find files. Python linting and
+          the Python language server work, and pip, ipython and jupyter run
+          from the bundled Python.
+        </p>
+        <p>
+          On Windows, the terminal keeps the system Path (git, node and every
+          other program are found by name), the workspace button opens a
+          workspace on first run, a running Ollama is recognised on first
+          launch, and shortcut hints say Ctrl.
+        </p>
+      </description>
+    </release>
     <release version="0.2.2" date="2026-10-02">
       <description>
         <p>
