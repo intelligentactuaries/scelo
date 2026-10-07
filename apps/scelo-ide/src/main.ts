@@ -1408,6 +1408,8 @@ interface StreamExecRequest {
   argv?: string[];
   stdin?: string;
   cwd?: string; // optional working dir
+  /** Plain pipes, no PTY: the output is read by code, not shown (shell only). */
+  pipe?: boolean;
 }
 
 // Session value is either a regular child_process (python/r runs + the
@@ -1567,10 +1569,11 @@ ipcMain.handle(
       const sessionId = _nextSessionId();
       const wc = event.sender;
       const cwd = req.cwd && existsSync(req.cwd) ? req.cwd : undefined;
-      // A one-shot command (Quick Open's and Search's ripgrep) is read by
-      // code, not a person: on Windows ConPTY would wrap its output in
-      // escape sequences and the console title, so it runs on plain pipes.
-      if (pty && !(isWin && req.command)) {
+      // Output read by code (Quick Open's and Search's ripgrep) asks for plain
+      // pipes: a PTY adds escape sequences, CRLF and, on Windows, ConPTY's
+      // console title, which those panels would parse as results. Everything
+      // shown to a person keeps its PTY.
+      if (pty && !req.pipe) {
         // Pick the friendliest shell available per OS:
         //   - mac/linux: $SHELL (zsh on modern macs, bash on most Linux).
         //   - Windows: prefer pwsh.exe > powershell.exe > cmd.exe. ConPTY

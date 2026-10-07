@@ -50,6 +50,7 @@ export default function QuickOpen({ workspacePath, onOpen, onClose }: Props) {
         runtime: "shell",
         command: cmd,
         cwd: workspacePath,
+        pipe: true,
       });
       if ("error" in res || cancelled) {
         if (!cancelled) setLoading(false);

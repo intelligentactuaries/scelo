@@ -94,6 +94,8 @@ interface StreamExecRequest {
   argv?: string[];
   stdin?: string;
   cwd?: string;
+  /** Plain pipes, no PTY: for output read by code, not shown. */
+  pipe?: boolean;
 }
 
 interface ExecChunk {

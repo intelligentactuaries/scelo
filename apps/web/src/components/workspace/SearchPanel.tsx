@@ -182,6 +182,7 @@ export default function SearchPanel({ workspacePath, onOpen }: Props) {
       runtime: "shell",
       command: cmd,
       cwd: workspacePath,
+      pipe: true,
     });
     if ("error" in res) {
       setStatus({ error: res.error });
