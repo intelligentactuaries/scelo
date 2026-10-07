@@ -34,15 +34,20 @@ export function hasPickedProvider(): boolean {
 }
 
 /** Short-timeout fetch — Ollama responds in <50 ms when running, and
- *  we don't want to delay the IDE boot for users who don't have it. */
+ *  we don't want to delay the IDE boot for users who don't have it.
+ *
+ *  no-cors: Ollama's CORS policy does not list the IDE's scelo:// origin, so
+ *  a normal fetch failed even with Ollama running and every new user was
+ *  told to download it. An opaque answer still means something is
+ *  listening; a refused connection still rejects. */
 export async function probeOllamaRunning(): Promise<boolean> {
   if (typeof fetch === "undefined") return false;
   try {
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), OLLAMA_PROBE_TIMEOUT_MS);
-    const r = await fetch(OLLAMA_PROBE_URL, { signal: ctrl.signal });
+    const r = await fetch(OLLAMA_PROBE_URL, { signal: ctrl.signal, mode: "no-cors" });
     clearTimeout(t);
-    return r.ok;
+    return r.ok || r.type === "opaque";
   } catch {
     return false;
   }
