@@ -83,6 +83,7 @@ import {
   explainSocietyGraph,
   explainSocietySankey,
 } from './lib/plotExplainers';
+import { MOD } from './lib/modKey';
 
 interface RoundProgress {
   round: 1 | 2 | 3;
@@ -1032,10 +1033,10 @@ export function App() {
           >
             {theme.choice === 'system' ? 'auto' : theme.choice}
           </button>
-          <button className="ghost-btn" onClick={() => setHelpOpen(true)} title="keyboard shortcuts (⌘/)">
+          <button className="ghost-btn" onClick={() => setHelpOpen(true)} title={`keyboard shortcuts (${MOD}/)`}>
             ?
           </button>
-          <button className="ghost-btn" onClick={() => setVaultOpen(true)} title="settings (⌘,)">
+          <button className="ghost-btn" onClick={() => setVaultOpen(true)} title={`settings (${MOD},)`}>
             settings
           </button>
         </div>
@@ -1074,7 +1075,7 @@ export function App() {
                   start ollama, add a cloud key, or sign in to Claude Code to run the swarm.
                 </div>
                 <button className="ghost-btn" onClick={() => setVaultOpen(true)}>
-                  open settings ⌘,
+                  open settings {MOD},
                 </button>
               </section>
             )}
@@ -2015,7 +2016,7 @@ function EmptyState({
         <div className="empty-headline">no provider available</div>
         <div className="muted small">add a cloud key, sign in to Claude Code, or start ollama to begin.</div>
         <button className="ghost-btn" onClick={onOpenSettings}>
-          open settings ⌘,
+          open settings {MOD},
         </button>
       </div>
     );
@@ -2023,7 +2024,7 @@ function EmptyState({
   return (
     <div className="empty-state">
       <div className="empty-headline">awaiting first run</div>
-      <div className="muted small">enter a scenario, then ⌘↵ to run the swarm.</div>
+      <div className="muted small">enter a scenario, then {MOD}↵ to run the swarm.</div>
     </div>
   );
 }

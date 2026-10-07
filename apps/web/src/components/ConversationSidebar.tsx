@@ -26,6 +26,12 @@ import {
 } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 
+/** The shortcut modifier as this platform spells it (the handlers take either). */
+const MOD =
+  typeof navigator !== "undefined" && /mac/i.test(navigator.platform || navigator.userAgent)
+    ? "⌘"
+    : "Ctrl+";
+
 type Props = {
   version?: number;
   collapsed?: boolean;
@@ -285,7 +291,7 @@ export function ConversationSidebar({ version = 0, collapsed = false, onToggleCo
           aria-label="New chat"
           onClick={onNewChat}
           className="mt-3 border border-primary px-2 py-1 font-mono text-primary text-xs hover:bg-primary/20"
-          title="New chat (⌘N)"
+          title={`New chat (${MOD}N)`}
         >
           +
         </button>
@@ -358,7 +364,7 @@ export function ConversationSidebar({ version = 0, collapsed = false, onToggleCo
           type="button"
           onClick={onNewChat}
           className="flex w-full items-center justify-between border border-primary bg-primary/10 px-3 py-2 font-mono text-primary text-xs hover:bg-primary/20"
-          title="New chat (⌘N)"
+          title={`New chat (${MOD}N)`}
         >
           <span className="flex items-center gap-2">
             <svg
@@ -374,7 +380,7 @@ export function ConversationSidebar({ version = 0, collapsed = false, onToggleCo
             </svg>
             New chat
           </span>
-          <kbd className="font-mono text-[10px] text-primary/70">⌘N</kbd>
+          <kbd className="font-mono text-[10px] text-primary/70">{MOD}N</kbd>
         </button>
       </div>
 
@@ -404,7 +410,7 @@ export function ConversationSidebar({ version = 0, collapsed = false, onToggleCo
             className="w-full border border-border bg-bg-2 py-1.5 pl-7 pr-12 font-mono text-fg text-xs placeholder:text-fg-dim focus:border-primary focus:outline-none"
           />
           <kbd className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 font-mono text-[10px] text-fg-dim">
-            ⌘K
+            {MOD}K
           </kbd>
         </label>
       </div>
@@ -436,7 +442,7 @@ export function ConversationSidebar({ version = 0, collapsed = false, onToggleCo
               <>
                 No conversations yet. Start one with the{" "}
                 <span className="text-primary">+ new chat</span> button or press{" "}
-                <kbd className="font-mono">⌘N</kbd>.
+                <kbd className="font-mono">{MOD}N</kbd>.
               </>
             )}
           </div>

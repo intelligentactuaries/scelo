@@ -1,5 +1,6 @@
 import { forwardRef, useCallback, useEffect, useLayoutEffect, useRef } from 'react';
 import { SCENARIO_PRESETS } from './ScenarioPanel';
+import { MOD } from '../lib/modKey';
 
 type Props = {
   scenario: string;
@@ -77,7 +78,7 @@ export const ScenarioCard = forwardRef<HTMLTextAreaElement, Props>(function Scen
             rows={3}
           />
           <div className="scenario-card-actions">
-            <span className="muted small">⌘↵ to forecast</span>
+            <span className="muted small">{MOD}↵ to forecast</span>
             <button className="primary-btn pill-btn" disabled={!canRun} onClick={onRun}>
               {busy ? 'Forecasting…' : 'Forecast & convene'}
             </button>
@@ -119,7 +120,7 @@ export const ScenarioCard = forwardRef<HTMLTextAreaElement, Props>(function Scen
           // with a prefilled scenario cut off mid-sentence.
           ref={setRef}
           className="scenario-card-row-input"
-          placeholder="type a refined scenario, press ⌘↵ to re-run…"
+          placeholder={`type a refined scenario, press ${MOD}↵ to re-run…`}
           value={scenario}
           onChange={(e) => onScenarioChange(e.target.value)}
           onKeyDown={(e) => {

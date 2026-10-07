@@ -1,4 +1,5 @@
 import { forwardRef } from 'react';
+import { MOD } from '../lib/modKey';
 
 export const SAMPLE_SCENARIO = `A South African pension fund is considering allocating 8% of its portfolio to a single emerging-markets infrastructure REIT focused on toll roads across sub-Saharan Africa. The REIT has a 14% historical IRR but only a 4-year track record, leverage of 2.1x, and 60% of its revenue is dollar-denominated against rand-denominated liabilities. The fund must hold the position for 7 years (lock-up).`;
 
@@ -134,7 +135,7 @@ export const ScenarioPanel = forwardRef<HTMLTextAreaElement, Props>(function Sce
         </span>
       </label>
       <button className="primary-btn" disabled={busy || !scenario.trim()} onClick={onRun}>
-        {busy ? 'running…' : 'run swarm ⌘↵'}
+        {busy ? 'running…' : `run swarm ${MOD}↵`}
       </button>
       {canJustifyAll && (
         <button

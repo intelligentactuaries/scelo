@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import { streamChat, type ChatEvent, type StreamChatHandle } from '../lib/api';
 import { renderChatMarkdown } from '../lib/chatMarkdown';
 import { PanelLeftIcon } from './Icons';
+import { MOD } from '../lib/modKey';
 
 type ChatRole = 'user' | 'assistant';
 interface ChatMsg {
@@ -171,13 +172,13 @@ export function ConversationPanel({
       ? 'waiting for the run to finish…'
       : inChat
         ? 'ask anything — full council + society state is injected'
-        : 'edit the scenario and ⌘↵ to re-run the swarm';
+        : `edit the scenario and ${MOD}↵ to re-run the swarm`;
 
   const placeholder = inChat
     ? runReady
       ? 'enter to send · shift+enter for newline'
       : 'run a scenario first'
-    : 'type a refined scenario, ⌘↵ to re-run…';
+    : `type a refined scenario, ${MOD}↵ to re-run…`;
 
   const submitDisabled = inChat
     ? !runReady || !input.trim()

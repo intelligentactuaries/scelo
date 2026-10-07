@@ -1,13 +1,15 @@
+import { MOD_NAME } from '../lib/modKey';
+
 type Props = {
   open: boolean;
   onClose: () => void;
 };
 
 const SHORTCUTS: { keys: string; label: string }[] = [
-  { keys: '⌘ ↵', label: 'run swarm (from anywhere)' },
-  { keys: '⌘ K', label: 'toggle chatbot drawer' },
-  { keys: '⌘ ,', label: 'toggle settings modal' },
-  { keys: '⌘ /', label: 'show / hide this help' },
+  { keys: `${MOD_NAME} ↵`, label: 'run swarm (from anywhere)' },
+  { keys: `${MOD_NAME} K`, label: 'toggle chatbot drawer' },
+  { keys: `${MOD_NAME} ,`, label: 'toggle settings modal' },
+  { keys: `${MOD_NAME} /`, label: 'show / hide this help' },
   { keys: 'esc', label: 'close drawer / modal / overlay' },
 ];
 
@@ -33,9 +35,6 @@ export function HelpOverlay({ open, onClose }: Props) {
               ))}
             </tbody>
           </table>
-          <div className="muted small">
-            on linux/windows, substitute <code>ctrl</code> for <code>⌘</code>.
-          </div>
         </div>
       </div>
     </div>
