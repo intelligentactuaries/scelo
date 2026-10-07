@@ -19,9 +19,10 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
-import { cp, mkdir, open, readFile, readdir, stat, writeFile } from "node:fs/promises";
+import { open, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join, normalize, sep } from "node:path";
+import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 import {
   net,
@@ -39,6 +40,7 @@ import {
 } from "electron";
 import log from "electron-log/main";
 import { SwarmSupervisor } from "./swarm";
+import { copyTree, ripgrepBinary, withPathPrepended } from "./tools";
 import { autoUpdater } from "electron-updater";
 import {
   type WorkspaceUIState,
@@ -1496,7 +1498,10 @@ function _augmentedEnv(extra?: Record<string, string>): NodeJS.ProcessEnv {
   const bundledBins: string[] = [];
   const pyRoot = join(resourceDir(), "runtime", "python");
   if (existsSync(pyRoot)) {
-    bundledBins.push(isWin ? pyRoot : join(pyRoot, "bin"));
+    // On Windows pip puts its programs (pip, pyright, ipython, jupyter) in
+    // Scripts, beside python.exe rather than with it.
+    if (isWin) bundledBins.push(pyRoot, join(pyRoot, "Scripts"));
+    else bundledBins.push(join(pyRoot, "bin"));
   }
   const rRoot = join(resourceDir(), "runtime", "r");
   if (existsSync(rRoot)) {
@@ -1504,11 +1509,7 @@ function _augmentedEnv(extra?: Record<string, string>): NodeJS.ProcessEnv {
       isWin ? join(rRoot, "bin") : isMac ? join(rRoot, "Resources", "bin") : join(rRoot, "bin"),
     );
   }
-  if (bundledBins.length > 0) {
-    const sepc = isWin ? ";" : ":";
-    env.PATH = `${bundledBins.join(sepc)}${sepc}${env.PATH ?? ""}`;
-  }
-  return env;
+  return withPathPrepended(env, bundledBins, isWin);
 }
 
 ipcMain.handle(
@@ -1566,7 +1567,10 @@ ipcMain.handle(
       const sessionId = _nextSessionId();
       const wc = event.sender;
       const cwd = req.cwd && existsSync(req.cwd) ? req.cwd : undefined;
-      if (pty) {
+      // A one-shot command (Quick Open's and Search's ripgrep) is read by
+      // code, not a person: on Windows ConPTY would wrap its output in
+      // escape sequences and the console title, so it runs on plain pipes.
+      if (pty && !(isWin && req.command)) {
         // Pick the friendliest shell available per OS:
         //   - mac/linux: $SHELL (zsh on modern macs, bash on most Linux).
         //   - Windows: prefer pwsh.exe > powershell.exe > cmd.exe. ConPTY
@@ -1618,8 +1622,12 @@ ipcMain.handle(
       }
       // Spawn fallback — no PTY, but baseline functional.
       if (isWin) {
-        binary = "cmd.exe";
-        argv = ["/c", req.command ?? ""];
+        // The shell the terminal uses, so a command is written for one shell
+        // (PowerShell on any Windows 10 or 11: lib/ripgrepCommand.ts).
+        binary = _winShell();
+        argv = binary.toLowerCase().endsWith("cmd.exe")
+          ? ["/c", req.command ?? ""]
+          : ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", req.command ?? ""];
       } else {
         binary = process.env.SHELL || "/bin/bash";
         argv = req.command ? ["-lc", req.command] : ["-li"];
@@ -1847,8 +1855,23 @@ function _resolveInWorkspace(rel: string, event?: IpcMainInvokeEvent): string {
   return abs;
 }
 
+/** First run, or every workspace since deleted: Documents/Scelo, created if
+ *  need be, so the workspace button opens the editor instead of bouncing to
+ *  /welcome until a folder is picked. Null when it can't be made. */
+function _defaultWorkspaceRecord(): WorkspaceRecord | null {
+  try {
+    const path = join(app.getPath("documents"), "Scelo");
+    mkdirSync(path, { recursive: true });
+    _setActiveWorkspace(path);
+    return _activeWorkspaceRecord();
+  } catch (e) {
+    log.warn("workspace: could not create the default workspace:", e);
+    return null;
+  }
+}
+
 ipcMain.handle("scelo:workspace:get", (event) => {
-  const rec = _activeWorkspaceRecordFor(event);
+  const rec = _activeWorkspaceRecordFor(event) ?? _defaultWorkspaceRecord();
   return rec ? { path: rec.path, id: rec.id } : { path: null, id: null };
 });
 
@@ -1956,9 +1979,10 @@ ipcMain.handle("scelo:workspace:create-from-template", async (event, templateId:
     };
   }
   try {
-    await mkdir(destDir, { recursive: true });
-    await cp(srcDir, destDir, { recursive: true });
+    copyTree(srcDir, destDir);
   } catch (e) {
+    // Leave nothing half-made behind: a second try would say it exists.
+    rmSync(destDir, { recursive: true, force: true });
     return { ok: false, error: `copy failed: ${String(e)}` };
   }
   // Best-effort git init so the user can `git status` from day one.
@@ -3118,14 +3142,21 @@ let _ripgrepPath: string | null | undefined;
 
 ipcMain.handle("scelo:tools:ripgrepPath", () => {
   if (_ripgrepPath !== undefined) return { path: _ripgrepPath };
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const mod = require("@vscode/ripgrep") as { rgPath?: string };
-    _ripgrepPath = mod.rgPath && existsSync(mod.rgPath) ? mod.rgPath : null;
-  } catch (e) {
-    log.warn("ripgrep: @vscode/ripgrep load failed", e);
-    _ripgrepPath = null;
-  }
+  _ripgrepPath = ripgrepBinary({
+    platform: process.platform,
+    arch: process.arch,
+    // The platform package is hoisted in the packaged app; in a checkout
+    // with Bun's isolated linker it is only reachable from @vscode/ripgrep.
+    resolve: (request) => {
+      try {
+        return require.resolve(request);
+      } catch {
+        return createRequire(require.resolve("@vscode/ripgrep")).resolve(request);
+      }
+    },
+    exists: existsSync,
+  });
+  if (!_ripgrepPath) log.warn("ripgrep: the bundled rg was not found; Quick Open and Search need one on PATH");
   return { path: _ripgrepPath };
 });
 

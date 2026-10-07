@@ -207,8 +207,63 @@ PY
 
   # LSP-lite tooling: pyright for in-editor diagnostics on save (Phase 6).
   # Tolerates failure — the editor falls back to no-lint mode gracefully.
-  PYTHONNOUSERSITE=1 PYTHONPATH= "$py_bin" -I -m pip install --no-cache-dir pyright || \
+  # The nodejs extra brings Node itself (nodejs-wheel-binaries): without it
+  # pyright downloads Node into ~/.cache on first use, so the first lint and
+  # the language server failed, and never worked offline.
+  PYTHONNOUSERSITE=1 PYTHONPATH= "$py_bin" -I -m pip install --no-cache-dir "pyright[nodejs]" || \
     echo "  ! pyright install failed; editor diagnostics will no-op."
+
+  # pip writes this build machine's interpreter path into every program it
+  # installs: the shebang of bin/* on Linux and macOS, the launcher inside
+  # Scripts\*.exe on Windows (D:\a\scelo\scelo\...\python.exe on CI). On a
+  # user's machine every one of them failed: pip, pyright (so the editor's
+  # Python diagnostics and language server), ipython, jupyter. Point them at
+  # the interpreter beside them instead.
+  PYTHONNOUSERSITE=1 PYTHONPATH= "$py_bin" -I -X utf8 - <<'PY'
+import os, re, sys, sysconfig
+from pathlib import Path
+
+scripts = Path(sysconfig.get_paths()["scripts"])
+python = Path(sys.executable)
+fixed = 0
+if os.name == "nt":
+    # A pip launcher is a stub .exe, then "#!<python>" and a zip. distlib's
+    # stub expands <launcher_dir> to its own folder: Scripts\..\python.exe.
+    shebang = re.compile(rb'#!"?' + re.escape(str(python).encode()) + rb'"?', re.IGNORECASE)
+    for f in scripts.glob("*.exe"):
+        data = f.read_bytes()
+        new, n = shebang.subn(lambda _: b'#!"<launcher_dir>\\..\\python.exe"', data, count=1)
+        if n:
+            f.write_bytes(new)
+            fixed += 1
+else:
+    # pip's own form for a long shebang, with the interpreter found beside
+    # the script instead of at an absolute path.
+    for f in scripts.iterdir():
+        if not f.is_file() or f.is_symlink():
+            continue
+        data = f.read_bytes()
+        if not data.startswith(b"#!"):
+            continue
+        first, _, rest = data.partition(b"\n")
+        here = str(scripts).encode()
+        if first.strip() == b"#!/bin/sh" and rest.startswith(b"'''exec' ") and here in rest.partition(b"\n")[0]:
+            # pip's own long-shebang form: '''exec' /abs/python3 "$0" "$@"
+            interp = Path(rest.partition(b"\n")[0].split(b"'''exec' ", 1)[1].split(b" ", 1)[0].decode()).name
+            rest = rest.partition(b"\n")[2].partition(b"\n")[2]
+        elif here in first:
+            interp = Path(first[2:].strip().decode()).name
+        else:
+            continue
+        f.write_bytes(
+            b"#!/bin/sh\n"
+            + b"'''exec' \"$(dirname -- \"$0\")/" + interp.encode() + b"\" \"$0\" \"$@\"\n"
+            + b"' '''\n"
+            + rest
+        )
+        fixed += 1
+print(f"  ✓ {fixed} Python programs run the bundled interpreter wherever it is installed")
+PY
 
   # Prove the headline library is the one we pinned, not a stray import.
   local want_lifelib want_modelx have_lifelib have_modelx

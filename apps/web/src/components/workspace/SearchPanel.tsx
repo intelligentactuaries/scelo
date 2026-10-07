@@ -11,6 +11,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { refreshGit } from "../../lib/gitBus";
 import { useDraft } from "../../lib/inputDrafts";
+import { isWindowsHost, ripgrepCommand, workspaceRelative } from "../../lib/ripgrepCommand";
 import { isDesktopIDE } from "../../lib/sceloIDE";
 import { emitToast } from "../../lib/toastBus";
 
@@ -162,21 +163,20 @@ export default function SearchPanel({ workspacePath, onOpen }: Props) {
     // Build the rg argv. We always pass --json + --max-count cap; the
     // user can narrow via include/exclude globs without touching the
     // base flags.
-    const sq = (s: string) => `'${s.replace(/'/g, "'\\''")}'`;
-    const parts: string[] = [
-      rgPath ? sq(rgPath) : "rg",
+    const windows = isWindowsHost();
+    const args: Array<string | { quoted: string }> = [
       "--json",
       "--max-count 200",
       "--hidden",
-      "--glob '!node_modules'",
-      "--glob '!__pycache__'",
-      "--glob '!.git'",
+      { quoted: "--glob=!node_modules" },
+      { quoted: "--glob=!__pycache__" },
+      { quoted: "--glob=!.git" },
     ];
-    if (includeGlob.trim()) parts.push(`--glob ${sq(includeGlob.trim())}`);
-    if (excludeGlob.trim()) parts.push(`--glob ${sq("!" + excludeGlob.trim())}`);
-    parts.push(sq(query));
-    parts.push(sq(workspacePath));
-    const cmd = parts.join(" ");
+    if (includeGlob.trim()) args.push({ quoted: `--glob=${includeGlob.trim()}` });
+    if (excludeGlob.trim()) args.push({ quoted: `--glob=!${excludeGlob.trim()}` });
+    args.push({ quoted: query });
+    args.push({ quoted: workspacePath });
+    const cmd = ripgrepCommand(rgPath, args, windows);
 
     const res = await window.scelo!.exec.start({
       runtime: "shell",
@@ -213,7 +213,7 @@ export default function SearchPanel({ workspacePath, onOpen }: Props) {
           const preview = (ev.data.lines?.text ?? "").replace(/\n$/, "");
           if (!path || !ln) continue;
           newOnes.push({
-            path: makeRel(path, workspacePath),
+            path: workspaceRelative(path, workspacePath, windows),
             lineNumber: ln,
             preview,
             submatches: ev.data.submatches ?? [],
@@ -429,11 +429,6 @@ function ReplaceConfirm({
       </div>
     </div>
   );
-}
-
-function makeRel(absPath: string, workspacePath: string): string {
-  const trim = workspacePath.endsWith("/") ? workspacePath : workspacePath + "/";
-  return absPath.startsWith(trim) ? absPath.slice(trim.length) : absPath;
 }
 
 /** Render the preview line with the ripgrep-reported submatches bolded.

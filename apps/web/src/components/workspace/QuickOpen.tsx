@@ -5,6 +5,7 @@
 // bonuses); defers to the shared `<Palette>` for the modal shell.
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { isWindowsHost, ripgrepCommand, workspaceRelative } from "../../lib/ripgrepCommand";
 import { isDesktopIDE } from "../../lib/sceloIDE";
 import Palette from "./Palette";
 
@@ -32,8 +33,19 @@ export default function QuickOpen({ workspacePath, onOpen, onClose }: Props) {
     let cancelled = false;
     (async () => {
       const rgPath = await window.scelo!.tools.ripgrepPath();
-      const sq = (s: string) => `'${s.replace(/'/g, "'\\''")}'`;
-      const cmd = `${rgPath.path ? sq(rgPath.path) : "rg"} --files --hidden --glob '!node_modules' --glob '!__pycache__' --glob '!.git' ${sq(workspacePath)}`;
+      const windows = isWindowsHost();
+      const cmd = ripgrepCommand(
+        rgPath.path,
+        [
+          "--files",
+          "--hidden",
+          { quoted: "--glob=!node_modules" },
+          { quoted: "--glob=!__pycache__" },
+          { quoted: "--glob=!.git" },
+          { quoted: workspacePath },
+        ],
+        windows,
+      );
       const res = await window.scelo!.exec.start({
         runtime: "shell",
         command: cmd,
@@ -44,7 +56,6 @@ export default function QuickOpen({ workspacePath, onOpen, onClose }: Props) {
         return;
       }
       sessionIdRef.current = res.sessionId;
-      const trim = workspacePath.endsWith("/") ? workspacePath : workspacePath + "/";
       const acc: string[] = [];
       const offChunk = window.scelo!.exec.onChunk((chunk) => {
         if (chunk.sessionId !== res.sessionId) return;
@@ -53,7 +64,7 @@ export default function QuickOpen({ workspacePath, onOpen, onClose }: Props) {
         bufferRef.current = lines.pop() ?? "";
         for (const line of lines) {
           if (!line.trim()) continue;
-          acc.push(line.startsWith(trim) ? line.slice(trim.length) : line);
+          acc.push(workspaceRelative(line, workspacePath, windows));
         }
       });
       const offEnd = window.scelo!.exec.onEnd((end) => {
