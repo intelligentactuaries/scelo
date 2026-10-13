@@ -587,6 +587,55 @@ RS
   rm -f "$rscript"
 }
 
+# ─── 3c. The bundled R runs as itself ─────────────────────────────────
+# bin/Rscript (Linux, macOS) is a compiled front-end that execs $RHOME/bin/R
+# and, without RHOME, the R it was built for: /usr/lib/R or
+# /Library/Frameworks/R.framework. So the terminal's Rscript, and with it a
+# starter's `make`, ran the system's R without the bundled packages ("there
+# is no package called 'ChainLadder'") or, with no system R, nothing at all
+# ("Rscript execution error"). It is wrapped to run this R. The app itself
+# runs R through bin/R, which finds itself, as does Windows' Rscript.exe.
+# On Linux, Debian's etc/Renviron.site also appended /usr/lib/R/library to
+# the site libraries, and etc/Renviron added /usr/local/lib/R/site-library,
+# both searched before the bundle's own library: a system R's Matrix was
+# loaded into the bundled R, which breaks wherever the two Rs differ
+# ("undefined symbol: ANY_ATTRIB" beside Ubuntu 26.04's R 4.5). The bundled
+# R searches only its own libraries and the user's library for its version.
+# Idempotent: an R staged before this step existed is fixed on the next run.
+localise_r() {
+  local bin
+  case "$TARGET_OS" in
+    linux) bin="$RUNTIME_DIR/r/bin" ;;
+    mac) bin="$RUNTIME_DIR/r/Resources/bin" ;;
+    *) return 0 ;;
+  esac
+  [ -f "$bin/Rscript" ] || return 0
+  if [ "$TARGET_OS" = "linux" ]; then
+    local etc="$RUNTIME_DIR/r/etc"
+    if [ -f "$etc/Renviron.site" ]; then
+      sed -i 's|^R_LIBS_SITE=.*|# R_LIBS_SITE: the bundled R searches only its own libraries (scripts/bundle-runtimes.sh)|' "$etc/Renviron.site"
+    fi
+    if [ -f "$etc/Renviron" ]; then
+      sed -i "s|^R_LIBS_SITE=.*|R_LIBS_SITE=\${R_LIBS_SITE:-'%S'}|" "$etc/Renviron"
+    fi
+  fi
+  if [ ! -f "$bin/Rscript.bin" ]; then
+    mv "$bin/Rscript" "$bin/Rscript.bin"
+    cat > "$bin/Rscript" <<'SH'
+#!/bin/sh
+# Scelo's bundled R: point the real Rscript front-end at this R rather than
+# the one it was built for (scripts/bundle-runtimes.sh, localise_r).
+self=$(readlink -f -- "$0" 2>/dev/null) || self=$0
+d=$(cd -- "$(dirname -- "$self")" && pwd -P)
+RHOME=$(dirname -- "$d")
+export RHOME
+exec "$d/Rscript.bin" "$@"
+SH
+    chmod 755 "$bin/Rscript"
+  fi
+  echo "  ✓ The bundled R runs as itself (Rscript runs it, wherever it lives)"
+}
+
 # ─── 4. Manifest with versions + sizes ────────────────────────────────
 write_manifest() {
   local manifest="$RUNTIME_DIR/manifest.json"
@@ -625,6 +674,7 @@ stage_python
 stage_python_packages
 stage_r
 stage_r_packages
+localise_r
 write_manifest
 
 echo

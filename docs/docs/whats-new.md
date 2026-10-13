@@ -21,6 +21,12 @@ starter end to end.
   same percentiles.
 - **R lint works.** Saving an R file showed R's start-up banner instead of
   lint findings; lintr's findings show as they should.
+- **`Rscript` runs Scelo's own R on Linux and macOS.** The terminal's
+  `Rscript`, which a starter's `make` uses, started the R installed on the
+  system, without Scelo's packages ("there is no package called
+  'ChainLadder'"), or with no R installed, nothing at all. It runs the R that
+  ships with Scelo now. On Linux that R also no longer loads packages built
+  for a different system R.
 
 ## 0.2.3
 

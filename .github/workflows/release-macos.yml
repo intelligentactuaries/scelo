@@ -107,6 +107,10 @@ jobs:
           "$R/runtime/r/Resources/bin/R" --vanilla -s -e 'cat("R_HOME", R.home(), "\n"); suppressMessages(library(ChainLadder)); cat("ChainLadder", format(packageVersion("ChainLadder")), "\n")' | tee r.txt
           grep -q "R_HOME $R/runtime/r/Resources" r.txt
           grep -q "^ChainLadder " r.txt
+          # So must the terminal's Rscript, which a starter's make runs:
+          # unwrapped, it ran /Library/Frameworks/R.framework's R or nothing.
+          "$R/runtime/r/Resources/bin/Rscript" -e 'cat("Rscript R_HOME", R.home(), "\n"); suppressMessages(library(ChainLadder))' | tee -a r.txt
+          grep -q "Rscript R_HOME $R/runtime/r/" r.txt
           # node-pty was packed with its Electron build.
           ls "$R/app.asar.unpacked/node_modules/@homebridge/node-pty-prebuilt-multiarch/build/Release"
           # Launch it and look.
