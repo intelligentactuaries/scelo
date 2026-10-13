@@ -34,7 +34,8 @@ def main() -> int:
     raa = cl.load_sample("raa")
     mack = cl.MackChainladder().fit(raa)
     py_ibnr = float(mack.ibnr_.sum())
-    py_se = float(mack.total_mack_std_err_.iloc[0])
+    # A 1x1 frame: .iloc[0] would be a Series, which float() refuses (pandas 3).
+    py_se = float(mack.total_mack_std_err_.iloc[0, 0])
 
     print("R-ChainLadder vs chainladder.py")
     print("-" * 40)

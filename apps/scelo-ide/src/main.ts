@@ -3305,6 +3305,9 @@ ipcMain.handle("scelo:fs:lintR", async (event, rel: string) => {
     // the lint script from a temp file via Rscript there, `R -e` elsewhere.
     const res = await execRScript(R_LINT_SCRIPT, {
       vanilla: true,
+      // Without --slave, `R -e` prints its banner and echoes the script, and
+      // the JSON below never parses.
+      slave: true,
       args: [abs],
       env: _augmentedEnv(),
     });

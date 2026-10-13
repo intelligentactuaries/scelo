@@ -9,7 +9,12 @@ suppressPackageStartupMessages({
   library(ggplot2)
 })
 
-here <- normalizePath(dirname(dirname(sys.frame(1)$ofile)))
+# The workspace root, two levels up from this script however it is run:
+# Rscript (make, the editor's Run) passes it as --file=; source() sets ofile.
+script <- sub("^--file=", "", grep("^--file=", commandArgs(trailingOnly = FALSE), value = TRUE))
+if (length(script) == 0 && sys.nframe() > 0) script <- sys.frame(1)$ofile
+if (length(script) == 0) script <- "r/return_period_map.R"
+here <- normalizePath(dirname(dirname(script[1])))
 csv_path <- file.path(here, "data", "return_periods.csv")
 if (!file.exists(csv_path)) {
   stop("missing ", csv_path, ": run python/loss.py first.")

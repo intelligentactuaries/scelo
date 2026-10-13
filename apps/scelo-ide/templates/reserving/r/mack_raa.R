@@ -11,18 +11,27 @@ suppressPackageStartupMessages({
   library(jsonlite)
 })
 
-here <- normalizePath(dirname(dirname(sys.frame(1)$ofile)))
+# The workspace root, two levels up from this script however it is run:
+# Rscript (make, the editor's Run) passes it as --file=; source() sets ofile.
+script <- sub("^--file=", "", grep("^--file=", commandArgs(trailingOnly = FALSE), value = TRUE))
+if (length(script) == 0 && sys.nframe() > 0) script <- sys.frame(1)$ofile
+if (length(script) == 0) script <- "r/mack_raa.R"
+here <- normalizePath(dirname(dirname(script[1])))
 
 # Bundled fixture; loaded by data() into the global env.
 data("RAA")
 triangle <- RAA
 
-# Mack point estimate + standard error.
+# Mack point estimate + standard error, read by row name: the Totals rows
+# are Latest, Dev, Ultimate, IBNR, Mack S.E. and CV(IBNR).
 mack <- MackChainLadder(triangle, est.sigma = "Mack")
-total_ibnr <- summary(mack)$Totals[2, 1]
-total_se   <- summary(mack)$Totals[3, 1]
+totals <- summary(mack)$Totals
+total_ibnr <- totals["IBNR:", 1]
+total_se   <- totals["Mack S.E.:", 1]
 
-# Bootstrap distribution of total IBNR, 1000 paths.
+# Bootstrap distribution of total IBNR, 1000 paths. Seeded, so a re-run
+# prints the same percentiles; change the seed to see the bootstrap's spread.
+set.seed(42)
 boot <- BootChainLadder(triangle, R = 1000, process.distr = "od.pois")
 boot_summary <- summary(boot)$Totals
 ibnr_p50 <- quantile(boot$IBNR.Totals, 0.5)

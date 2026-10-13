@@ -9,7 +9,12 @@
 # No insurance-package dependency; everything is one loop so a reader
 # can see the recursion.
 
-here <- normalizePath(dirname(dirname(sys.frame(1)$ofile)))
+# The workspace root, two levels up from this script however it is run:
+# Rscript (make, the editor's Run) passes it as --file=; source() sets ofile.
+script <- sub("^--file=", "", grep("^--file=", commandArgs(trailingOnly = FALSE), value = TRUE))
+if (length(script) == 0 && sys.nframe() > 0) script <- sys.frame(1)$ofile
+if (length(script) == 0) script <- "r/level_premium.R"
+here <- normalizePath(dirname(dirname(script[1])))
 qx_path <- file.path(here, "data", "qx_male_2019.csv")
 if (!file.exists(qx_path)) {
   stop("missing ", qx_path, ": run python/mortality.py first.")
