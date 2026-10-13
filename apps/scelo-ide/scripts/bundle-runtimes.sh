@@ -552,7 +552,11 @@ stage_r_packages() {
   # packages from source.
   local repo="https://cloud.r-project.org"
   if [ "$TARGET_OS" = "linux" ] && [ -r /etc/os-release ]; then
-    repo="https://packagemanager.posit.co/cran/__linux__/$(. /etc/os-release && echo "$VERSION_CODENAME")/latest"
+    # SCELO_PPM_SNAPSHOT pins Posit's snapshot (a date such as 2026-10-02).
+    # "latest" moves on, and its packages leave a repacked distro R behind:
+    # by 2026-10-13 lifecontingencies and mgcv needed R 4.4, so a 24.04 host
+    # (R 4.3.3) could no longer bundle them from latest.
+    repo="https://packagemanager.posit.co/cran/__linux__/$(. /etc/os-release && echo "$VERSION_CODENAME")/${SCELO_PPM_SNAPSHOT:-latest}"
   fi
   # The R code goes in a file run with -f: a multi-line -e is fragile through
   # Windows' R.exe front-end and Git Bash quoting.
