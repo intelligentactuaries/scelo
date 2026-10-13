@@ -90,6 +90,21 @@
     abandoned. Dates are the release publication dates on GitHub.
   -->
   <releases>
+    <release version="0.2.4" date="2026-10-13">
+      <description>
+        <p>
+          The starter workspaces' R scripts run under make and the editor's
+          Run again: in the Reserving, Life pricing and Climate risk starters
+          they stopped at once.
+        </p>
+        <p>
+          The Reserving starter reports Mack IBNR 52,135.23 and standard error
+          26,909.01, the published RAA figures, and its Python cross-check
+          agrees; the bootstrap is seeded, so a re-run prints the same
+          percentiles. R lint findings show on save.
+        </p>
+      </description>
+    </release>
     <release version="0.2.3" date="2026-10-07">
       <description>
         <p>

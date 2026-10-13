@@ -1,5 +1,27 @@
 # What's new
 
+## 0.2.4
+
+*Released 2026-10-13.*
+
+A fix release for the starter workspaces, found by running the Reserving
+starter end to end.
+
+### Workspace
+
+- **The starters' R scripts run.** In the Reserving, Life pricing and Climate
+  risk starters, `make` and the editor's Run stopped at the first R script with
+  "not that many frames on the stack": the scripts found their own folder in a
+  way that only works under `source()`. They run under `Rscript` now.
+- **The Reserving starter prints the right Mack figures.** Its R script read
+  the wrong rows of the Mack summary, so it would have reported the development
+  total as the IBNR. It reports IBNR 52,135.23 and standard error 26,909.01,
+  the published RAA figures, and its Python cross-check, which stopped on
+  pandas 3, agrees to 0.00. The bootstrap is seeded, so a re-run prints the
+  same percentiles.
+- **R lint works.** Saving an R file showed R's start-up banner instead of
+  lint findings; lintr's findings show as they should.
+
 ## 0.2.3
 
 *Released 2026-10-07.*
